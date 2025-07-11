@@ -7,6 +7,7 @@ export default function Navigation() {
   const pathname = usePathname();
 
   const getBreadcrumbs = () => {
+    if (!pathname) return [{ name: 'Home', href: '/' }];
     const segments = pathname.split('/').filter(Boolean);
     const breadcrumbs = [{ name: 'Home', href: '/' }];
     

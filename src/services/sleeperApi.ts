@@ -19,7 +19,7 @@ export interface SleeperRoster {
   owner_id: string;
   players: string[];
   starters: string[];
-  settings: Record<string, any>;
+  settings: Record<string, unknown>;
 }
 
 const SLEEPER_API_BASE = 'https://api.sleeper.app/v1';

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import {
   getSleeperUser,
   getSleeperLeagues,
@@ -54,7 +55,7 @@ export default function FantasyDashboard() {
       }
       setRosters(rostersData);
       setSuccess(true);
-    } catch (e) {
+    } catch {
       setError("Failed to fetch data. Please try again later.");
     } finally {
       setLoading(false);
@@ -114,9 +115,11 @@ export default function FantasyDashboard() {
           <div className="mt-6 flex flex-col items-center">
             <div className="flex items-center gap-4 mb-2">
               {user.avatar && (
-                <img
+                <Image
                   src={`https://sleepercdn.com/avatars/thumbs/${user.avatar}`}
                   alt="avatar"
+                  width={64}
+                  height={64}
                   className="w-16 h-16 rounded-full border-2 border-blue-400 shadow"
                 />
               )}
@@ -138,9 +141,11 @@ export default function FantasyDashboard() {
               <div key={league.league_id} className="bg-white rounded-xl shadow p-6 border border-blue-100 hover:shadow-lg transition">
                 <div className="flex items-center gap-3 mb-2">
                   {league.avatar && (
-                    <img
+                    <Image
                       src={`https://sleepercdn.com/avatars/thumbs/${league.avatar}`}
                       alt="league avatar"
+                      width={40}
+                      height={40}
                       className="w-10 h-10 rounded"
                     />
                   )}
