@@ -21,7 +21,7 @@ export default function About() {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
             <h2 className="text-3xl font-bold text-gray-900 mb-6">Our Mission</h2>
             <p className="text-lg text-gray-600 mb-8">
-              Backstop Cards is dedicated to providing fantasy football managers with the tools and insights they need to dominate their dynasty leagues. We combine the power of Sleeper's comprehensive league data with KeepTradeCut's player valuations to create a unique dashboard experience.
+              Backstop Cards is dedicated to providing fantasy football managers with the tools and insights they need to dominate their dynasty leagues. We combine the power of Sleeper&apos;s comprehensive league data with KeepTradeCut&apos;s player valuations to create a unique dashboard experience.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
