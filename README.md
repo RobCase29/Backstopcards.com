@@ -1,6 +1,6 @@
 # Backstop Card Finder
 
-Local price atlas for Bowman 1st auto cards. The app turns ProspectPulse checklist data into a player x variation model using a recency-weighted base price and the set-level variation multiples, then can scan active eBay Buy It Now listings for 2026 Bowman and rank them against the model by raw dollar edge.
+Local price atlas for Bowman 1st auto cards. The app turns ProspectPulse checklist data into a player x variation model using a recency-weighted base price, set-level variation multiples, and Scout the Statline rank/trend context, then can scan active eBay Buy It Now listings and rank them against the model by raw dollar edge.
 
 ## Run
 
@@ -35,13 +35,13 @@ The token stays server-side in the Vite dev proxy.
 
 ## eBay BIN Radar
 
-The BIN Deal Radar starts with `2026-Bowman`. It builds one eBay Browse API query per checklist player, fetches active fixed-price listings, maps each item into the app's listing model, rejects player-title mismatches, excludes adjacent products such as Sapphire/Mega/Sterling/Inception from regular Bowman model matching, then ranks positive opportunities by:
+The BIN Deal Radar can scan one loaded checklist or every loaded checklist. It builds eBay Browse API queries from the selected player bucket, fetches active fixed-price listings, maps each item into the app's listing model, rejects player-title mismatches, excludes adjacent products such as Sapphire/Mega/Sterling/Inception/Paper/Power Chords from regular Bowman model matching, then ranks positive opportunities by:
 
 ```text
 modeled variation price - all-in BIN price
 ```
 
-The radar can scan the full 2026 checklist, focus on a specific player name, or focus on a variation/parallel term such as `packfractor`, `gold shimmer`, or `red lava`.
+The radar can scan the full checklist, focus on a specific player name, focus on a variation/parallel term such as `packfractor`, `gold shimmer`, or `red lava`, or use the `Target 50` bucket. `Target 50` scores the best players to hunt using modeled base-auto price, STS overall rank, STS prospect rank, and 3/7/14/30-day STS rank movement.
 
 To enable live scans, create `.env.local` from `.env.example` and set:
 
@@ -109,7 +109,7 @@ Modeled-price inputs:
 
 When player-level checklist data is available, the board expands every checklist player across every set variation. The leaderboard is ranked by modeled base auto value, and each selected player exposes a complete multiplier valuation ladder. The lookup is model-first; live eBay/BIN discovery is a downstream comparison layer against that pricing core.
 
-Authenticated checklist coverage should show the combined player count as `loaded / total` in the Variation Model panel. Public ProspectPulse overview currently reports 87 total players for 2026 Bowman and 102 total players for 2025 Bowman Draft.
+Authenticated checklist coverage should show the combined player count as `loaded / total` in the Model Load panel. Public ProspectPulse overview can provide set multiplier curves before authenticated player bases are loaded.
 
 ## Data Import
 
@@ -122,7 +122,7 @@ Eli Willits,285,455,Blue /150,2026 Bowman Chrome,https://example.com,0,
 
 ## Scoring
 
-The board is sorted by modeled base auto value by default and includes database-style search, set/category/source filters, and sort controls. Export writes the full long-form valuation ladder to CSV, including base source, confidence, and 30/90-day sale counts.
+The board is sorted by modeled base auto value by default and includes database-style search, set/category/source/STS filters, and sort controls. STS-powered sorts include overall rank, prospect rank, dynasty score, momentum, riser value, and BIN target score. Export writes the full long-form valuation ladder to CSV, including base source, confidence, 30/90-day sale counts, STS ranks, STS trends, and BIN target score.
 
 The live BIN radar ranks fetched listings by raw dollar spread, but it is now downstream of the model. Unsupported players, wrong-set matches, and adjacent product families are excluded instead of being modeled from broad search noise.
 

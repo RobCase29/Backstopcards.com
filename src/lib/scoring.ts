@@ -111,6 +111,10 @@ function inferReleaseYear(listing: ProspectPulseListing) {
 
 function releaseLabel(listing: ProspectPulseListing, releaseYear?: number | null) {
   const year = releaseYear ? String(releaseYear) : ''
+  const explicitRelease = firstString([listing.release], '')
+  if (explicitRelease && /\b20\d{2}\b/.test(explicitRelease)) {
+    return explicitRelease.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
+  }
   const product = firstString([listing.product_type, listing.release], 'Bowman Chrome')
   return product.includes(year) ? product : `${year} ${product}`.trim()
 }
@@ -140,9 +144,10 @@ function inferIsGraded(listing: ProspectPulseListing) {
     listing.is_graded ||
       listing.grader ||
       gradeText ||
+      /\b(psa|bgs|sgc|cgc|csg)\s*\d{1,2}(?:\.\d)?\b/.test(text) ||
       /\b(psa|bgs|sgc|cgc|csg)\b/.test(text) ||
-      /\b(gem\s+mint|mint\s+10|pristine|black\s+label)\b/.test(text) ||
-      /\b\d(?:\.\d)?\s*\/\s*10\b/.test(text),
+      /\b(gem\s+(?:mt|mint)|mint\s+10|gem\s+10|pristine|black\s+label|slabbed|graded)\b/.test(text) ||
+      /\b(?:9|9\.5|10)\s*\/\s*10\b/.test(text),
   )
 }
 
@@ -231,6 +236,9 @@ const ADJACENT_PRODUCT_BLOCKERS = [
   /\btranscendent\b/,
   /\bfinest\b/,
   /\bbowman'?s?\s+best\b/,
+  /\bascensions?\b/,
+  /\bdraft\s+night\b/,
+  /\bpower\s*chords?\b/,
   /\bpanini\b/,
   /\bleaf\b/,
 ]

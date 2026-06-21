@@ -80,6 +80,11 @@ describe('fetchEbayBinListings', () => {
     expect(result.listings[0]?.current_price).toBe(250)
     expect(result.listings[0]?.shipping_cost).toBe(5.5)
     expect(result.listings[0]?.serial_denominator).toBe(150)
+    expect(result.listings[0]?.prospect).toMatchObject({
+      name: 'Eli Willits',
+      ranking: 2,
+      level: 'A+',
+    })
     expect(result.stats.mappedListings).toBe(1)
   })
 
@@ -120,6 +125,57 @@ describe('fetchEbayBinListings', () => {
     expect(result.stats.rejectedPlayerMismatches).toBe(1)
   })
 
+  it('matches player names across accents and optional suffixes', async () => {
+    const accentModel: ChecklistModel = {
+      ...model,
+      players: [
+        {
+          playerName: 'Ronald Acuña Jr.',
+          baseAvgPrice: 500,
+          baseSalesCount: 20,
+          variations: [],
+        },
+      ],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          queries: Array<{ q: string; playerName: string }>
+        }
+        expect(body.queries[0]?.playerName).toBe('Ronald Acuña Jr.')
+
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                itemId: 'acuna',
+                title: '2026 Bowman Chrome Ronald Acuna 1st Bowman Auto Blue /150',
+                price: { value: '750.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+            ],
+            stats: {
+              queriesRun: 1,
+              queriesSucceeded: 1,
+              queriesFailed: 0,
+              pagesFetched: 1,
+              upstreamTotal: 1,
+              dedupedItems: 1,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayBinListings({ model: accentModel, playerLimit: 1 })
+
+    expect(result.listings).toHaveLength(1)
+    expect(result.stats.rejectedPlayerMismatches).toBe(0)
+  })
+
   it('limits a player-focused scan to matching checklist names', async () => {
     vi.stubGlobal(
       'fetch',
@@ -149,6 +205,37 @@ describe('fetchEbayBinListings', () => {
     )
 
     await fetchEbayBinListings({ model, searchMode: 'player', searchTerm: 'value' })
+  })
+
+  it('queues an explicit scored player-name bucket before falling back to base price ordering', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          queries: Array<{ q: string; playerName: string }>
+        }
+        expect(body.queries).toHaveLength(1)
+        expect(body.queries[0]?.playerName).toBe('Value Prospect')
+        expect(body.queries[0]?.q).toBe('Value Prospect 2026 bowman chrome 1st auto')
+
+        return new Response(
+          JSON.stringify({
+            items: [],
+            stats: {
+              queriesRun: 1,
+              queriesSucceeded: 1,
+              queriesFailed: 0,
+              pagesFetched: 1,
+              upstreamTotal: 0,
+              dedupedItems: 0,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    await fetchEbayBinListings({ model, playerNames: ['Value Prospect'], playerLimit: 1 })
   })
 
   it('builds release-aware queries for Bowman Draft checklists', async () => {
@@ -292,6 +379,18 @@ describe('fetchEbayBinListings', () => {
                 _bowmanTraderQuery: body.queries[0],
               },
               {
+                itemId: 'ascensions-case-hit',
+                title: 'Eli Willits 1st Bowman Chrome RED AUTO /5 Ascensions SSP Mets',
+                price: { value: '2000.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'draft-night-case-hit',
+                title: '2025 Bowman Draft 1st Chrome Prospect Draft Night Auto Gold Eli Willits /50',
+                price: { value: '756.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
                 itemId: 'bunt-digital',
                 title: '2026 Topps Bunt Digital Bowman Eli Willits Chrome Auto Blue /150',
                 price: { value: '25.00', currency: 'USD' },
@@ -345,6 +444,6 @@ describe('fetchEbayBinListings', () => {
     const result = await fetchEbayBinListings({ model, playerLimit: 1 })
 
     expect(result.listings.map((listing) => listing.item_id)).toEqual(['real-chrome'])
-    expect(result.stats.rejectedPlayerMismatches).toBe(8)
+    expect(result.stats.rejectedPlayerMismatches).toBe(10)
   })
 })

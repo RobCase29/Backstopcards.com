@@ -43,6 +43,7 @@ import {
 } from './lib/ebay'
 import { fetchEbaySoldVariationModel, type EbaySoldModelResult } from './lib/ebaySold'
 import { MARKET_MOVERS_CAPTURE_BOOKMARKLET, buildMarketMoversSoldModel } from './lib/marketMovers'
+import { findStsRanking, scoreStsMomentum } from './lib/stsRankings'
 import {
   CRYSTALLIZED_CHECKLIST,
   fetchCrystallizedCaseHits,
@@ -63,9 +64,23 @@ import type { ChecklistModel, Opportunity, ProspectPulseListing } from './types'
 
 type CategoryFilter = 'all' | ChecklistModel['category']
 type BaseSourceFilter = 'all' | BasePriceSource
-type SortMode = 'base-desc' | 'top-desc' | 'confidence-desc' | 'player-asc' | 'release-desc'
-type BinPlayerScope = 'all' | 'top-40'
+type StsFilter = 'all' | 'ranked' | 'prospects' | 'mlb' | 'unmatched'
+type SortMode =
+  | 'base-desc'
+  | 'top-desc'
+  | 'confidence-desc'
+  | 'sts-rank'
+  | 'prospect-rank'
+  | 'dynasty-score'
+  | 'dynasty-value'
+  | 'momentum-desc'
+  | 'riser-value'
+  | 'bin-target'
+  | 'player-asc'
+  | 'release-desc'
+type BinPlayerScope = 'all' | 'top-40' | 'target-50'
 type BinSearchMode = EbayBinSearchMode
+type BinResultSort = 'edge-desc' | 'score-desc' | 'sts-rank' | 'prospect-rank' | 'trend-desc' | 'price-asc' | 'price-desc' | 'roi-desc'
 type WorkMode = 'lookup' | 'deals' | 'beta'
 
 const CATEGORY_LABELS: Record<ChecklistModel['category'], string> = {
@@ -84,8 +99,48 @@ const SORT_LABELS: Record<SortMode, string> = {
   'base-desc': 'Model Base',
   'top-desc': 'Top Model',
   'confidence-desc': 'Confidence',
+  'sts-rank': 'STS Rank',
+  'prospect-rank': 'Prospect Rank',
+  'dynasty-score': 'Dynasty Score',
+  'dynasty-value': 'Dynasty Value',
+  'momentum-desc': 'Momentum',
+  'riser-value': 'Riser Value',
+  'bin-target': 'BIN Target',
   'player-asc': 'Player A-Z',
   'release-desc': 'Release',
+}
+
+const STS_FILTER_LABELS: Record<StsFilter, string> = {
+  all: 'All players',
+  ranked: 'STS ranked',
+  prospects: 'Prospects',
+  mlb: 'MLB level',
+  unmatched: 'Unmatched',
+}
+
+const BIN_RESULT_SORT_LABELS: Record<BinResultSort, string> = {
+  'edge-desc': 'Spread',
+  'score-desc': 'Model score',
+  'sts-rank': 'STS rank',
+  'prospect-rank': 'Prospect rank',
+  'trend-desc': 'STS trend',
+  'price-asc': 'Price low',
+  'price-desc': 'Price high',
+  'roi-desc': 'ROI',
+}
+
+function rankOrInfinity(value: number | null) {
+  return value ?? Number.POSITIVE_INFINITY
+}
+
+function scoreDynastyBaseValue(row: PricingRow) {
+  if (row.stsDynastyScore === null && row.stsRank === null) return -1
+  const dynastyScore = row.stsDynastyScore ?? 0
+  const basePrice = Math.max(1, row.baseTwmaPrice)
+  const priceDrag = Math.log10(Math.max(10, basePrice)) * 15
+  const prospectBonus = row.stsProspectRank ? 4 : 0
+  const confidenceBonus = row.baseConfidence * 4
+  return Number(Math.max(0, dynastyScore + prospectBonus + confidenceBonus - priceDrag).toFixed(1))
 }
 
 function sortRows(rows: PricingRow[], sortMode: SortMode) {
@@ -95,6 +150,57 @@ function sortRows(rows: PricingRow[], sortMode: SortMode) {
   }
   if (sortMode === 'confidence-desc') {
     return sorted.sort((left, right) => right.baseConfidence - left.baseConfidence || right.baseTwmaPrice - left.baseTwmaPrice)
+  }
+  if (sortMode === 'sts-rank') {
+    return sorted.sort((left, right) => rankOrInfinity(left.stsRank) - rankOrInfinity(right.stsRank) || right.baseTwmaPrice - left.baseTwmaPrice)
+  }
+  if (sortMode === 'prospect-rank') {
+    return sorted.sort(
+      (left, right) =>
+        rankOrInfinity(left.stsProspectRank) - rankOrInfinity(right.stsProspectRank) ||
+        rankOrInfinity(left.stsRank) - rankOrInfinity(right.stsRank) ||
+        right.baseTwmaPrice - left.baseTwmaPrice,
+    )
+  }
+  if (sortMode === 'dynasty-score') {
+    return sorted.sort(
+      (left, right) =>
+        (right.stsDynastyScore ?? -1) - (left.stsDynastyScore ?? -1) ||
+        rankOrInfinity(left.stsRank) - rankOrInfinity(right.stsRank) ||
+        right.baseTwmaPrice - left.baseTwmaPrice,
+    )
+  }
+  if (sortMode === 'dynasty-value') {
+    return sorted.sort(
+      (left, right) =>
+        scoreDynastyBaseValue(right) - scoreDynastyBaseValue(left) ||
+        rankOrInfinity(left.stsRank) - rankOrInfinity(right.stsRank) ||
+        left.baseTwmaPrice - right.baseTwmaPrice,
+    )
+  }
+  if (sortMode === 'momentum-desc') {
+    return sorted.sort(
+      (left, right) =>
+        (right.stsMomentumScore ?? -1) - (left.stsMomentumScore ?? -1) ||
+        (right.stsRiserValueScore ?? -1) - (left.stsRiserValueScore ?? -1) ||
+        rankOrInfinity(left.stsRank) - rankOrInfinity(right.stsRank),
+    )
+  }
+  if (sortMode === 'riser-value') {
+    return sorted.sort(
+      (left, right) =>
+        (right.stsRiserValueScore ?? -1) - (left.stsRiserValueScore ?? -1) ||
+        (right.stsMomentumScore ?? -1) - (left.stsMomentumScore ?? -1) ||
+        rankOrInfinity(left.stsProspectRank) - rankOrInfinity(right.stsProspectRank),
+    )
+  }
+  if (sortMode === 'bin-target') {
+    return sorted.sort(
+      (left, right) =>
+        (right.stsBinTargetScore ?? -1) - (left.stsBinTargetScore ?? -1) ||
+        (right.stsRiserValueScore ?? -1) - (left.stsRiserValueScore ?? -1) ||
+        rankOrInfinity(left.stsProspectRank) - rankOrInfinity(right.stsProspectRank),
+    )
   }
   if (sortMode === 'player-asc') {
     return sorted.sort((left, right) => left.playerName.localeCompare(right.playerName) || right.baseTwmaPrice - left.baseTwmaPrice)
@@ -148,6 +254,7 @@ const CHECKLIST_LOAD_CONCURRENCY = 6
 const BIN_SCAN_CONCURRENCY = 2
 const LEADERBOARD_RENDER_LIMIT = 500
 const BIN_RENDER_LIMIT = 40
+const BIN_MODEL_WINDOW_PCT = 0.2
 const CASE_HIT_RENDER_LIMIT = 24
 const BIN_ALL_MODELS_KEY = 'all-checklists'
 
@@ -178,6 +285,30 @@ function compactVariation(label: string) {
     .trim()
 }
 
+function formatStsLine(row: PricingRow) {
+  const parts = []
+  if (row.stsRank) parts.push(`STS #${row.stsRank.toLocaleString()}`)
+  if (row.stsProspectRank) parts.push(`Prospect #${row.stsProspectRank.toLocaleString()}`)
+  if (row.stsDynastyScore !== null || row.stsRank !== null) parts.push(`${scoreDynastyBaseValue(row).toFixed(1)} value`)
+  if (row.stsBinTargetScore !== null) parts.push(`${row.stsBinTargetScore.toFixed(1)} target`)
+  return parts.join(' / ')
+}
+
+function formatSigned(value: number | null) {
+  if (value === null) return '--'
+  if (value > 0) return `+${value.toLocaleString()}`
+  return value.toLocaleString()
+}
+
+function changeClassName(value: number | null) {
+  if (value === null || value === 0) return 'neutral'
+  return value > 0 ? 'positive' : 'negative'
+}
+
+function compactSummary(summary: string | null) {
+  return summary?.replace(/\s+/g, ' ').trim() ?? ''
+}
+
 function latestFetchedAt(models: ChecklistModel[]) {
   const timestamps = models.map((model) => Date.parse(model.fetchedAt)).filter(Number.isFinite)
   if (timestamps.length === 0) return null
@@ -205,6 +336,81 @@ function sortChecklistModels(models: ChecklistModel[]) {
       (categoryOrder.get(left.category) ?? 9) - (categoryOrder.get(right.category) ?? 9) ||
       checklistModelLabel(left).localeCompare(checklistModelLabel(right)),
   )
+}
+
+function targetRowsForModel(rows: PricingRow[], model: ChecklistModel, limit = 50) {
+  const modelRelease = model.release
+  return rows
+    .filter((row) => row.release === modelRelease && row.releaseYear === model.releaseYear && row.category === model.category && row.stsBinTargetScore !== null)
+    .sort(
+      (left, right) =>
+        (right.stsBinTargetScore ?? -1) - (left.stsBinTargetScore ?? -1) ||
+        (right.stsMomentumScore ?? -1) - (left.stsMomentumScore ?? -1) ||
+        rankOrInfinity(left.stsProspectRank) - rankOrInfinity(right.stsProspectRank) ||
+        right.baseTwmaPrice - left.baseTwmaPrice,
+    )
+    .slice(0, limit)
+}
+
+function opportunityStsContext(opportunity: Opportunity) {
+  const ranking = findStsRanking(opportunity.listing.playerName)
+  return {
+    ranking,
+    rank: ranking?.rank ?? null,
+    prospectRank: ranking?.prospectRank ?? null,
+    change30d: ranking?.change30d ?? null,
+    momentumScore: ranking ? scoreStsMomentum(ranking) : null,
+  }
+}
+
+function sortBinOpportunities(opportunities: Opportunity[], sortMode: BinResultSort) {
+  const sorted = opportunities.map((opportunity) => ({
+    opportunity,
+    sts: opportunityStsContext(opportunity),
+  }))
+
+  sorted.sort((left, right) => {
+    if (sortMode === 'score-desc') {
+      return right.opportunity.score - left.opportunity.score || right.opportunity.edgeDollars - left.opportunity.edgeDollars
+    }
+    if (sortMode === 'sts-rank') {
+      return (
+        rankOrInfinity(left.sts.rank) - rankOrInfinity(right.sts.rank) ||
+        rankOrInfinity(left.sts.prospectRank) - rankOrInfinity(right.sts.prospectRank) ||
+        right.opportunity.edgeDollars - left.opportunity.edgeDollars
+      )
+    }
+    if (sortMode === 'prospect-rank') {
+      return (
+        rankOrInfinity(left.sts.prospectRank) - rankOrInfinity(right.sts.prospectRank) ||
+        rankOrInfinity(left.sts.rank) - rankOrInfinity(right.sts.rank) ||
+        right.opportunity.edgeDollars - left.opportunity.edgeDollars
+      )
+    }
+    if (sortMode === 'trend-desc') {
+      return (
+        (right.sts.momentumScore ?? -1) - (left.sts.momentumScore ?? -1) ||
+        (right.sts.change30d ?? Number.NEGATIVE_INFINITY) - (left.sts.change30d ?? Number.NEGATIVE_INFINITY) ||
+        right.opportunity.edgeDollars - left.opportunity.edgeDollars
+      )
+    }
+    if (sortMode === 'price-asc') {
+      return left.opportunity.listing.allInPrice - right.opportunity.listing.allInPrice || right.opportunity.edgeDollars - left.opportunity.edgeDollars
+    }
+    if (sortMode === 'price-desc') {
+      return right.opportunity.listing.allInPrice - left.opportunity.listing.allInPrice || right.opportunity.edgeDollars - left.opportunity.edgeDollars
+    }
+    if (sortMode === 'roi-desc') {
+      return right.opportunity.expectedRoiPct - left.opportunity.expectedRoiPct || right.opportunity.edgeDollars - left.opportunity.edgeDollars
+    }
+    return right.opportunity.edgeDollars - left.opportunity.edgeDollars || right.opportunity.score - left.opportunity.score
+  })
+
+  return sorted.map(({ opportunity }) => opportunity)
+}
+
+function isWithinBinModelWindow(opportunity: Opportunity) {
+  return opportunity.fairValue > 0 && opportunity.listing.allInPrice <= opportunity.fairValue * (1 + BIN_MODEL_WINDOW_PCT)
 }
 
 function dedupeBinListings(listings: ProspectPulseListing[]) {
@@ -278,6 +484,21 @@ function downloadMatrixCsv(rows: PricingRow[]) {
     'Rank',
     'Player',
     'Release',
+    'STS Rank',
+    'STS Prospect Rank',
+    'STS Dynasty Score',
+    'STS Momentum Score',
+    'STS Riser Value Score',
+    'STS BIN Target Score',
+    'STS Team',
+    'STS Pos',
+    'STS Age',
+    'STS Level',
+    'STS WAR',
+    'STS 3D Change',
+    'STS 7D Change',
+    'STS 14D Change',
+    'STS 30D Change',
     'Modeled Base',
     'Pulse Base',
     'Base Source',
@@ -299,6 +520,21 @@ function downloadMatrixCsv(rows: PricingRow[]) {
       row.rank,
       row.playerName,
       row.release,
+      row.stsRank ?? '',
+      row.stsProspectRank ?? '',
+      row.stsDynastyScore?.toFixed(1) ?? '',
+      row.stsMomentumScore?.toFixed(1) ?? '',
+      row.stsRiserValueScore?.toFixed(1) ?? '',
+      row.stsBinTargetScore?.toFixed(1) ?? '',
+      row.stsTeam ?? '',
+      row.stsPosition ?? '',
+      row.stsAge ?? '',
+      row.stsLevel ?? '',
+      row.stsWar ?? '',
+      row.stsChange3d ?? '',
+      row.stsChange7d ?? '',
+      row.stsChange14d ?? '',
+      row.stsChange30d ?? '',
       row.baseTwmaPrice.toFixed(2),
       row.pulseBasePrice.toFixed(2),
       row.basePriceSource,
@@ -323,7 +559,7 @@ function downloadMatrixCsv(rows: PricingRow[]) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `bowman-multiple-valuations-${new Date().toISOString().slice(0, 10)}.csv`
+  link.download = `backstop-card-finder-valuations-${new Date().toISOString().slice(0, 10)}.csv`
   link.click()
   URL.revokeObjectURL(url)
 }
@@ -423,7 +659,7 @@ function WorkflowCommand({
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
           <span>{pricedRows.toLocaleString()} players</span>
-          <span>{dealCount.toLocaleString()} edges</span>
+          <span>{dealCount.toLocaleString()} candidates</span>
         </div>
       </div>
 
@@ -480,11 +716,13 @@ function Leaderboard({
   totalRows,
   selectedId,
   onSelect,
+  onScanPlayer,
 }: {
   rows: PricingRow[]
   totalRows: number
   selectedId?: string
   onSelect: (rowId: string) => void
+  onScanPlayer: (row: PricingRow) => void
 }) {
   if (rows.length === 0) {
     return (
@@ -507,17 +745,39 @@ function Leaderboard({
       </div>
       <div className="leaderboard-list">
         {rows.map((row) => (
-          <button
+          <article
             className={`leaderboard-row ${selectedId === row.id ? 'selected' : ''}`}
             key={row.id}
-            type="button"
             onClick={() => onSelect(row.id)}
-            aria-pressed={selectedId === row.id}
+            aria-selected={selectedId === row.id}
           >
             <span className="rank-chip">{row.rank}</span>
             <span className="player-chip">
-              <strong>{row.playerName}</strong>
+              <button
+                className="leaderboard-player-button"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onSelect(row.id)
+                  onScanPlayer(row)
+                }}
+                aria-label={`Scan active eBay BINs for ${row.playerName}`}
+              >
+                <strong>{row.playerName}</strong>
+                <span>
+                  <Radio size={12} />
+                  Scan BINs
+                </span>
+              </button>
               <small>{row.release}</small>
+              {row.stsName ? (
+                <span className="sts-inline">
+                  <span>{formatStsLine(row)}</span>
+                  <span className={`change-pill ${changeClassName(row.stsChange30d)}`}>30D {formatSigned(row.stsChange30d)}</span>
+                </span>
+              ) : (
+                <span className="sts-inline muted">STS unmatched</span>
+              )}
             </span>
             <span className="money-chip">
               <strong>{money(row.baseTwmaPrice)}</strong>
@@ -525,14 +785,16 @@ function Leaderboard({
             </span>
             <span className="money-chip top">
               <strong>{money(row.topVariationPrice)}</strong>
-              <small>{Math.round(row.baseConfidence * 100)}% base / {row.variationCount} solved</small>
+              <small>
+                {Math.round(row.baseConfidence * 100)}% base / {row.stsBinTargetScore !== null ? `${row.stsBinTargetScore.toFixed(1)} target` : `${row.variationCount} solved`}
+              </small>
             </span>
             <span className="curve-strip">
               {pickPreviewQuotes(row.ladder).map((quote) => (
                 <PreviewQuote quote={quote} key={`${row.id}:${quote.key}`} />
               ))}
             </span>
-          </button>
+          </article>
         ))}
       </div>
     </div>
@@ -552,6 +814,13 @@ function LadderDetail({ row }: { row?: PricingRow }) {
   }
 
   const topQuote = row.ladder.reduce((best, quote) => (quote.price > best.price ? quote : best), row.ladder[0])
+  const stsChangeItems: Array<[string, number | null]> = [
+    ['3D', row.stsChange3d],
+    ['7D', row.stsChange7d],
+    ['14D', row.stsChange14d],
+    ['30D', row.stsChange30d],
+  ]
+  const stsSummary = compactSummary(row.stsSummary)
 
   return (
     <section className="detail-card ladder-detail">
@@ -582,6 +851,40 @@ function LadderDetail({ row }: { row?: PricingRow }) {
           <strong>{row.baseSales30} / {row.baseSales90}</strong>
         </div>
       </div>
+
+      {row.stsName ? (
+        <div className="sts-context-panel">
+          <div className="sts-context-head">
+            <div>
+              <span>Scout the Statline</span>
+              <strong>{formatStsLine(row)}</strong>
+              <small>
+                {[row.stsTeam, row.stsPosition, row.stsLevel, row.stsAge ? `Age ${row.stsAge}` : null].filter(Boolean).join(' / ')}
+              </small>
+            </div>
+            <div className="sts-score-stack">
+              <span>BIN Target</span>
+              <strong>{row.stsBinTargetScore?.toFixed(1) ?? '--'}</strong>
+              <small>
+                {row.stsMomentumScore?.toFixed(1) ?? '--'} momentum / {row.stsRiserValueScore?.toFixed(1) ?? '--'} riser
+              </small>
+            </div>
+          </div>
+          <div className="sts-change-grid" aria-label="STS rank changes">
+            {stsChangeItems.map(([label, value]) => (
+              <span className={`change-pill ${changeClassName(value)}`} key={label}>
+                {label} {formatSigned(value)}
+              </span>
+            ))}
+          </div>
+          {stsSummary ? <p>{stsSummary}</p> : null}
+        </div>
+      ) : (
+        <div className="sts-context-panel muted">
+          <span>Scout the Statline</span>
+          <strong>No STS match for this checklist name.</strong>
+        </div>
+      )}
 
       <div className="base-source-note">
         <span>Pulse base {money(row.pulseBasePrice)}</span>
@@ -742,11 +1045,14 @@ function BinRadar({
   error,
   minPrice,
   playerScope,
+  targetPlayerCount,
+  resultSort,
   searchMode,
   searchTerm,
   onModelChange,
   onMinPriceChange,
   onPlayerScopeChange,
+  onResultSortChange,
   onSearchModeChange,
   onSearchTermChange,
   onScan,
@@ -763,11 +1069,14 @@ function BinRadar({
   error: string | null
   minPrice: number
   playerScope: BinPlayerScope
+  targetPlayerCount: number
+  resultSort: BinResultSort
   searchMode: BinSearchMode
   searchTerm: string
   onModelChange: (value: string) => void
   onMinPriceChange: (value: number) => void
   onPlayerScopeChange: (value: BinPlayerScope) => void
+  onResultSortChange: (value: BinResultSort) => void
   onSearchModeChange: (value: BinSearchMode) => void
   onSearchTermChange: (value: string) => void
   onScan: () => void
@@ -791,13 +1100,16 @@ function BinRadar({
   const trimmedSearchTerm = searchTerm.trim()
   const requiresFocus = searchMode !== 'checklist'
   const hasFocus = !requiresFocus || trimmedSearchTerm.length > 0
-  const canScan = configured && setCount > 0 && hasPlayerUniverse && hasFocus && !loading && !modelLoading
+  const hasTargetQueue = playerScope !== 'target-50' || searchMode === 'player' || targetPlayerCount > 0
+  const canScan = configured && setCount > 0 && hasPlayerUniverse && hasFocus && hasTargetQueue && !loading && !modelLoading
   const readinessLabel = !configured
     ? 'eBay offline'
     : setCount === 0
       ? 'Model pending'
       : !hasPlayerUniverse
         ? 'Player list needed'
+        : !hasTargetQueue
+          ? 'Target 50 waiting'
         : !hasFocus
           ? searchMode === 'player'
             ? 'Enter player'
@@ -811,12 +1123,24 @@ function BinRadar({
         ? 'eBay offline'
         : setCount === 0 || !hasPlayerUniverse
           ? 'Player list needed'
+          : !hasTargetQueue
+            ? 'Target 50 waiting'
           : !hasFocus
             ? searchMode === 'player'
               ? 'Enter player'
               : 'Enter variation'
           : 'Scan BINs'
   const focusPlaceholder = searchMode === 'player' ? 'Eli Willits' : 'packfractor'
+  const scopeLabel =
+    playerScope === 'target-50'
+      ? selectedModelKey === BIN_ALL_MODELS_KEY
+        ? `Target 50 per checklist (${targetPlayerCount.toLocaleString()} players)`
+        : `Target 50 (${targetPlayerCount.toLocaleString()} players)`
+      : playerScope === 'top-40'
+        ? selectedModelKey === BIN_ALL_MODELS_KEY
+          ? 'Top 40 per checklist'
+          : 'Top 40 by base'
+        : `${playerCount.toLocaleString()} players`
   const scanCopy =
     searchMode === 'player'
       ? trimmedSearchTerm
@@ -826,7 +1150,7 @@ function BinRadar({
         ? trimmedSearchTerm
           ? `Scanning ${trimmedSearchTerm} listings across ${selectedSetLabel}.`
           : 'Type a parallel name such as packfractor, gold shimmer, or red lava.'
-        : `${playerScope === 'top-40' ? 'Top 40 per checklist' : `${playerCount.toLocaleString()} players`} queued across ${selectedSetLabel}.`
+        : `${scopeLabel} queued across ${selectedSetLabel}.`
 
   return (
     <section className="bin-radar">
@@ -844,11 +1168,12 @@ function BinRadar({
             {configured ? 'eBay live' : 'eBay keys needed'}
           </span>
           <span className={hasPlayerUniverse ? 'connected' : 'offline'}>{readinessLabel}</span>
+          <span>Raw model</span>
           <span>{selectedSetPill}</span>
           <span>{playerCount.toLocaleString()} players</span>
           <span>{searchMode === 'checklist' ? 'Checklist scan' : `${searchMode}: ${trimmedSearchTerm || 'focus needed'}`}</span>
           <span>{listingCount.toLocaleString()} listings</span>
-          <span>{scan ? `${opportunities.length.toLocaleString()} edges` : 'No scan yet'}</span>
+          <span>{scan ? `${opportunities.length.toLocaleString()} candidates` : 'No scan yet'}</span>
           {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
         </div>
       </div>
@@ -904,6 +1229,17 @@ function BinRadar({
           <select value={playerScope} onChange={(event) => onPlayerScopeChange(event.target.value as BinPlayerScope)}>
             <option value="all">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'All checklist players' : 'Full checklist'}</option>
             <option value="top-40">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Top 40 per checklist' : 'Top 40 by base'}</option>
+            <option value="target-50">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Target 50 per checklist' : 'Target 50 model'}</option>
+          </select>
+        </label>
+        <label className="bin-control result-sort-control">
+          <span>Sort</span>
+          <select value={resultSort} onChange={(event) => onResultSortChange(event.target.value as BinResultSort)}>
+            {Object.entries(BIN_RESULT_SORT_LABELS).map(([sort, label]) => (
+              <option value={sort} key={sort}>
+                {label}
+              </option>
+            ))}
           </select>
         </label>
         <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
@@ -961,8 +1297,8 @@ function BinRadar({
         <div className="bin-empty-state muted">
           <Radio size={24} />
           <div>
-            <strong>No positive BIN edges cleared the model.</strong>
-            <span>{listingCount.toLocaleString()} active listings reviewed; none priced below modeled value.</span>
+            <strong>No BINs cleared the model window.</strong>
+            <span>{listingCount.toLocaleString()} active listings reviewed; none were priced at or within 20% above modeled value.</span>
           </div>
         </div>
       ) : (
@@ -975,45 +1311,60 @@ function BinRadar({
             <span>Spread</span>
             <span>Signal</span>
           </div>
-          {opportunities.map((opportunity, index) => (
-            <article className={`bin-opportunity-row lane-${opportunity.lane}`} key={opportunity.listing.id}>
-              <div className="bin-rank-cell">
-                <strong>#{index + 1}</strong>
-                <span>{opportunity.grade}</span>
-              </div>
-              <div className="bin-listing-cell">
-                <strong>{opportunity.listing.playerName}</strong>
-                <span>{opportunity.listing.title}</span>
-                <div className="bin-evidence-strip">
-                  <small>{opportunity.matchedVariation ?? opportunity.listing.variationLabel}</small>
-                  {searchMode === 'variation' && trimmedSearchTerm ? <small>Title hit: {trimmedSearchTerm}</small> : null}
-                  <small>{opportunity.valuationSource.replaceAll('-', ' ')}</small>
-                  {opportunity.warnings[0] ? <small className="warning">{opportunity.warnings[0]}</small> : null}
+          {opportunities.map((opportunity, index) => {
+            const sts = opportunityStsContext(opportunity)
+            return (
+              <article className={`bin-opportunity-row lane-${opportunity.lane}`} key={opportunity.listing.id}>
+                <div className="bin-rank-cell">
+                  <strong>#{index + 1}</strong>
+                  <span>{opportunity.grade}</span>
                 </div>
-              </div>
-              <div className="bin-money-cell">
-                <strong>{money(opportunity.listing.allInPrice)}</strong>
-                <span>BIN + ship</span>
-              </div>
-              <div className="bin-money-cell">
-                <strong>{money(opportunity.fairValue)}</strong>
-                <span>{Math.round(opportunity.modelConfidence * 100)}% model</span>
-              </div>
-              <div className="bin-money-cell edge">
-                <strong>{money(opportunity.edgeDollars)}</strong>
-                <span>{percent(opportunity.expectedRoiPct)} ROI</span>
-              </div>
-              <div className="bin-signal-cell">
-                <span>{opportunity.action}</span>
-                {opportunity.listing.listingUrl ? (
-                  <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
-                    <ExternalLink size={14} />
-                    eBay
-                  </a>
-                ) : null}
-              </div>
-            </article>
-          ))}
+                <div className="bin-listing-cell">
+                  <strong>{opportunity.listing.playerName}</strong>
+                  <span>{opportunity.listing.title}</span>
+                  <div className="bin-evidence-strip">
+                    <small>{opportunity.matchedVariation ?? opportunity.listing.variationLabel}</small>
+                    {searchMode === 'variation' && trimmedSearchTerm ? <small>Title hit: {trimmedSearchTerm}</small> : null}
+                    <small>{opportunity.valuationSource.replaceAll('-', ' ')}</small>
+                    {sts.ranking ? (
+                      <>
+                        {sts.rank ? <small className="sts-chip">STS #{sts.rank.toLocaleString()}</small> : null}
+                        {sts.prospectRank ? <small className="sts-chip">Prospect #{sts.prospectRank.toLocaleString()}</small> : null}
+                        {sts.momentumScore !== null ? <small className="sts-chip">Trend {sts.momentumScore.toFixed(1)}</small> : null}
+                        {sts.change30d !== null ? (
+                          <small className={`sts-chip ${changeClassName(sts.change30d)}`}>30D {formatSigned(sts.change30d)}</small>
+                        ) : null}
+                      </>
+                    ) : (
+                      <small className="warning">STS unmatched</small>
+                    )}
+                    {opportunity.warnings[0] ? <small className="warning">{opportunity.warnings[0]}</small> : null}
+                  </div>
+                </div>
+                <div className="bin-money-cell">
+                  <strong>{money(opportunity.listing.allInPrice)}</strong>
+                  <span>BIN + ship</span>
+                </div>
+                <div className="bin-money-cell">
+                  <strong>{money(opportunity.fairValue)}</strong>
+                  <span>{Math.round(opportunity.modelConfidence * 100)}% model</span>
+                </div>
+                <div className={`bin-money-cell ${opportunity.edgeDollars >= 0 ? 'edge' : 'near-model'}`}>
+                  <strong>{money(opportunity.edgeDollars)}</strong>
+                  <span>{percent(opportunity.expectedRoiPct)} ROI</span>
+                </div>
+                <div className="bin-signal-cell">
+                  <span>{opportunity.action}</span>
+                  {opportunity.listing.listingUrl ? (
+                    <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={14} />
+                      eBay
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            )
+          })}
         </div>
       )}
     </section>
@@ -1443,6 +1794,7 @@ function App() {
   const [releaseFilter, setReleaseFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all')
   const [baseSourceFilter, setBaseSourceFilter] = useState<BaseSourceFilter>('all')
+  const [stsFilter, setStsFilter] = useState<StsFilter>('all')
   const [sortMode, setSortMode] = useState<SortMode>('base-desc')
   const [selectedRowId, setSelectedRowId] = useState<string | undefined>()
   const [workMode, setWorkMode] = useState<WorkMode>('lookup')
@@ -1454,6 +1806,7 @@ function App() {
   const [binPlayerScope, setBinPlayerScope] = useState<BinPlayerScope>('all')
   const [binSearchMode, setBinSearchMode] = useState<BinSearchMode>('checklist')
   const [binSearchTerm, setBinSearchTerm] = useState('')
+  const [binResultSort, setBinResultSort] = useState<BinResultSort>('edge-desc')
   const [binModelKey, setBinModelKey] = useState('')
   const [binScan, setBinScan] = useState<EbayBinScanResult | null>(null)
   const [caseHitScan, setCaseHitScan] = useState<CaseHitScanResult | null>(null)
@@ -1622,6 +1975,17 @@ function App() {
     if (selectedModel) return [selectedModel]
     return []
   }, [effectiveBinModelKey, binModelOptions])
+  const binTargetRowsByModel = useMemo(() => {
+    const targets = new Map<string, PricingRow[]>()
+    for (const model of selectedBinModels) {
+      targets.set(checklistModelKey(model), targetRowsForModel(matrix.rows, model, 50))
+    }
+    return targets
+  }, [matrix.rows, selectedBinModels])
+  const binTargetPlayerCount = useMemo(
+    () => selectedBinModels.reduce((total, model) => total + (binTargetRowsByModel.get(checklistModelKey(model))?.length ?? 0), 0),
+    [binTargetRowsByModel, selectedBinModels],
+  )
   const binScoreSettings = useMemo(() => {
     const selectedModel = selectedBinModels[0]
     return {
@@ -1638,11 +2002,11 @@ function App() {
     }
   }, [binMinPrice, effectiveBinModelKey, selectedBinModels])
   const binOpportunities = useMemo(
-    () =>
-      rankOpportunities(binListings, binScoreSettings, selectedBinModels)
-        .filter((opportunity) => opportunity.edgeDollars > 0)
-        .slice(0, BIN_RENDER_LIMIT),
-    [binListings, binScoreSettings, selectedBinModels],
+    () => sortBinOpportunities(
+      rankOpportunities(binListings, binScoreSettings, selectedBinModels).filter(isWithinBinModelWindow),
+      binResultSort,
+    ).slice(0, BIN_RENDER_LIMIT),
+    [binListings, binResultSort, binScoreSettings, selectedBinModels],
   )
 
   const visibleRows = useMemo(() => {
@@ -1651,10 +2015,14 @@ function App() {
       if (releaseFilter !== 'all' && row.release !== releaseFilter) return false
       if (categoryFilter !== 'all' && row.category !== categoryFilter) return false
       if (baseSourceFilter !== 'all' && row.basePriceSource !== baseSourceFilter) return false
+      if (stsFilter === 'ranked' && !row.stsRank) return false
+      if (stsFilter === 'prospects' && !row.stsProspectRank) return false
+      if (stsFilter === 'mlb' && row.stsLevel?.toUpperCase() !== 'MLB') return false
+      if (stsFilter === 'unmatched' && row.stsName) return false
       return true
     })
     return sortRows(filteredRows, sortMode)
-  }, [baseSourceFilter, categoryFilter, matrix.rows, query, releaseFilter, sortMode])
+  }, [baseSourceFilter, categoryFilter, matrix.rows, query, releaseFilter, sortMode, stsFilter])
   const renderedRows = useMemo(() => visibleRows.slice(0, LEADERBOARD_RENDER_LIMIT), [visibleRows])
   const selectedRow = renderedRows.find((row) => row.id === selectedRowId) ?? renderedRows[0]
   const topBase = matrix.rows[0]?.baseTwmaPrice ?? 0
@@ -1735,14 +2103,53 @@ function App() {
     resetBinScan()
   }
 
+  function scanBinsForLookupRow(row: PricingRow) {
+    const rowModel =
+      binModelOptions.find(
+        (model) => model.release === row.release && model.releaseYear === row.releaseYear && model.category === row.category,
+      ) ?? null
+    const scanModels = rowModel ? [rowModel] : selectedBinModels
+
+    setSelectedRowId(row.id)
+    setWorkMode('deals')
+    setBinModelKey(rowModel ? checklistModelKey(rowModel) : BIN_ALL_MODELS_KEY)
+    setBinSearchMode('player')
+    setBinSearchTerm(row.playerName)
+    setBinPlayerScope('all')
+    setBinListings([])
+    setBinScan(null)
+    setBinError(null)
+
+    void scanEbayBinListings({
+      models: scanModels,
+      playerScope: 'all',
+      searchMode: 'player',
+      searchTerm: row.playerName,
+    })
+  }
+
   function updateCaseHitMinPrice(value: number) {
     setCaseHitMinPrice(value)
     setCaseHitScan(null)
     setCaseHitError(null)
   }
 
-  async function scanEbayBinListings() {
-    if (selectedBinModels.length === 0) {
+  async function scanEbayBinListings(
+    overrides: {
+      models?: ChecklistModel[]
+      minPrice?: number
+      playerScope?: BinPlayerScope
+      searchMode?: BinSearchMode
+      searchTerm?: string
+    } = {},
+  ) {
+    const activeModels = overrides.models ?? selectedBinModels
+    const activeMinPrice = overrides.minPrice ?? binMinPrice
+    const activePlayerScope = overrides.playerScope ?? binPlayerScope
+    const activeSearchMode = overrides.searchMode ?? binSearchMode
+    const activeSearchTerm = overrides.searchTerm ?? binSearchTerm
+
+    if (activeModels.length === 0) {
       setBinError('No checklist model is loaded yet.')
       return
     }
@@ -1752,16 +2159,29 @@ function App() {
       return
     }
 
-    const scanModels = selectedBinModels.filter((model) => model.players.length > 0)
-    if (scanModels.length === 0) {
+    const playerLoadedModels = activeModels.filter((model) => model.players.length > 0)
+    if (playerLoadedModels.length === 0) {
       setBinError('ProspectPulse player lists are not loaded for the selected checklist scope.')
       return
     }
 
-    if (binSearchMode !== 'checklist' && !binSearchTerm.trim()) {
-      setBinError(binSearchMode === 'player' ? 'Enter a player name to scan.' : 'Enter a variation to scan.')
+    if (activeSearchMode !== 'checklist' && !activeSearchTerm.trim()) {
+      setBinError(activeSearchMode === 'player' ? 'Enter a player name to scan.' : 'Enter a variation to scan.')
       return
     }
+
+    if (
+      activePlayerScope === 'target-50' &&
+      activeSearchMode !== 'player' &&
+      playerLoadedModels.every((model) => targetRowsForModel(matrix.rows, model, 50).length === 0)
+    ) {
+      setBinError('Target 50 needs priced checklist rows matched to STS rankings before scanning.')
+      return
+    }
+    const scanModels =
+      activePlayerScope === 'target-50' && activeSearchMode !== 'player'
+        ? playerLoadedModels.filter((model) => targetRowsForModel(matrix.rows, model, 50).length > 0)
+        : playerLoadedModels
 
     binRequestRef.current?.abort()
     const controller = new AbortController()
@@ -1771,13 +2191,15 @@ function App() {
 
     try {
       const settledScans = await mapWithConcurrency(scanModels, BIN_SCAN_CONCURRENCY, async (model) => {
+        const targetRows = activePlayerScope === 'target-50' ? targetRowsForModel(matrix.rows, model, 50) : []
         try {
           const value = await fetchEbayBinListings({
             model,
-            minPrice: binMinPrice,
-            playerLimit: binPlayerScope === 'top-40' ? 40 : null,
-            searchMode: binSearchMode,
-            searchTerm: binSearchTerm,
+            minPrice: activeMinPrice,
+            playerLimit: activePlayerScope === 'top-40' ? 40 : null,
+            playerNames: activePlayerScope === 'target-50' ? targetRows.map((row) => row.playerName) : undefined,
+            searchMode: activeSearchMode,
+            searchTerm: activeSearchTerm,
             signal: controller.signal,
           })
           return { status: 'fulfilled' as const, value }
@@ -2032,6 +2454,7 @@ function App() {
           <div className="valuation-workspace">
             <div className="metric-grid">
               <StatTile icon={Database} label="Players" value={matrix.totalPricedPlayers.toLocaleString()} tone="info" />
+              <StatTile icon={Brain} label="STS Matches" value={`${matrix.stsMatchedRows.toLocaleString()} / ${matrix.stsProspectRows.toLocaleString()}`} tone="neutral" />
               <StatTile icon={Layers} label="Variations" value={matrix.totalVariations.toLocaleString()} tone="neutral" />
               <StatTile icon={BadgeDollarSign} label="Top Base" value={money(topBase)} tone="good" />
               <StatTile icon={Gauge} label="Top Model" value={money(topVariation)} tone="warn" />
@@ -2076,6 +2499,16 @@ function App() {
                 </select>
               </label>
               <label className="filter-select">
+                <span>STS</span>
+                <select value={stsFilter} onChange={(event) => setStsFilter(event.target.value as StsFilter)}>
+                  {Object.entries(STS_FILTER_LABELS).map(([filter, label]) => (
+                    <option value={filter} key={filter}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="filter-select">
                 <span>Sort</span>
                 <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
                   {Object.entries(SORT_LABELS).map(([mode, label]) => (
@@ -2097,7 +2530,13 @@ function App() {
               ) : null}
             </div>
 
-            <Leaderboard rows={renderedRows} totalRows={visibleRows.length} selectedId={selectedRow?.id} onSelect={setSelectedRowId} />
+            <Leaderboard
+              rows={renderedRows}
+              totalRows={visibleRows.length}
+              selectedId={selectedRow?.id}
+              onSelect={setSelectedRowId}
+              onScanPlayer={scanBinsForLookupRow}
+            />
           </div>
 
           <aside className="detail-rail">
@@ -2125,11 +2564,14 @@ function App() {
             error={binError}
             minPrice={binMinPrice}
             playerScope={binPlayerScope}
+            targetPlayerCount={binTargetPlayerCount}
+            resultSort={binResultSort}
             searchMode={binSearchMode}
             searchTerm={binSearchTerm}
             onModelChange={updateBinModelKey}
             onMinPriceChange={updateBinMinPrice}
             onPlayerScopeChange={updateBinPlayerScope}
+            onResultSortChange={setBinResultSort}
             onSearchModeChange={updateBinSearchMode}
             onSearchTermChange={updateBinSearchTerm}
             onScan={() => void scanEbayBinListings()}

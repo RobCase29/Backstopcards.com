@@ -1,5 +1,6 @@
 import type { ChecklistModel, ProspectPulseListing } from '../types'
 import { titleEligibleForBowmanChromeAutoModel } from './cardTitleGuards'
+import { findStsRanking } from './stsRankings'
 
 type EbayQueryMeta = {
   q?: string
@@ -101,7 +102,10 @@ function firstString(values: unknown[], fallback = '') {
 
 function normalizedWords(value: string) {
   return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b\.?/g, ' ')
     .replace(/[^a-z0-9]+/g, ' ')
     .split(/\s+/)
     .filter(Boolean)
@@ -171,14 +175,19 @@ function buildPlayerQuery(model: ChecklistModel, playerName: string, variationTe
 function selectedPlayers(options: {
   model: ChecklistModel
   playerLimit?: number | null
+  playerNames?: string[]
   searchMode?: EbayBinSearchMode
   searchTerm?: string
 }) {
-  const { model, playerLimit, searchMode = 'checklist', searchTerm = '' } = options
+  const { model, playerLimit, playerNames = [], searchMode = 'checklist', searchTerm = '' } = options
   const players = [...model.players].sort(
     (left, right) => right.baseAvgPrice - left.baseAvgPrice || left.playerName.localeCompare(right.playerName),
   )
   if (searchMode === 'player') return players.filter((player) => matchesSearchTerm(player.playerName, searchTerm))
+  if (playerNames.length > 0) {
+    const queuedNames = new Set(playerNames.map(normalizedKey))
+    return players.filter((player) => queuedNames.has(normalizedKey(player.playerName)))
+  }
   if (!playerLimit || playerLimit <= 0) return players
   return players.slice(0, playerLimit)
 }
@@ -218,6 +227,7 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   const fixedPrice = buyingOptions.includes('FIXED_PRICE') || buyingOptions.length === 0
   const itemId = firstString([item.legacyItemId, item.itemId], title)
   const price = numberValue(item.price?.value, 0)
+  const stsRanking = findStsRanking(playerName)
 
   return {
     item_id: itemId,
@@ -242,6 +252,11 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
     comps: [],
     prospect: {
       name: playerName,
+      team: stsRanking?.team,
+      level: stsRanking?.level,
+      position: stsRanking?.pos,
+      age: stsRanking?.age,
+      ranking: stsRanking?.prospectRank ?? stsRanking?.rank,
     },
   }
 }
@@ -272,6 +287,7 @@ export async function fetchEbayBinListings(options: {
   model: ChecklistModel
   minPrice?: number
   playerLimit?: number | null
+  playerNames?: string[]
   limitPerPlayer?: number
   maxPagesPerPlayer?: number
   searchMode?: EbayBinSearchMode
@@ -287,6 +303,7 @@ export async function fetchEbayBinListings(options: {
   const players = selectedPlayers({
     model: options.model,
     playerLimit: options.playerLimit,
+    playerNames: options.playerNames,
     searchMode,
     searchTerm,
   })

@@ -16,6 +16,8 @@ export const BOWMAN_CHROME_AUTO_MODEL_BLOCKERS = [
   /\bpanini\b/i,
   /\bleaf\b/i,
   /\bpower\s*chords?\b/i,
+  /\bascensions?\b/i,
+  /\bdraft\s+night\b/i,
   /\bdie[-\s]?cut\b/i,
   /\belectric\s+sluggers?\b/i,
   /\bunder\s+the\s+radar\b/i,

@@ -93,6 +93,12 @@ describe('normalizeListing', () => {
     expect(normalized.isGraded).toBe(true)
   })
 
+  it('detects compact and hobby-style grade wording', () => {
+    expect(normalizeListing(listing({ title: '2026 Bowman Chrome Eli Willits 1st Auto PSA10 Blue /150' })).isGraded).toBe(true)
+    expect(normalizeListing(listing({ title: '2026 Bowman Chrome Eli Willits 1st Auto BGS 9.5 Blue /150' })).isGraded).toBe(true)
+    expect(normalizeListing(listing({ title: '2026 Bowman Chrome Eli Willits 1st Auto GEM MT 10 Blue /150' })).isGraded).toBe(true)
+  })
+
   it('does not treat Bowman First Edition as a 1st Bowman auto by itself', () => {
     const normalized = normalizeListing(
       listing({
@@ -115,6 +121,18 @@ describe('normalizeListing', () => {
 
     expect(normalized.kind).toBe('bin')
     expect(normalized.status).toBe('ended')
+  })
+
+  it('prefers explicit release metadata when labeling listings', () => {
+    const normalized = normalizeListing(
+      listing({
+        release: '2025-Bowman-Chrome',
+        release_year: 2025,
+        product_type: 'Bowman Chrome',
+      }),
+    )
+
+    expect(normalized.releaseLabel).toBe('2025 Bowman Chrome')
   })
 })
 
@@ -507,6 +525,22 @@ describe('rankOpportunities', () => {
     expect(opportunities.map((opportunity) => opportunity.listing.id)).toEqual(['active-card'])
   })
 
+  it('excludes graded listings from raw BIN rankings', () => {
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'graded-card',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150 PSA10',
+          current_price: 100,
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      model,
+    )
+
+    expect(opportunities).toEqual([])
+  })
+
   it('excludes plausible Bowman autos when the player is not on a loaded checklist', () => {
     const opportunities = rankOpportunities(
       [
@@ -518,6 +552,29 @@ describe('rankOpportunities', () => {
       ],
       DEFAULT_SETTINGS,
       model,
+    )
+
+    expect(opportunities).toEqual([])
+  })
+
+  it('excludes case-hit insert autos from the chrome auto model even when cached or imported', () => {
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'ascensions-case-hit',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman RED AUTO /5 Ascensions SSP',
+          current_price: 500,
+        }),
+        listing({
+          item_id: 'draft-night-case-hit',
+          title: '2025 Bowman Draft 1st Chrome Prospect Draft Night Auto Gold Eli Willits /50',
+          release_year: 2025,
+          product_type: 'Bowman Draft Chrome',
+          current_price: 500,
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      [model, draftModel],
     )
 
     expect(opportunities).toEqual([])

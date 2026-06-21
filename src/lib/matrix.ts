@@ -1,4 +1,5 @@
 import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
+import { findStsRanking, scoreStsBinTarget, scoreStsMomentum, scoreStsRanking, scoreStsRiserValue } from './stsRankings'
 
 export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'twma-fallback'
 export type SaleChannel = 'auction' | 'bin' | 'unknown'
@@ -46,6 +47,23 @@ export interface PricingRow {
   id: string
   rank: number
   playerName: string
+  stsName: string | null
+  stsTeam: string | null
+  stsPosition: string | null
+  stsAge: number | null
+  stsLevel: string | null
+  stsRank: number | null
+  stsProspectRank: number | null
+  stsDynastyScore: number | null
+  stsMomentumScore: number | null
+  stsRiserValueScore: number | null
+  stsBinTargetScore: number | null
+  stsWar: number | null
+  stsChange3d: number | null
+  stsChange7d: number | null
+  stsChange14d: number | null
+  stsChange30d: number | null
+  stsSummary: string | null
   release: string
   releaseYear: number
   category: ChecklistModel['category']
@@ -100,6 +118,8 @@ export interface PricingMatrix {
   weightedBaseRows: number
   blendedBaseRows: number
   fallbackBaseRows: number
+  stsMatchedRows: number
+  stsProspectRows: number
 }
 
 interface VariationBucket {
@@ -141,6 +161,13 @@ function numberValue(value: number | string | null | undefined) {
   if (typeof value !== 'string') return null
   const parsed = Number(value.replace(/[$,\s]/g, ''))
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function searchKey(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
 }
 
 function salePrice(sale: ChecklistSale) {
@@ -503,6 +530,7 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
     })
 
     for (const { player, estimate: baseEstimate } of pricedEntries) {
+      const stsRanking = findStsRanking(player.playerName)
       const ladder = variations.map<VariationQuote>((variation) => {
         const price = Number((baseEstimate.price * variation.avgMultiplier).toFixed(2))
         return {
@@ -515,13 +543,38 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
         }
       })
       const topVariationPrice = ladder.reduce((max, quote) => Math.max(max, quote.price), baseEstimate.price)
-      const searchText = [player.playerName, model.release, model.releaseYear, model.category, ...ladder.map((quote) => quote.label)]
-        .join(' ')
-        .toLowerCase()
+      const searchText = searchKey([
+        player.playerName,
+        model.release,
+        model.releaseYear,
+        model.category,
+        stsRanking?.team,
+        stsRanking?.pos,
+        stsRanking?.level,
+        ...ladder.map((quote) => quote.label),
+      ]
+        .join(' '))
 
       rowsWithoutRank.push({
         id: `${model.release}:${player.playerName}`,
         playerName: player.playerName,
+        stsName: stsRanking?.name ?? null,
+        stsTeam: stsRanking?.team ?? null,
+        stsPosition: stsRanking?.pos ?? null,
+        stsAge: stsRanking?.age ?? null,
+        stsLevel: stsRanking?.level ?? null,
+        stsRank: stsRanking?.rank ?? null,
+        stsProspectRank: stsRanking?.prospectRank ?? null,
+        stsDynastyScore: stsRanking ? scoreStsRanking(stsRanking) : null,
+        stsMomentumScore: stsRanking ? scoreStsMomentum(stsRanking) : null,
+        stsRiserValueScore: stsRanking ? scoreStsRiserValue(stsRanking, baseEstimate.price) : null,
+        stsBinTargetScore: stsRanking ? scoreStsBinTarget(stsRanking, baseEstimate.price) : null,
+        stsWar: stsRanking?.war ?? null,
+        stsChange3d: stsRanking?.change3d ?? null,
+        stsChange7d: stsRanking?.change7d ?? null,
+        stsChange14d: stsRanking?.change14d ?? null,
+        stsChange30d: stsRanking?.change30d ?? null,
+        stsSummary: stsRanking?.summary ?? null,
         release: model.release,
         releaseYear: model.releaseYear,
         category: model.category,
@@ -551,6 +604,8 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
   const rows = rowsWithoutRank
     .sort((left, right) => right.baseTwmaPrice - left.baseTwmaPrice || right.topVariationPrice - left.topVariationPrice)
     .map((row, index) => ({ ...row, rank: index + 1 }))
+  const stsMatchedRows = rows.filter((row) => row.stsName).length
+  const stsProspectRows = rows.filter((row) => row.stsProspectRank).length
 
   return {
     rows,
@@ -565,13 +620,14 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
     weightedBaseRows: summaries.reduce((total, summary) => total + summary.weightedBaseRows, 0),
     blendedBaseRows: summaries.reduce((total, summary) => total + summary.blendedBaseRows, 0),
     fallbackBaseRows: summaries.reduce((total, summary) => total + summary.fallbackBaseRows, 0),
+    stsMatchedRows,
+    stsProspectRows,
   }
 }
 
 export function filterPricingRows(rows: PricingRow[], query: string) {
-  const tokens = query
+  const tokens = searchKey(query)
     .trim()
-    .toLowerCase()
     .split(/\s+/)
     .filter(Boolean)
 
