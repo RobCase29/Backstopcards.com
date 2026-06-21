@@ -55,7 +55,6 @@ import {
   pickPreviewQuotes,
   type BasePriceSource,
   type PricingRow,
-  type ReleaseMathSummary,
   type VariationQuote,
 } from './lib/matrix'
 import { DEFAULT_SETTINGS, rankOpportunities } from './lib/scoring'
@@ -303,64 +302,6 @@ function MarketTape({
           <strong>{value}</strong>
         </div>
       ))}
-    </section>
-  )
-}
-
-function MathAudit({
-  summaries,
-  missingBaseRows,
-  unresolvedMultipliers,
-}: {
-  summaries: ReleaseMathSummary[]
-  missingBaseRows: number
-  unresolvedMultipliers: number
-}) {
-  return (
-    <section className="math-audit">
-      <div className="audit-title">
-        <Sigma size={18} />
-        <div>
-          <h2>Multiple Valuations</h2>
-          <span>30/90 base x release multiple</span>
-        </div>
-      </div>
-
-      <div className="audit-grid">
-        {summaries.length > 0 ? (
-          summaries.map((summary) => (
-            <div className="audit-card" key={summary.release}>
-              <span>{summary.release}</span>
-              <strong>{summary.resolvedCells.toLocaleString()}</strong>
-              <small>
-                {summary.pricedPlayers.toLocaleString()} players x {summary.variations.toLocaleString()} variations
-              </small>
-              <em>
-                {formatMultiplier(summary.minMultiplier)} to {formatMultiplier(summary.maxMultiplier)}
-              </em>
-              <small>
-                {summary.weightedBaseRows} weighted / {summary.blendedBaseRows} blended / {summary.fallbackBaseRows} fallback
-              </small>
-            </div>
-          ))
-        ) : (
-          <div className="audit-card muted">
-            <span>Waiting</span>
-            <strong>--</strong>
-            <small>Connect ProspectPulse for player base data</small>
-            <em>Multipliers ready after load</em>
-          </div>
-        )}
-      </div>
-
-      {missingBaseRows > 0 || unresolvedMultipliers > 0 ? (
-        <div className="audit-warning">
-          <strong>Open math items</strong>
-          <span>
-            {missingBaseRows.toLocaleString()} missing base rows / {unresolvedMultipliers.toLocaleString()} unusable multipliers
-          </span>
-        </div>
-      ) : null}
     </section>
   )
 }
@@ -1419,6 +1360,14 @@ function App() {
   const topBase = matrix.rows[0]?.baseTwmaPrice ?? 0
   const topVariation = matrix.rows.reduce((max, row) => Math.max(max, row.topVariationPrice), 0)
   const modelUpdatedAt = latestFetchedAt(checklistModels)
+  const openMathItems = matrix.missingBaseRows + matrix.unresolvedMultipliers
+  const mathHealth = matrix.totalResolvedCells === 0 ? 'waiting' : openMathItems > 0 ? 'warning' : 'healthy'
+  const mathHealthLabel =
+    mathHealth === 'waiting'
+      ? 'Math waiting'
+      : mathHealth === 'warning'
+        ? `${matrix.missingBaseRows.toLocaleString()} base gaps / ${matrix.unresolvedMultipliers.toLocaleString()} multiplier gaps`
+        : 'Math clean'
 
   async function refreshChecklistUniverse() {
     const catalog = await loadChecklistCatalog()
@@ -1673,6 +1622,10 @@ function App() {
           {matrix.weightedBaseRows.toLocaleString()} weighted / {matrix.blendedBaseRows.toLocaleString()} blended /{' '}
           {matrix.fallbackBaseRows.toLocaleString()} fallback
         </span>
+        <span className={`model-health-chip ${mathHealth}`}>
+          <Sigma size={14} />
+          {mathHealthLabel}
+        </span>
         {checklistProgress ? <span>Loading {checklistProgress.loaded.toLocaleString()} / {checklistProgress.total.toLocaleString()}</span> : null}
         <span>{modelUpdatedAt ? `Updated ${new Date(modelUpdatedAt).toLocaleTimeString()}` : 'Awaiting player bases'}</span>
         {catalogError ? <strong>{catalogError}</strong> : null}
@@ -1688,8 +1641,6 @@ function App() {
         loadedSets={checklistModels.length}
         liveConnected={liveConnected}
       />
-
-      <MathAudit summaries={matrix.summaries} missingBaseRows={matrix.missingBaseRows} unresolvedMultipliers={matrix.unresolvedMultipliers} />
 
       <SoldModelLab
         model={bowman2026Model}
