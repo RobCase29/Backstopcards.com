@@ -56,12 +56,12 @@ type EbayTokenCache = {
 
 let ebayTokenCache: EbayTokenCache | null = null
 
-async function getEbayAccessToken(env: Record<string, string>, sandbox: boolean) {
+async function getEbayAccessToken(env: Record<string, string>, sandbox: boolean, scope = EBAY_OAUTH_SCOPE) {
   const clientId = env.EBAY_CLIENT_ID
   const clientSecret = env.EBAY_CLIENT_SECRET
   if (!clientId || !clientSecret) throw new Error('Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in .env.local')
 
-  const cacheKey = `${sandbox ? 'sandbox' : 'production'}:${clientId}:${clientSecret}`
+  const cacheKey = `${sandbox ? 'sandbox' : 'production'}:${clientId}:${clientSecret}:${scope}`
   if (ebayTokenCache?.cacheKey === cacheKey && ebayTokenCache.expiresAt > Date.now() + 60_000) {
     return ebayTokenCache.accessToken
   }
@@ -74,7 +74,7 @@ async function getEbayAccessToken(env: Record<string, string>, sandbox: boolean)
     },
     body: new URLSearchParams({
       grant_type: 'client_credentials',
-      scope: EBAY_OAUTH_SCOPE,
+      scope,
     }),
   })
 
@@ -182,6 +182,67 @@ async function searchEbayJob(options: {
 
     const data = JSON.parse(text) as { itemSummaries?: Array<Record<string, unknown>>; total?: number }
     const items = data.itemSummaries ?? []
+    total = Number(data.total ?? total) || total
+    pagesFetched += 1
+    allItems.push(
+      ...items.map((item) => ({
+        ...item,
+        _bowmanTraderQuery: job,
+      })),
+    )
+
+    if (items.length < limit || offset + limit >= Math.min(total || 0, 10_000)) break
+  }
+
+  return { items: allItems, pagesFetched, total }
+}
+
+async function searchEbaySoldJob(options: {
+  accessToken: string
+  sandbox: boolean
+  job: EbaySearchJob
+  payload: EbaySearchPayload
+  defaultCategoryId?: string
+  defaultMarketplaceId: string
+}) {
+  const { accessToken, sandbox, job, payload, defaultCategoryId, defaultMarketplaceId } = options
+  const query = String(job.q ?? '').trim()
+  if (!query) return { items: [] as Array<Record<string, unknown>>, pagesFetched: 0, total: 0 }
+
+  const limit = clampInt(payload.limit, 100, 1, 200)
+  const maxPages = clampInt(payload.maxPages, 1, 1, 3)
+  const marketplaceId = String(payload.marketplaceId || defaultMarketplaceId || 'EBAY_US')
+  const categoryId = String(payload.categoryId || defaultCategoryId || '').trim()
+  const allItems: Array<Record<string, unknown>> = []
+  let total = 0
+  let pagesFetched = 0
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const offset = page * limit
+    const url = new URL(`${ebayHost(sandbox)}/buy/marketplace_insights/v1_beta/item_sales/search`)
+    url.searchParams.set('q', query)
+    url.searchParams.set('limit', String(limit))
+    url.searchParams.set('offset', String(offset))
+    if (payload.sort) url.searchParams.set('sort', String(payload.sort))
+    if (categoryId) url.searchParams.set('category_ids', categoryId)
+
+    const upstream = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'X-EBAY-C-MARKETPLACE-ID': marketplaceId,
+      },
+    })
+    const text = await upstream.text()
+    if (!upstream.ok) throw new Error(`eBay sold search failed for "${query}" (${upstream.status}): ${text.slice(0, 240)}`)
+
+    const data = JSON.parse(text) as {
+      itemSales?: Array<Record<string, unknown>>
+      itemSummaries?: Array<Record<string, unknown>>
+      items?: Array<Record<string, unknown>>
+      total?: number
+    }
+    const items = data.itemSales ?? data.itemSummaries ?? data.items ?? []
     total = Number(data.total ?? total) || total
     pagesFetched += 1
     allItems.push(
@@ -341,7 +402,7 @@ function ebayProxy(): Plugin {
           return
         }
 
-        if (request.method !== 'POST' || route !== 'search') {
+        if (request.method !== 'POST' || !['search', 'sold'].includes(route)) {
           response.statusCode = 404
           response.end()
           return
@@ -363,20 +424,35 @@ function ebayProxy(): Plugin {
             return
           }
 
-          const accessToken = await getEbayAccessToken(env, sandbox)
+          const accessToken = await getEbayAccessToken(
+            env,
+            sandbox,
+            route === 'sold' ? env.EBAY_MARKETPLACE_INSIGHTS_SCOPE || EBAY_OAUTH_SCOPE : EBAY_OAUTH_SCOPE,
+          )
           const settled = await mapWithLimit(queries, EBAY_SEARCH_CONCURRENCY, async (job) => {
             try {
+              const value =
+                route === 'sold'
+                  ? await searchEbaySoldJob({
+                      accessToken,
+                      sandbox,
+                      job,
+                      payload,
+                      defaultCategoryId: env.EBAY_CATEGORY_ID,
+                      defaultMarketplaceId: env.EBAY_MARKETPLACE_ID || 'EBAY_US',
+                    })
+                  : await searchEbayJob({
+                      accessToken,
+                      sandbox,
+                      job,
+                      payload,
+                      defaultCategoryId: env.EBAY_CATEGORY_ID,
+                      defaultMarketplaceId: env.EBAY_MARKETPLACE_ID || 'EBAY_US',
+                      defaultZipCode: env.EBAY_ZIP_CODE,
+                    })
               return {
                 status: 'fulfilled' as const,
-                value: await searchEbayJob({
-                  accessToken,
-                  sandbox,
-                  job,
-                  payload,
-                  defaultCategoryId: env.EBAY_CATEGORY_ID,
-                  defaultMarketplaceId: env.EBAY_MARKETPLACE_ID || 'EBAY_US',
-                  defaultZipCode: env.EBAY_ZIP_CODE,
-                }),
+                value,
               }
             } catch (error) {
               return {

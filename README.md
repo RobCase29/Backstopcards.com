@@ -61,6 +61,30 @@ EBAY_CATEGORY_ID=
 
 `EBAY_ZIP_CODE` improves shipping context. `EBAY_CATEGORY_ID` can narrow search once you choose the correct eBay leaf category for trading cards.
 
+## eBay Sold Model Lab
+
+The eBay Sold Model Lab is the first pass at replacing ProspectPulse valuation math with our own sold-comp infrastructure. It uses the 2026 Bowman checklist as the guardrail, requests sold items through the local `/api/ebay/sold` proxy, then:
+
+1. Rejects paper, digital, redeemed, insert, and wrong-player sold rows.
+2. Classifies sold titles into base auto or a known release variation.
+3. Builds each player's base anchor from recent base sold comps using the same time-weighted logic as the main matrix.
+4. Solves release-level variation multiples from `variation sold price / modeled base price`.
+5. Returns a `ChecklistModel` overlay with `source: ebay-sold-model`, so it can plug into the same matrix/scoring pipeline.
+
+Sold-listing data depends on eBay Marketplace Insights access. The local proxy targets:
+
+```text
+/buy/marketplace_insights/v1_beta/item_sales/search
+```
+
+If eBay grants Marketplace Insights with a different OAuth scope, set this optional value in `.env.local`:
+
+```bash
+EBAY_MARKETPLACE_INSIGHTS_SCOPE=
+```
+
+The regular Browse API still powers active BIN discovery; the sold model is intended to become the pricing core once sold-comps access is confirmed.
+
 ## Checklist Model
 
 The modeled universe is discovered from ProspectPulse and capped at 2021+ for speed:

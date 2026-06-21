@@ -149,7 +149,7 @@ export interface ChecklistModel {
   multipliers: ChecklistVariation[]
   players: ChecklistPlayer[]
   fetchedAt: string
-  source: 'public-multipliers' | 'authenticated-player-model'
+  source: 'public-multipliers' | 'authenticated-player-model' | 'ebay-sold-model'
 }
 
 export interface NormalizedListing {

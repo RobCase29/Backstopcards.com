@@ -41,6 +41,7 @@ import {
   type EbayBinSearchMode,
   type EbayStatus,
 } from './lib/ebay'
+import { fetchEbaySoldVariationModel, type EbaySoldModelResult } from './lib/ebaySold'
 import {
   CRYSTALLIZED_CHECKLIST,
   fetchCrystallizedCaseHits,
@@ -153,6 +154,14 @@ function money(value: number) {
 
 function percent(value: number) {
   return `${Math.round(value * 100)}%`
+}
+
+function friendlySoldModelError(error: unknown) {
+  const message = error instanceof Error ? error.message : 'eBay sold model scan failed'
+  if (/access denied|insufficient permissions|marketplace.?insights/i.test(message)) {
+    return 'eBay sold listings require Marketplace Insights access on this keyset. The modeling layer is ready; eBay is blocking the sold-comps endpoint for now.'
+  }
+  return message
 }
 
 function compactVariation(label: string) {
@@ -1024,6 +1033,140 @@ function CaseHitLab({
   )
 }
 
+function SoldModelLab({
+  model,
+  scan,
+  loading,
+  error,
+  ebayStatus,
+  onScan,
+}: {
+  model?: ChecklistModel | null
+  scan: EbaySoldModelResult | null
+  loading: boolean
+  error: string | null
+  ebayStatus: EbayStatus | null
+  onScan: () => void
+}) {
+  const configured = Boolean(ebayStatus?.configured)
+  const playerCount = model?.players.length ?? 0
+  const canScan = configured && Boolean(model) && playerCount > 0 && !loading
+  const topSoldMultipliers =
+    scan?.model.multipliers
+      .filter((variation) => !/^base/i.test(variation.variation))
+      .sort((left, right) => right.avgMultiplier - left.avgMultiplier)
+      .slice(0, 8) ?? []
+  const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
+
+  return (
+    <section className="bin-radar sold-model-lab">
+      <div className="bin-radar-header">
+        <div className="section-title">
+          <Brain size={18} />
+          <div>
+            <h2>eBay Sold Model Lab</h2>
+            <span>Sold comps to TWMA base to variation multipliers</span>
+          </div>
+        </div>
+        <div className="bin-radar-pills">
+          <span className={configured ? 'connected' : 'offline'}>
+            {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
+            {configured ? 'eBay sold' : 'eBay keys needed'}
+          </span>
+          <span>{model ? '2026 Bowman' : 'Model pending'}</span>
+          <span>{scan ? `${scan.stats.mappedComps.toLocaleString()} sold comps` : 'No scan yet'}</span>
+          <span>{scan ? `${scan.stats.soldDerivedMultipliers.toLocaleString()} sold multipliers` : 'Overlay pending'}</span>
+          {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
+        </div>
+      </div>
+
+      <div className="bin-radar-controls">
+        <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
+          <RefreshCw size={16} className={loading ? 'spin' : undefined} />
+          {loading ? 'Building' : configured ? 'Build Sold Model' : 'eBay offline'}
+        </button>
+        {scan ? (
+          <div className="bin-scan-stats">
+            <strong>{scan.stats.queriesSucceeded.toLocaleString()}</strong>
+            <span>
+              queries / {scan.stats.pagesFetched.toLocaleString()} pages / {scan.stats.rejectedComps.toLocaleString()} rejects
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {error ? (
+        <div className="bin-radar-alert">
+          <ShieldCheck size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {!configured ? (
+        <div className="bin-empty-state">
+          <KeyRound size={24} />
+          <div>
+            <strong>eBay keys are required.</strong>
+            <span>Sold-listing modeling uses the eBay sold items endpoint rather than ProspectPulse.</span>
+          </div>
+        </div>
+      ) : !model ? (
+        <div className="bin-empty-state">
+          <Database size={24} />
+          <div>
+            <strong>2026 Bowman is loading.</strong>
+            <span>The sold model uses the checklist player universe as its guardrail.</span>
+          </div>
+        </div>
+      ) : !scan ? (
+        <div className="bin-empty-state ready">
+          <Brain size={24} />
+          <div>
+            <strong>Ready to build the first eBay-sold overlay.</strong>
+            <span>
+              Starts with the top 40 2026 Bowman checklist players, classifies sold titles, anchors each player to base TWMA, then solves
+              variation multiples from sold-price/base ratios.
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="case-hit-model-board">
+          <div className="case-hit-model-title">
+            <strong>Sold Overlay Audit</strong>
+            <span>
+              {scan.stats.baseComps.toLocaleString()} base comps / {scan.stats.variationComps.toLocaleString()} variation comps /{' '}
+              {scan.stats.soldAnchoredPlayers.toLocaleString()} players with sold base anchors
+            </span>
+          </div>
+          <div className="case-hit-model-list">
+            <article className="case-hit-model-row">
+              <div className="case-hit-player-cell">
+                <span>MODEL</span>
+                <strong>{scan.model.release}</strong>
+                <small>{scan.stats.fallbackMultipliers.toLocaleString()} fallback multipliers retained</small>
+              </div>
+              <div className="case-hit-base-cell">
+                <span>Sold signal</span>
+                <strong>{scan.stats.soldDerivedMultipliers.toLocaleString()}</strong>
+                <small>{scan.errors.length ? `${scan.errors.length} query errors` : 'No query errors'}</small>
+              </div>
+              <div className="case-hit-variation-strip">
+                {topSoldMultipliers.map((variation) => (
+                  <span className="case-hit-variation-cell" key={variation.variation}>
+                    <small>{compactVariation(variation.variation)}</small>
+                    <strong>{formatMultiplier(variation.avgMultiplier)}</strong>
+                    <em>{variation.totalSales ?? 0} sales</em>
+                  </span>
+                ))}
+              </div>
+            </article>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function App() {
   const [liveConnected, setLiveConnected] = useState(false)
   const [authEmail, setAuthEmail] = useState(() => getStoredPulseSession()?.user?.email ?? '')
@@ -1055,10 +1198,14 @@ function App() {
   const [caseHitLoading, setCaseHitLoading] = useState(false)
   const [caseHitError, setCaseHitError] = useState<string | null>(null)
   const [caseHitMinPrice, setCaseHitMinPrice] = useState(20)
+  const [soldModelScan, setSoldModelScan] = useState<EbaySoldModelResult | null>(null)
+  const [soldModelLoading, setSoldModelLoading] = useState(false)
+  const [soldModelError, setSoldModelError] = useState<string | null>(null)
   const checklistRequestRef = useRef<AbortController | null>(null)
   const checklistRequestIdRef = useRef(0)
   const binRequestRef = useRef<AbortController | null>(null)
   const caseHitRequestRef = useRef<AbortController | null>(null)
+  const soldModelRequestRef = useRef<AbortController | null>(null)
 
   const loadChecklistCatalog = useCallback(async (signal?: AbortSignal) => {
     setCatalogLoading(true)
@@ -1185,6 +1332,7 @@ function App() {
       checklistRequestRef.current?.abort()
       binRequestRef.current?.abort()
       caseHitRequestRef.current?.abort()
+      soldModelRequestRef.current?.abort()
     }
   }, [])
 
@@ -1386,6 +1534,53 @@ function App() {
     }
   }
 
+  async function scanEbaySoldModel() {
+    if (!bowman2026Model) {
+      setSoldModelError('2026 Bowman is not loaded yet.')
+      return
+    }
+
+    if (!ebayStatus?.configured) {
+      setSoldModelError(ebayStatus?.message ?? 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in .env.local')
+      return
+    }
+
+    if (bowman2026Model.players.length === 0) {
+      setSoldModelError('ProspectPulse player list is not loaded for 2026 Bowman.')
+      return
+    }
+
+    soldModelRequestRef.current?.abort()
+    const controller = new AbortController()
+    soldModelRequestRef.current = controller
+    setSoldModelLoading(true)
+    setSoldModelError(null)
+
+    try {
+      const scanResult = await fetchEbaySoldVariationModel({
+        model: bowman2026Model,
+        playerLimit: 40,
+        limitPerPlayer: 100,
+        maxPagesPerPlayer: 1,
+        signal: controller.signal,
+      })
+      setSoldModelScan(scanResult)
+      setSoldModelError(
+        scanResult.errors.length > 0
+          ? `${scanResult.errors.length.toLocaleString()} sold quer${scanResult.errors.length === 1 ? 'y' : 'ies'} failed; modeled successful comps.`
+          : null,
+      )
+    } catch (scanError) {
+      if (controller.signal.aborted) return
+      setSoldModelError(friendlySoldModelError(scanError))
+    } finally {
+      if (soldModelRequestRef.current === controller) {
+        setSoldModelLoading(false)
+        soldModelRequestRef.current = null
+      }
+    }
+  }
+
   return (
     <main className="app-shell valuation-app">
       <section className="workbench-topbar">
@@ -1454,6 +1649,15 @@ function App() {
       />
 
       <MathAudit summaries={matrix.summaries} missingBaseRows={matrix.missingBaseRows} unresolvedMultipliers={matrix.unresolvedMultipliers} />
+
+      <SoldModelLab
+        model={bowman2026Model}
+        scan={soldModelScan}
+        loading={soldModelLoading}
+        error={soldModelError}
+        ebayStatus={ebayStatus}
+        onScan={() => void scanEbaySoldModel()}
+      />
 
       <BinRadar
         model={bowman2026Model}
