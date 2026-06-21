@@ -327,13 +327,18 @@ function soldModelQueries(model: ChecklistModel, playerLimit: number | null | un
   }))
 }
 
-export function mapEbaySoldItemToComp(item: RawEbaySoldItem, model: ChecklistModel): EbaySoldComp | null {
+export function mapEbaySoldItemToComp(
+  item: RawEbaySoldItem,
+  model: ChecklistModel,
+  options: { requireFirstBowman?: boolean } = {},
+): EbaySoldComp | null {
   const meta = item._bowmanTraderQuery
   const playerName = firstString([meta?.playerName], '')
   const title = firstString([item.title], '')
   if (!playerName || !title || !titleMatchesPlayer(title, playerName)) return null
   if (!/\bbowman\b/i.test(title) || !/\bchrome\b/i.test(title) || !/\b(auto|autograph|autographs|autographed)\b/i.test(title)) return null
-  if (!/\b(1st|first)\b/i.test(title)) return null
+  if (model.category !== 'draft' && /\bdraft\b/i.test(title)) return null
+  if (options.requireFirstBowman !== false && !/\b(1st|first)\b/i.test(title)) return null
   if (!titleEligibleForBowmanChromeAutoModel(title)) return null
 
   const salePrice = moneyValue([item.itemSoldPrice, item.soldPrice, item.totalPrice, item.price])

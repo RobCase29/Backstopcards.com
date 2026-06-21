@@ -42,6 +42,7 @@ import {
   type EbayStatus,
 } from './lib/ebay'
 import { fetchEbaySoldVariationModel, type EbaySoldModelResult } from './lib/ebaySold'
+import { MARKET_MOVERS_CAPTURE_BOOKMARKLET, buildMarketMoversSoldModel } from './lib/marketMovers'
 import {
   CRYSTALLIZED_CHECKLIST,
   fetchCrystallizedCaseHits,
@@ -983,19 +984,30 @@ function SoldModelLab({
   scan,
   loading,
   error,
+  marketMoversText,
+  marketMoversError,
   ebayStatus,
   onScan,
+  onMarketMoversTextChange,
+  onImportMarketMovers,
+  onCopyMarketMoversCapture,
 }: {
   model?: ChecklistModel | null
   scan: EbaySoldModelResult | null
   loading: boolean
   error: string | null
+  marketMoversText: string
+  marketMoversError: string | null
   ebayStatus: EbayStatus | null
   onScan: () => void
+  onMarketMoversTextChange: (value: string) => void
+  onImportMarketMovers: () => void
+  onCopyMarketMoversCapture: () => void
 }) {
   const configured = Boolean(ebayStatus?.configured)
   const playerCount = model?.players.length ?? 0
   const canScan = configured && Boolean(model) && playerCount > 0 && !loading
+  const canImportMarketMovers = Boolean(model) && playerCount > 0 && marketMoversText.trim().length > 0
   const missingPlayers = Boolean(model) && playerCount === 0
   const accessBlocked = soldModelAccessBlocked(error)
   const topSoldMultipliers =
@@ -1052,16 +1064,36 @@ function SoldModelLab({
           <div className="bin-scan-stats">
             <strong>{scan.stats.queriesSucceeded.toLocaleString()}</strong>
             <span>
-              queries / {scan.stats.pagesFetched.toLocaleString()} pages / {scan.stats.rejectedComps.toLocaleString()} rejects
+              {scan.model.source === 'market-movers-sold-model' ? 'Market Movers' : 'queries'} / {scan.stats.pagesFetched.toLocaleString()} pages /{' '}
+              {scan.stats.rejectedComps.toLocaleString()} rejects
             </span>
           </div>
         ) : null}
       </div>
 
-      {error ? (
+      <div className="sold-import-panel">
+        <textarea
+          className="sold-import-box"
+          placeholder="Paste Market Movers comps"
+          value={marketMoversText}
+          onChange={(event) => onMarketMoversTextChange(event.target.value)}
+        />
+        <div className="sold-import-actions">
+          <button className="ghost-button" type="button" onClick={onCopyMarketMoversCapture}>
+            <Download size={15} />
+            Copy Capture
+          </button>
+          <button className="primary-button" type="button" onClick={onImportMarketMovers} disabled={!canImportMarketMovers}>
+            <Brain size={15} />
+            Import Market Movers
+          </button>
+        </div>
+      </div>
+
+      {error || marketMoversError ? (
         <div className="bin-radar-alert">
           <ShieldCheck size={16} />
-          <span>{error}</span>
+          <span>{marketMoversError ?? error}</span>
         </div>
       ) : null}
 
@@ -1124,7 +1156,7 @@ function SoldModelLab({
             <article className="case-hit-model-row">
               <div className="case-hit-player-cell">
                 <span>MODEL</span>
-                <strong>{scan.model.release}</strong>
+                <strong>{scan.model.source === 'market-movers-sold-model' ? 'Market Movers' : scan.model.release}</strong>
                 <small>{scan.stats.fallbackMultipliers.toLocaleString()} fallback multipliers retained</small>
               </div>
               <div className="case-hit-base-cell">
@@ -1183,6 +1215,8 @@ function App() {
   const [soldModelScan, setSoldModelScan] = useState<EbaySoldModelResult | null>(null)
   const [soldModelLoading, setSoldModelLoading] = useState(false)
   const [soldModelError, setSoldModelError] = useState<string | null>(null)
+  const [marketMoversImportText, setMarketMoversImportText] = useState('')
+  const [marketMoversImportError, setMarketMoversImportError] = useState<string | null>(null)
   const checklistRequestRef = useRef<AbortController | null>(null)
   const checklistRequestIdRef = useRef(0)
   const binRequestRef = useRef<AbortController | null>(null)
@@ -1571,6 +1605,40 @@ function App() {
     }
   }
 
+  async function copyMarketMoversCapture() {
+    try {
+      await navigator.clipboard.writeText(MARKET_MOVERS_CAPTURE_BOOKMARKLET)
+      setMarketMoversImportError('Market Movers capture helper copied.')
+    } catch {
+      setMarketMoversImportError('Could not copy the Market Movers capture helper.')
+    }
+  }
+
+  function importMarketMoversComps() {
+    if (!bowman2026Model) {
+      setMarketMoversImportError('2026 Bowman is not loaded yet.')
+      return
+    }
+
+    if (bowman2026Model.players.length === 0) {
+      setMarketMoversImportError('ProspectPulse player list is not loaded for 2026 Bowman.')
+      return
+    }
+
+    try {
+      const scanResult = buildMarketMoversSoldModel(marketMoversImportText, bowman2026Model)
+      setSoldModelScan(scanResult)
+      setSoldModelError(null)
+      setMarketMoversImportError(
+        scanResult.errors.length > 0
+          ? `${scanResult.errors.length.toLocaleString()} Market Movers import note${scanResult.errors.length === 1 ? '' : 's'}; modeled accepted comps.`
+          : null,
+      )
+    } catch (importError) {
+      setMarketMoversImportError(importError instanceof Error ? importError.message : 'Market Movers import failed')
+    }
+  }
+
   return (
     <main className="app-shell valuation-app">
       <section className="workbench-topbar">
@@ -1647,8 +1715,16 @@ function App() {
         scan={soldModelScan}
         loading={soldModelLoading}
         error={soldModelError}
+        marketMoversText={marketMoversImportText}
+        marketMoversError={marketMoversImportError}
         ebayStatus={ebayStatus}
         onScan={() => void scanEbaySoldModel()}
+        onMarketMoversTextChange={(value) => {
+          setMarketMoversImportText(value)
+          setMarketMoversImportError(null)
+        }}
+        onImportMarketMovers={importMarketMoversComps}
+        onCopyMarketMoversCapture={() => void copyMarketMoversCapture()}
       />
 
       <BinRadar
