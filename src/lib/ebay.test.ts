@@ -38,7 +38,7 @@ describe('fetchEbayBinListings', () => {
         minPrice: number
       }
       expect(body.queries).toHaveLength(1)
-      expect(body.queries[0]?.q).toBe('Eli Willits 1st bowman auto')
+      expect(body.queries[0]?.q).toBe('Eli Willits 1st bowman chrome auto')
       expect(body.sort).toBe('price')
       expect(body.minPrice).toBe(25)
 
@@ -125,7 +125,7 @@ describe('fetchEbayBinListings', () => {
         const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string }> }
         expect(body.queries).toHaveLength(1)
         expect(body.queries[0]?.playerName).toBe('Value Prospect')
-        expect(body.queries[0]?.q).toBe('Value Prospect 1st bowman auto')
+        expect(body.queries[0]?.q).toBe('Value Prospect 1st bowman chrome auto')
 
         return new Response(
           JSON.stringify({
@@ -153,7 +153,7 @@ describe('fetchEbayBinListings', () => {
       vi.fn(async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string; variationTerm?: string }> }
         expect(body.queries).toHaveLength(1)
-        expect(body.queries[0]?.q).toBe('Eli Willits packfractor bowman auto')
+        expect(body.queries[0]?.q).toBe('Eli Willits packfractor bowman chrome auto')
         expect(body.queries[0]?.variationTerm).toBe('packfractor')
 
         return new Response(
@@ -219,5 +219,58 @@ describe('fetchEbayBinListings', () => {
 
     expect(result.listings).toEqual([])
     expect(result.stats.rejectedPlayerMismatches).toBe(1)
+  })
+
+  it('rejects paper autos and insert autos that do not belong to the chrome auto model', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string }> }
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                itemId: 'paper-auto',
+                title: '2026 Bowman Baseball 1st Bowman Eli Willits Red Paper Auto 1/5',
+                price: { value: '1000.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'bpa-paper-auto',
+                title: '2026 Bowman Eli Willits 1st Bowman Auto ORANGE 13/25 #BPA-EW',
+                price: { value: '500.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'power-chords',
+                title: 'Eli Willits AUTO GOLD /50 POWER CHORDS 1st DIE-CUT - 2026 Bowman Baseball',
+                price: { value: '250.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'real-chrome',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Orange Shimmer /25',
+                price: { value: '1500.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+            ],
+            stats: {
+              queriesRun: 1,
+              queriesSucceeded: 1,
+              queriesFailed: 0,
+              pagesFetched: 1,
+              upstreamTotal: 4,
+              dedupedItems: 4,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayBinListings({ model, playerLimit: 1 })
+
+    expect(result.listings.map((listing) => listing.item_id)).toEqual(['real-chrome'])
+    expect(result.stats.rejectedPlayerMismatches).toBe(3)
   })
 })

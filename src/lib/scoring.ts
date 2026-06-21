@@ -195,6 +195,33 @@ function tokenMatchesVariationPart(part: string, tokens: string[]) {
   return tokenSet.has(part)
 }
 
+const DISTINCT_PARALLEL_MODIFIERS = [
+  { key: 'mojo', pattern: /\bmojo\b/ },
+  { key: 'shimmer', pattern: /\bshimmer\b/ },
+  { key: 'lava', pattern: /\blava\b/ },
+  { key: 'wave', pattern: /\b(?:ray\s*)?wave\b/ },
+  { key: 'geometric', pattern: /\bgeometric\b/ },
+  { key: 'x-fractor', pattern: /\bx\s*(?:re)?fractor\b|\bxfractor\b/ },
+  { key: 'packfractor', pattern: /\bpackfractor\b/ },
+  { key: 'logofractor', pattern: /\blogofractor\b/ },
+  { key: 'firefractor', pattern: /\bfirefractor\b/ },
+  { key: 'mini-diamond', pattern: /\bmini\s*diamond\b/ },
+  { key: 'speckle', pattern: /\bspeckle\b/ },
+  { key: 'atomic', pattern: /\batomic\b/ },
+]
+
+function distinctParallelModifiers(value: string) {
+  const text = comparableText(value)
+  return new Set(DISTINCT_PARALLEL_MODIFIERS.filter((modifier) => modifier.pattern.test(text)).map((modifier) => modifier.key))
+}
+
+function hasUnmatchedDistinctModifier(haystack: string, variation: string) {
+  const haystackModifiers = distinctParallelModifiers(haystack)
+  if (haystackModifiers.size === 0) return false
+  const variationModifiers = distinctParallelModifiers(variation)
+  return [...haystackModifiers].some((modifier) => !variationModifiers.has(modifier))
+}
+
 const ADJACENT_PRODUCT_BLOCKERS = [
   /\bsapphire\b/,
   /\bmega\s*box\b|\bmega\b/,
@@ -449,6 +476,7 @@ function variationScore(haystack: string, variation: string) {
   const haystackIsSuperfractor = /\b(super|superfractor)\b/.test(haystack)
   if (targetIsSapphire !== haystackIsSapphire) return 0
   if (targetIsSuperfractor && !haystackIsSuperfractor) return 0
+  if (hasUnmatchedDistinctModifier(haystack, variation)) return 0
 
   const targetTokens = comparableTokens(variation)
   const haystackTokens = comparableTokens(haystack)
@@ -465,13 +493,23 @@ function variationScore(haystack: string, variation: string) {
   return score
 }
 
+function variationSpecificity(variation: string) {
+  return comparableTokens(variation)
+    .filter((part) => !/^(variation|parallel)$/.test(part))
+    .reduce((total, part) => total + (/^\/\d+$/.test(part) ? 1 : 2), 0)
+}
+
 function findVariation<T extends { variation: string }>(listing: NormalizedListing, variations: T[]) {
   const haystack = comparableText(`${listing.title} ${listing.variationLabel}`)
-  let best: { item: T; score: number } | null = null
+  let best: { item: T; score: number; specificity: number } | null = null
 
   for (const variation of variations) {
     const score = variationScore(haystack, variation.variation)
-    if (score > (best?.score ?? 0)) best = { item: variation, score }
+    const specificity = variationSpecificity(variation.variation)
+    const bestScore = best?.score ?? 0
+    if (score > bestScore + 0.001 || (Math.abs(score - bestScore) <= 0.001 && specificity > (best?.specificity ?? 0))) {
+      best = { item: variation, score, specificity }
+    }
   }
 
   return best && best.score >= 0.55 ? best : null

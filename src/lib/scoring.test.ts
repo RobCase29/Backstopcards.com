@@ -281,6 +281,168 @@ describe('rankOpportunities', () => {
     expect(opportunities[0]?.fairValue).toBeCloseTo(930)
   })
 
+  it('prefers specific parallel variants over broader serial color matches', () => {
+    const specificParallelModel: ChecklistModel = {
+      ...model,
+      multipliers: [
+        {
+          variation: 'Orange /25',
+          avgMultiplier: 20,
+          avgPrice: 2000,
+          playerCount: 20,
+          totalSales: 80,
+        },
+        {
+          variation: 'Orange Shimmer /25',
+          avgMultiplier: 12,
+          avgPrice: 1200,
+          playerCount: 20,
+          totalSales: 80,
+        },
+        {
+          variation: 'Gold /50',
+          avgMultiplier: 9,
+          avgPrice: 900,
+          playerCount: 35,
+          totalSales: 100,
+        },
+        {
+          variation: 'Gold Mojo /50',
+          avgMultiplier: 6,
+          avgPrice: 600,
+          playerCount: 35,
+          totalSales: 100,
+        },
+      ],
+      players: [
+        {
+          playerName: 'Edward Florentino',
+          baseAvgPrice: 100,
+          baseSalesCount: 10,
+          variations: [],
+        },
+        {
+          playerName: 'Roldy Brito',
+          baseAvgPrice: 100,
+          baseSalesCount: 10,
+          variations: [],
+        },
+      ],
+    }
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'orange-shimmer',
+          player_name: 'Edward Florentino',
+          title: '2026 Bowman Edward Florentino Orange Shimmer chrome 1st Auto Pirates 24/25 SSP',
+          variation: 'Base',
+          serial_denominator: 25,
+          current_price: 100,
+          comps: [],
+        }),
+        listing({
+          item_id: 'gold-mojo',
+          player_name: 'Roldy Brito',
+          title: '2026 Bowman Chrome #BMA-RB Roldy Brito Auto Gold Mojo /50 + 1st Mojo Refractor',
+          variation: 'Base',
+          serial_denominator: 50,
+          current_price: 100,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      specificParallelModel,
+    )
+
+    expect(opportunities.find((opportunity) => opportunity.listing.id === 'orange-shimmer')?.matchedVariation).toBe(
+      'Orange Shimmer /25',
+    )
+    expect(opportunities.find((opportunity) => opportunity.listing.id === 'gold-mojo')?.matchedVariation).toBe('Gold Mojo /50')
+  })
+
+  it('does not value a distinct modifier title against a broad color-only model', () => {
+    const broadOnlyModel: ChecklistModel = {
+      ...model,
+      multipliers: [
+        {
+          variation: 'Gold /50',
+          avgMultiplier: 9,
+          avgPrice: 900,
+          playerCount: 35,
+          totalSales: 100,
+        },
+      ],
+      players: [
+        {
+          playerName: 'Roldy Brito',
+          baseAvgPrice: 100,
+          baseSalesCount: 10,
+          variations: [],
+        },
+      ],
+    }
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'gold-mojo-broad-only',
+          player_name: 'Roldy Brito',
+          title: '2026 Bowman Chrome #BMA-RB Roldy Brito Auto Gold Mojo /50 + 1st Mojo Refractor',
+          variation: 'Base',
+          serial_denominator: 50,
+          current_price: 100,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      broadOnlyModel,
+    )
+
+    expect(opportunities).toEqual([])
+  })
+
+  it('does not value x-fractor wording against a broad color-only model', () => {
+    const broadOnlyModel: ChecklistModel = {
+      ...model,
+      multipliers: [
+        {
+          variation: 'Orange /25',
+          avgMultiplier: 20,
+          avgPrice: 2000,
+          playerCount: 20,
+          totalSales: 80,
+        },
+      ],
+      players: [
+        {
+          playerName: 'Justin Gonzales',
+          baseAvgPrice: 100,
+          baseSalesCount: 10,
+          variations: [],
+        },
+      ],
+    }
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'orange-x-broad-only',
+          player_name: 'Justin Gonzales',
+          title: 'Justin Gonzales 2026 Bowman 1st Chrome Orange X Refractor Auto /25 #CPA-JG',
+          variation: 'Base',
+          serial_denominator: 25,
+          current_price: 100,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      broadOnlyModel,
+    )
+
+    expect(opportunities).toEqual([])
+  })
+
   it('enforces the min comp count control', () => {
     const opportunities = rankOpportunities(
       [

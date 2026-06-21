@@ -131,6 +131,24 @@ function titleMatchesVariationTerm(title: string, variationTerm?: string) {
   return matchesSearchTerm(title, variationTerm)
 }
 
+const CHROME_AUTO_MODEL_BLOCKERS = [
+  /\bpaper\b/i,
+  /(?:^|\s|#)bpa[-\s]?[a-z0-9]+/i,
+  /\bpower\s*chords?\b/i,
+  /\bdie[-\s]?cut\b/i,
+  /\belectric\s+sluggers?\b/i,
+  /\bunder\s+the\s+radar\b/i,
+  /\bpatchwork\b/i,
+  /\bcrystall?ized\b/i,
+  /\banime\b/i,
+  /\bkanji\b/i,
+  /\bspotlights?\b/i,
+]
+
+function titleEligibleForChromeAutoModel(title: string) {
+  return !CHROME_AUTO_MODEL_BLOCKERS.some((pattern) => pattern.test(title))
+}
+
 function compactQuery(query: string) {
   const compacted = query.replace(/\s+/g, ' ').trim()
   if (compacted.length <= 100) return compacted
@@ -145,8 +163,8 @@ function releaseProductLabel(model: ChecklistModel) {
 
 function buildPlayerQuery(model: ChecklistModel, playerName: string, variationTerm = ''): EbayQueryMeta {
   const queryCore = variationTerm
-    ? `${playerName} ${variationTerm} bowman auto`
-    : `${playerName} 1st bowman auto`
+    ? `${playerName} ${variationTerm} bowman chrome auto`
+    : `${playerName} 1st bowman chrome auto`
   return {
     q: compactQuery(queryCore),
     playerName,
@@ -201,6 +219,7 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   const title = firstString([item.title], '')
   if (!playerName || !title || !titleMatchesPlayer(title, playerName)) return null
   if (!titleMatchesVariationTerm(title, meta?.variationTerm)) return null
+  if (!titleEligibleForChromeAutoModel(title)) return null
 
   const buyingOptions = item.buyingOptions ?? []
   const fixedPrice = buyingOptions.includes('FIXED_PRICE') || buyingOptions.length === 0
