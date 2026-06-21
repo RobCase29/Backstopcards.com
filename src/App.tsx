@@ -66,6 +66,7 @@ type BaseSourceFilter = 'all' | BasePriceSource
 type SortMode = 'base-desc' | 'top-desc' | 'confidence-desc' | 'player-asc' | 'release-desc'
 type BinPlayerScope = 'all' | 'top-40'
 type BinSearchMode = EbayBinSearchMode
+type WorkMode = 'lookup' | 'deals'
 
 const CATEGORY_LABELS: Record<ChecklistModel['category'], string> = {
   bowman: 'Bowman',
@@ -307,6 +308,79 @@ function MarketTape({
   )
 }
 
+function WorkflowCommand({
+  mode,
+  onModeChange,
+  pricedRows,
+  topBase,
+  topVariation,
+  dealCount,
+  listingCount,
+  modelReady,
+}: {
+  mode: WorkMode
+  onModeChange: (mode: WorkMode) => void
+  pricedRows: number
+  topBase: number
+  topVariation: number
+  dealCount: number
+  listingCount: number
+  modelReady: boolean
+}) {
+  return (
+    <section className="workflow-command" aria-label="Bowman auto desk">
+      <div className="workflow-command-copy">
+        <span className="workflow-kicker">
+          <Activity size={14} />
+          Bowman Auto Desk
+        </span>
+        <h2>{mode === 'lookup' ? 'Modeled Price' : 'Deal Finder'}</h2>
+        <div className="workflow-mini-tape">
+          <span>{modelReady ? 'Model live' : 'Model loading'}</span>
+          <span>{pricedRows.toLocaleString()} players</span>
+          <span>{dealCount.toLocaleString()} edges</span>
+        </div>
+      </div>
+
+      <div className="workflow-mode-grid">
+        <button
+          className={`workflow-mode-card ${mode === 'lookup' ? 'active' : ''}`}
+          type="button"
+          onClick={() => onModeChange('lookup')}
+          aria-pressed={mode === 'lookup'}
+        >
+          <span className="workflow-icon">
+            <Search size={19} />
+          </span>
+          <span className="workflow-card-copy">
+            <span>Modeled Price</span>
+            <strong>Lookup Board</strong>
+            <small>{money(topVariation)} top modeled card</small>
+          </span>
+          <span className="workflow-value">{money(topBase)}</span>
+        </button>
+
+        <button
+          className={`workflow-mode-card ${mode === 'deals' ? 'active' : ''}`}
+          type="button"
+          onClick={() => onModeChange('deals')}
+          aria-pressed={mode === 'deals'}
+        >
+          <span className="workflow-icon">
+            <Radio size={19} />
+          </span>
+          <span className="workflow-card-copy">
+            <span>Deal Finder</span>
+            <strong>Active BIN Radar</strong>
+            <small>{listingCount.toLocaleString()} active listings scanned</small>
+          </span>
+          <span className="workflow-value">{dealCount.toLocaleString()}</span>
+        </button>
+      </div>
+    </section>
+  )
+}
+
 function PreviewQuote({ quote }: { quote: VariationQuote }) {
   return (
     <span className="preview-quote">
@@ -500,6 +574,66 @@ function ModelStatus({
         <Brain size={16} />
         <span>{sourceLabel}</span>
       </div>
+    </section>
+  )
+}
+
+function ProspectPulsePanel({
+  liveConnected,
+  authEmail,
+  authPassword,
+  authBusy,
+  onEmailChange,
+  onPasswordChange,
+  onConnect,
+  onDisconnect,
+}: {
+  liveConnected: boolean
+  authEmail: string
+  authPassword: string
+  authBusy: boolean
+  onEmailChange: (value: string) => void
+  onPasswordChange: (value: string) => void
+  onConnect: (event: FormEvent<HTMLFormElement>) => void | Promise<void>
+  onDisconnect: () => void
+}) {
+  return (
+    <section className="detail-card connection-card source-card">
+      <div className="section-title">
+        <KeyRound size={18} />
+        <h2>ProspectPulse</h2>
+      </div>
+      {liveConnected ? (
+        <div className="connected-box">
+          <span>Connected</span>
+          <strong>{authEmail || 'Local session'}</strong>
+          <button className="ghost-button" type="button" onClick={onDisconnect}>
+            <LogOut size={16} />
+            Disconnect
+          </button>
+        </div>
+      ) : (
+        <form className="connect-form" onSubmit={(event) => void onConnect(event)}>
+          <label>
+            <span>Email</span>
+            <input type="email" autoComplete="username" value={authEmail} onChange={(event) => onEmailChange(event.target.value)} required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={authPassword}
+              onChange={(event) => onPasswordChange(event.target.value)}
+              required
+            />
+          </label>
+          <button className="primary-button" type="submit" disabled={authBusy}>
+            <RefreshCw size={16} className={authBusy ? 'spin' : undefined} />
+            Connect
+          </button>
+        </form>
+      )}
     </section>
   )
 }
@@ -1023,8 +1157,8 @@ function SoldModelLab({
         <div className="section-title">
           <Brain size={18} />
           <div>
-            <h2>eBay Sold Model Lab</h2>
-            <span>Sold comps to TWMA base to variation multipliers</span>
+            <h2>Sold Comp Engine</h2>
+            <span>Market Movers / eBay sold comps to model multipliers</span>
           </div>
         </div>
         <div className="bin-radar-pills">
@@ -1097,22 +1231,14 @@ function SoldModelLab({
         </div>
       ) : null}
 
-      {!configured ? (
-        <div className="bin-empty-state">
-          <KeyRound size={24} />
-          <div>
-            <strong>eBay keys are required.</strong>
-            <span>Sold-listing modeling uses the eBay sold items endpoint rather than ProspectPulse.</span>
-          </div>
-        </div>
-      ) : accessBlocked ? (
+      {accessBlocked ? (
         <div className="bin-empty-state blocked">
           <ShieldCheck size={24} />
           <div>
-            <strong>Marketplace Insights is not enabled yet.</strong>
+            <strong>eBay sold access is not enabled yet.</strong>
             <span>
-              Active BIN scans can keep running. The sold-comp overlay will unlock after eBay grants item-sales search access to this
-              production keyset.
+              Market Movers import can still build the overlay. eBay sold search unlocks after item-sales access is granted to this
+              keyset.
             </span>
           </div>
         </div>
@@ -1136,10 +1262,9 @@ function SoldModelLab({
         <div className="bin-empty-state ready">
           <Brain size={24} />
           <div>
-            <strong>Ready to build the first eBay-sold overlay.</strong>
+            <strong>Ready for sold comps.</strong>
             <span>
-              Starts with the top 40 2026 Bowman checklist players, classifies sold titles, anchors each player to base TWMA, then solves
-              variation multiples from sold-price/base ratios.
+              Paste Market Movers rows or run eBay sold search when access is live; both routes anchor variation math to base TWMA.
             </span>
           </div>
         </div>
@@ -1199,6 +1324,7 @@ function App() {
   const [baseSourceFilter, setBaseSourceFilter] = useState<BaseSourceFilter>('all')
   const [sortMode, setSortMode] = useState<SortMode>('base-desc')
   const [selectedRowId, setSelectedRowId] = useState<string | undefined>()
+  const [workMode, setWorkMode] = useState<WorkMode>('lookup')
   const [ebayStatus, setEbayStatus] = useState<EbayStatus | null>(null)
   const [binListings, setBinListings] = useState<ProspectPulseListing[]>([])
   const [binLoading, setBinLoading] = useState(false)
@@ -1710,173 +1836,167 @@ function App() {
         liveConnected={liveConnected}
       />
 
-      <SoldModelLab
-        model={bowman2026Model}
-        scan={soldModelScan}
-        loading={soldModelLoading}
-        error={soldModelError}
-        marketMoversText={marketMoversImportText}
-        marketMoversError={marketMoversImportError}
-        ebayStatus={ebayStatus}
-        onScan={() => void scanEbaySoldModel()}
-        onMarketMoversTextChange={(value) => {
-          setMarketMoversImportText(value)
-          setMarketMoversImportError(null)
-        }}
-        onImportMarketMovers={importMarketMoversComps}
-        onCopyMarketMoversCapture={() => void copyMarketMoversCapture()}
-      />
-
-      <BinRadar
-        model={bowman2026Model}
-        opportunities={binOpportunities}
+      <WorkflowCommand
+        mode={workMode}
+        onModeChange={setWorkMode}
+        pricedRows={matrix.totalPricedPlayers}
+        topBase={topBase}
+        topVariation={topVariation}
+        dealCount={binOpportunities.length}
         listingCount={binListings.length}
-        scan={binScan}
-        ebayStatus={ebayStatus}
-        loading={binLoading}
-        modelLoading={checklistLoading}
-        error={binError}
-        minPrice={binMinPrice}
-        playerScope={binPlayerScope}
-        searchMode={binSearchMode}
-        searchTerm={binSearchTerm}
-        onMinPriceChange={updateBinMinPrice}
-        onPlayerScopeChange={updateBinPlayerScope}
-        onSearchModeChange={updateBinSearchMode}
-        onSearchTermChange={updateBinSearchTerm}
-        onScan={() => void scanEbayBinListings()}
+        modelReady={matrix.totalResolvedCells > 0}
       />
 
-      <CaseHitLab
-        scan={caseHitScan}
-        loading={caseHitLoading}
-        error={caseHitError}
-        ebayStatus={ebayStatus}
-        minPrice={caseHitMinPrice}
-        onMinPriceChange={updateCaseHitMinPrice}
-        onScan={() => void scanCrystallizedCaseHits()}
-      />
-
-      <section className="workbench-layout">
-        <div className="valuation-workspace">
-          <div className="metric-grid">
-            <StatTile icon={Database} label="Players" value={matrix.totalPricedPlayers.toLocaleString()} tone="info" />
-            <StatTile icon={Layers} label="Variations" value={matrix.totalVariations.toLocaleString()} tone="neutral" />
-            <StatTile icon={BadgeDollarSign} label="Top Base" value={money(topBase)} tone="good" />
-            <StatTile icon={Gauge} label="Top Model" value={money(topVariation)} tone="warn" />
-          </div>
-
-          <div className="toolbar valuation-toolbar">
-            <label className="search-box">
-              <Search size={16} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search player, release, variation" />
-            </label>
-            <label className="filter-select">
-              <span>Set</span>
-              <select value={releaseFilter} onChange={(event) => setReleaseFilter(event.target.value)}>
-                <option value="all">All sets</option>
-                {releaseOptions.map((release) => (
-                  <option value={release.release} key={release.id}>
-                    {release.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="filter-select">
-              <span>Family</span>
-              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as CategoryFilter)}>
-                <option value="all">All families</option>
-                {CHECKLIST_CATEGORIES.map((category) => (
-                  <option value={category} key={category}>
-                    {CATEGORY_LABELS[category]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="filter-select">
-              <span>Base</span>
-              <select value={baseSourceFilter} onChange={(event) => setBaseSourceFilter(event.target.value as BaseSourceFilter)}>
-                <option value="all">All sources</option>
-                {Object.entries(SOURCE_LABELS).map(([source, label]) => (
-                  <option value={source} key={source}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="filter-select">
-              <span>Sort</span>
-              <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
-                {Object.entries(SORT_LABELS).map(([mode, label]) => (
-                  <option value={mode} key={mode}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="deal-count">
-              <strong>{visibleRows.length.toLocaleString()}</strong>
-              <span>rows</span>
+      {workMode === 'lookup' ? (
+        <section className="workbench-layout lookup-workflow" aria-label="Modeled price lookup">
+          <div className="valuation-workspace">
+            <div className="metric-grid">
+              <StatTile icon={Database} label="Players" value={matrix.totalPricedPlayers.toLocaleString()} tone="info" />
+              <StatTile icon={Layers} label="Variations" value={matrix.totalVariations.toLocaleString()} tone="neutral" />
+              <StatTile icon={BadgeDollarSign} label="Top Base" value={money(topBase)} tone="good" />
+              <StatTile icon={Gauge} label="Top Model" value={money(topVariation)} tone="warn" />
             </div>
-            {visibleRows.length > renderedRows.length ? (
+
+            <div className="toolbar valuation-toolbar">
+              <label className="search-box">
+                <Search size={16} />
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search player, release, variation" />
+              </label>
+              <label className="filter-select">
+                <span>Set</span>
+                <select value={releaseFilter} onChange={(event) => setReleaseFilter(event.target.value)}>
+                  <option value="all">All sets</option>
+                  {releaseOptions.map((release) => (
+                    <option value={release.release} key={release.id}>
+                      {release.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="filter-select">
+                <span>Family</span>
+                <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as CategoryFilter)}>
+                  <option value="all">All families</option>
+                  {CHECKLIST_CATEGORIES.map((category) => (
+                    <option value={category} key={category}>
+                      {CATEGORY_LABELS[category]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="filter-select">
+                <span>Base</span>
+                <select value={baseSourceFilter} onChange={(event) => setBaseSourceFilter(event.target.value as BaseSourceFilter)}>
+                  <option value="all">All sources</option>
+                  {Object.entries(SOURCE_LABELS).map(([source, label]) => (
+                    <option value={source} key={source}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="filter-select">
+                <span>Sort</span>
+                <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
+                  {Object.entries(SORT_LABELS).map(([mode, label]) => (
+                    <option value={mode} key={mode}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div className="deal-count">
-                <strong>{renderedRows.length.toLocaleString()}</strong>
-                <span>shown</span>
+                <strong>{visibleRows.length.toLocaleString()}</strong>
+                <span>rows</span>
               </div>
-            ) : null}
+              {visibleRows.length > renderedRows.length ? (
+                <div className="deal-count">
+                  <strong>{renderedRows.length.toLocaleString()}</strong>
+                  <span>shown</span>
+                </div>
+              ) : null}
+            </div>
+
+            <Leaderboard rows={renderedRows} totalRows={visibleRows.length} selectedId={selectedRow?.id} onSelect={setSelectedRowId} />
           </div>
 
-          <Leaderboard rows={renderedRows} totalRows={visibleRows.length} selectedId={selectedRow?.id} onSelect={setSelectedRowId} />
+          <aside className="detail-rail">
+            <LadderDetail row={selectedRow} />
+            <ModelStatus
+              models={checklistModels}
+              loading={checklistLoading}
+              error={checklistError}
+              onRefresh={() => void loadChecklistModel(releaseOptions)}
+            />
+          </aside>
+        </section>
+      ) : (
+        <section className="deal-workflow" aria-label="Deal finder">
+          <BinRadar
+            model={bowman2026Model}
+            opportunities={binOpportunities}
+            listingCount={binListings.length}
+            scan={binScan}
+            ebayStatus={ebayStatus}
+            loading={binLoading}
+            modelLoading={checklistLoading}
+            error={binError}
+            minPrice={binMinPrice}
+            playerScope={binPlayerScope}
+            searchMode={binSearchMode}
+            searchTerm={binSearchTerm}
+            onMinPriceChange={updateBinMinPrice}
+            onPlayerScopeChange={updateBinPlayerScope}
+            onSearchModeChange={updateBinSearchMode}
+            onSearchTermChange={updateBinSearchTerm}
+            onScan={() => void scanEbayBinListings()}
+          />
+
+          <CaseHitLab
+            scan={caseHitScan}
+            loading={caseHitLoading}
+            error={caseHitError}
+            ebayStatus={ebayStatus}
+            minPrice={caseHitMinPrice}
+            onMinPriceChange={updateCaseHitMinPrice}
+            onScan={() => void scanCrystallizedCaseHits()}
+          />
+        </section>
+      )}
+
+      <section className="model-support-dock" aria-label="Model sources">
+        <div className="support-dock-head">
+          <span>Model Sources</span>
+          <strong>Comps and checklist access</strong>
         </div>
-
-        <aside className="detail-rail">
-          <section className="detail-card connection-card">
-            <div className="section-title">
-              <KeyRound size={18} />
-              <h2>ProspectPulse</h2>
-            </div>
-            {liveConnected ? (
-              <div className="connected-box">
-                <span>Connected</span>
-                <strong>{authEmail || 'Local session'}</strong>
-                <button className="ghost-button" type="button" onClick={disconnectProspectPulse}>
-                  <LogOut size={16} />
-                  Disconnect
-                </button>
-              </div>
-            ) : (
-              <form className="connect-form" onSubmit={(event) => void connectProspectPulse(event)}>
-                <label>
-                  <span>Email</span>
-                  <input
-                    type="email"
-                    autoComplete="username"
-                    value={authEmail}
-                    onChange={(event) => setAuthEmail(event.target.value)}
-                    required
-                  />
-                </label>
-                <label>
-                  <span>Password</span>
-                  <input
-                    type="password"
-                    autoComplete="current-password"
-                    value={authPassword}
-                    onChange={(event) => setAuthPassword(event.target.value)}
-                    required
-                  />
-                </label>
-                <button className="primary-button" type="submit" disabled={authBusy}>
-                  <RefreshCw size={16} className={authBusy ? 'spin' : undefined} />
-                  Connect
-                </button>
-              </form>
-            )}
-          </section>
-
-          <LadderDetail row={selectedRow} />
-          <ModelStatus models={checklistModels} loading={checklistLoading} error={checklistError} onRefresh={() => void loadChecklistModel(releaseOptions)} />
-        </aside>
+        <div className="model-support-grid">
+          <SoldModelLab
+            model={bowman2026Model}
+            scan={soldModelScan}
+            loading={soldModelLoading}
+            error={soldModelError}
+            marketMoversText={marketMoversImportText}
+            marketMoversError={marketMoversImportError}
+            ebayStatus={ebayStatus}
+            onScan={() => void scanEbaySoldModel()}
+            onMarketMoversTextChange={(value) => {
+              setMarketMoversImportText(value)
+              setMarketMoversImportError(null)
+            }}
+            onImportMarketMovers={importMarketMoversComps}
+            onCopyMarketMoversCapture={() => void copyMarketMoversCapture()}
+          />
+          <ProspectPulsePanel
+            liveConnected={liveConnected}
+            authEmail={authEmail}
+            authPassword={authPassword}
+            authBusy={authBusy}
+            onEmailChange={setAuthEmail}
+            onPasswordChange={setAuthPassword}
+            onConnect={connectProspectPulse}
+            onDisconnect={disconnectProspectPulse}
+          />
+        </div>
       </section>
     </main>
   )

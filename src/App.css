@@ -2227,6 +2227,220 @@ thead .matrix-player-col span,
   color: #f0b64a;
 }
 
+.workflow-command,
+.model-support-dock,
+.deal-workflow {
+  width: min(var(--stage-max), 100%);
+  margin: 14px auto 0;
+}
+
+.workflow-command {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.48fr) minmax(520px, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  padding: 14px;
+  border: 1px solid rgba(159, 216, 207, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(110deg, rgba(159, 216, 207, 0.11), transparent 28%),
+    linear-gradient(145deg, rgba(223, 164, 81, 0.09), transparent 54%),
+    #081013;
+  box-shadow:
+    0 24px 58px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.workflow-command-copy {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  padding: 6px 4px;
+}
+
+.workflow-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--pulse);
+  font-size: 0.72rem;
+  font-weight: 920;
+  text-transform: uppercase;
+}
+
+.workflow-command h2 {
+  color: #fff6e5;
+  font-size: clamp(1.7rem, 2.4vw, 3rem);
+  line-height: 0.98;
+}
+
+.workflow-mini-tape {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.workflow-mini-tape span {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 250, 240, 0.13);
+  border-radius: 999px;
+  color: rgba(255, 250, 240, 0.68);
+  background: rgba(255, 250, 240, 0.06);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.workflow-mode-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-mode-card {
+  min-width: 0;
+  min-height: 112px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid rgba(255, 250, 240, 0.12);
+  border-radius: 8px;
+  color: rgba(255, 250, 240, 0.74);
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.08), rgba(255, 250, 240, 0.035)),
+    rgba(255, 250, 240, 0.045);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.workflow-mode-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(159, 216, 207, 0.3);
+}
+
+.workflow-mode-card.active {
+  color: #fffaf0;
+  border-color: rgba(159, 216, 207, 0.42);
+  background:
+    linear-gradient(115deg, rgba(159, 216, 207, 0.18), transparent 42%),
+    linear-gradient(180deg, rgba(255, 250, 240, 0.12), rgba(255, 250, 240, 0.055));
+  box-shadow:
+    0 18px 38px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(159, 216, 207, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.11);
+}
+
+.workflow-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(159, 216, 207, 0.18);
+  border-radius: 8px;
+  color: var(--pulse);
+  background: rgba(159, 216, 207, 0.08);
+}
+
+.workflow-card-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.workflow-card-copy span,
+.support-dock-head span {
+  color: rgba(255, 250, 240, 0.56);
+  font-size: 0.68rem;
+  font-weight: 920;
+  text-transform: uppercase;
+}
+
+.workflow-card-copy strong {
+  min-width: 0;
+  color: #fffaf0;
+  font-size: 1.08rem;
+  line-height: 1.08;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-card-copy small {
+  min-width: 0;
+  color: rgba(255, 250, 240, 0.58);
+  font-size: 0.78rem;
+  font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-value {
+  color: var(--pulse);
+  font-family: var(--mono);
+  font-size: clamp(1.1rem, 1.2vw, 1.55rem);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.deal-workflow {
+  display: grid;
+  gap: 14px;
+}
+
+.deal-workflow .bin-radar {
+  margin-top: 0;
+}
+
+.support-dock-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+  padding: 0 2px;
+}
+
+.support-dock-head span {
+  color: rgba(9, 47, 49, 0.62);
+}
+
+.support-dock-head strong {
+  color: var(--text-strong);
+  font-size: 0.98rem;
+}
+
+.model-support-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.45fr);
+  gap: var(--content-gap);
+  align-items: start;
+}
+
+.model-support-grid .bin-radar {
+  width: 100%;
+  margin: 0;
+}
+
+.model-support-grid .source-card {
+  min-height: 100%;
+}
+
 .valuation-app .metric-grid {
   gap: 12px;
 }
@@ -3074,6 +3288,15 @@ thead .matrix-player-col span,
     position: static;
   }
 
+  .workflow-command,
+  .model-support-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .model-support-grid .source-card {
+    min-height: 0;
+  }
+
   .bin-radar-header {
     grid-template-columns: 1fr;
   }
@@ -3143,6 +3366,18 @@ thead .matrix-player-col span,
 
   .valuation-app .market-tape {
     grid-template-columns: 1fr;
+  }
+
+  .workflow-command {
+    padding: 12px;
+  }
+
+  .workflow-mode-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-mode-card {
+    min-height: 96px;
   }
 
   .bin-radar {
@@ -3215,6 +3450,19 @@ thead .matrix-player-col span,
     grid-template-columns: minmax(0, 1fr) minmax(420px, var(--rail-width));
   }
 
+  .workflow-command {
+    grid-template-columns: minmax(360px, 0.36fr) minmax(900px, 1fr);
+    padding: 18px;
+  }
+
+  .workflow-mode-card {
+    min-height: 122px;
+  }
+
+  .model-support-grid {
+    grid-template-columns: minmax(0, 1.65fr) minmax(420px, 0.45fr);
+  }
+
   .leaderboard-head,
   .leaderboard-row {
     grid-template-columns:
@@ -3270,6 +3518,10 @@ thead .matrix-player-col span,
 
   .valuation-app .variation-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .model-support-grid {
+    grid-template-columns: minmax(0, 1.7fr) minmax(520px, 0.42fr);
   }
 
   .leaderboard-list {
@@ -3367,6 +3619,21 @@ thead .matrix-player-col span,
   .valuation-app .top-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .workflow-mode-card {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .workflow-value {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+
+  .support-dock-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
   }
 
   .valuation-app .bin-radar-controls {
