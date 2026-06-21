@@ -285,6 +285,11 @@ function downloadMatrixCsv(rows: PricingRow[]) {
     '30D Base Sales',
     '90D Base Sales',
     'Raw Base Sales',
+    'Auction Base Sales',
+    'BIN Base Sales',
+    'Unknown Base Sales',
+    'Effective Base Sales',
+    'Base Volatility',
     'Variation',
     'Multiplier',
     'Modeled Price',
@@ -301,6 +306,11 @@ function downloadMatrixCsv(rows: PricingRow[]) {
       row.baseSales30,
       row.baseSales90,
       row.rawBaseSales,
+      row.baseAuctionSales,
+      row.baseBinSales,
+      row.baseUnknownSales,
+      row.baseEffectiveSales.toFixed(2),
+      row.baseVolatility.toFixed(3),
       quote.label,
       quote.multiplier.toFixed(4),
       quote.price.toFixed(2),
@@ -576,6 +586,12 @@ function LadderDetail({ row }: { row?: PricingRow }) {
       <div className="base-source-note">
         <span>Pulse base {money(row.pulseBasePrice)}</span>
         <span>{row.baseMethod}</span>
+        {row.baseAuctionSales + row.baseBinSales > 0 ? (
+          <span>
+            Auction/BIN {row.baseAuctionSales}/{row.baseBinSales}
+          </span>
+        ) : null}
+        {row.baseEffectiveSales > 0 ? <span>{row.baseEffectiveSales.toFixed(1)} effective sales</span> : null}
         <span>{Math.round(row.baseConfidence * 100)}% confidence</span>
       </div>
 

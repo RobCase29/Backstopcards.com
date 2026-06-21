@@ -111,8 +111,10 @@ describe('pricing matrix', () => {
     )
 
     expect(estimate.source).toBe('weighted-sales')
-    expect(estimate.price).toBeGreaterThan(70)
+    expect(estimate.price).toBeGreaterThan(58)
+    expect(estimate.price).toBeLessThan(70)
     expect(estimate.sales30).toBe(6)
+    expect(estimate.methodLabel).toContain('robust recency ensemble')
   })
 
   it('blends 30-day, 90-day, and fallback values when recent base sales are thin', () => {
@@ -136,7 +138,57 @@ describe('pricing matrix', () => {
     expect(estimate.source).toBe('blended-sales')
     expect(estimate.price).toBeGreaterThan(100)
     expect(estimate.price).toBeLessThan(140)
-    expect(estimate.methodLabel).toBe('30d/90d blend')
+    expect(estimate.methodLabel).toContain('robust recency ensemble')
+  })
+
+  it('balances auction and BIN channels when both are present', () => {
+    const estimate = estimateBasePrice(
+      {
+        playerName: 'Channel Prospect',
+        baseAvgPrice: 115,
+        baseSalesCount: 8,
+        baseSales: [
+          { salePrice: 100, saleDate: '2026-06-20', saleType: 'Auction' },
+          { salePrice: 102, saleDate: '2026-06-17', saleType: 'Auction' },
+          { salePrice: 98, saleDate: '2026-06-12', saleType: 'Auction' },
+          { salePrice: 104, saleDate: '2026-06-02', saleType: 'Auction' },
+          { salePrice: 142, saleDate: '2026-06-19', saleType: 'Fixed Price' },
+          { salePrice: 138, saleDate: '2026-06-15', saleType: 'Fixed Price' },
+          { salePrice: 145, saleDate: '2026-06-08', saleType: 'Buy It Now' },
+          { salePrice: 135, saleDate: '2026-05-30', saleType: 'Best Offer' },
+        ],
+        variations: [],
+      },
+      asOf,
+    )
+
+    expect(estimate.source).toBe('weighted-sales')
+    expect(estimate.auctionSales).toBe(4)
+    expect(estimate.binSales).toBe(4)
+    expect(estimate.price).toBeGreaterThan(108)
+    expect(estimate.price).toBeLessThan(132)
+    expect(estimate.methodLabel).toContain('auction/BIN channel blend')
+  })
+
+  it('shrinks stale thin sales toward the ProspectPulse fallback', () => {
+    const estimate = estimateBasePrice(
+      {
+        playerName: 'Stale Prospect',
+        baseAvgPrice: 60,
+        baseSalesCount: 3,
+        baseSales: [
+          { salePrice: 150, saleDate: '2026-03-01', saleType: 'Auction' },
+          { salePrice: 140, saleDate: '2026-02-22', saleType: 'Auction' },
+        ],
+        variations: [],
+      },
+      asOf,
+    )
+
+    expect(estimate.source).toBe('blended-sales')
+    expect(estimate.price).toBeGreaterThan(62)
+    expect(estimate.price).toBeLessThan(95)
+    expect(estimate.confidence).toBeLessThan(0.62)
   })
 
   it('falls back to ProspectPulse base when raw sale history is missing', () => {

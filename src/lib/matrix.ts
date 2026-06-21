@@ -1,10 +1,19 @@
 import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
 
 export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'twma-fallback'
+export type SaleChannel = 'auction' | 'bin' | 'unknown'
+
+interface RobustEstimate {
+  value: number
+  effectiveN: number
+  count: number
+  volatility: number
+}
 
 export interface BaseSalePoint {
   price: number
   soldAt: number
+  channel: SaleChannel
 }
 
 export interface BasePriceEstimate {
@@ -14,6 +23,11 @@ export interface BasePriceEstimate {
   rawSales: number
   sales30: number
   sales90: number
+  auctionSales: number
+  binSales: number
+  unknownSales: number
+  effectiveSales: number
+  volatility: number
   latestSaleAt: string | null
   fallbackPrice: number
   methodLabel: string
@@ -41,6 +55,11 @@ export interface PricingRow {
   rawBaseSales: number
   baseSales30: number
   baseSales90: number
+  baseAuctionSales: number
+  baseBinSales: number
+  baseUnknownSales: number
+  baseEffectiveSales: number
+  baseVolatility: number
   basePriceSource: BasePriceSource
   baseConfidence: number
   latestBaseSaleAt: string | null
@@ -144,6 +163,23 @@ function average(values: number[]) {
   return values.reduce((total, value) => total + value, 0) / values.length
 }
 
+function clamp(value: number, min = 0, max = 1) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function median(values: number[]) {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((left, right) => left - right)
+  const midpoint = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? ((sorted[midpoint - 1] ?? 0) + (sorted[midpoint] ?? 0)) / 2 : (sorted[midpoint] ?? 0)
+}
+
+function standardDeviation(values: number[]) {
+  if (values.length <= 1) return 0
+  const mean = average(values)
+  return Math.sqrt(values.reduce((total, value) => total + (value - mean) ** 2, 0) / (values.length - 1))
+}
+
 function finiteSortOrder(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
@@ -163,6 +199,29 @@ function isBaseSale(sale: ChecklistSale) {
   return true
 }
 
+function saleChannel(sale: ChecklistSale): SaleChannel {
+  const text = [
+    sale.saleType,
+    sale.sale_type,
+    sale.sellingFormat,
+    sale.selling_format,
+    sale.buyingFormat,
+    sale.buying_format,
+    sale.listingType,
+    sale.listing_type,
+    sale.format,
+    sale.source,
+    sale.title,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  if (/\b(auction|bid|bids)\b/.test(text)) return 'auction'
+  if (/\b(bin|buy it now|fixed price|fixed-price|fixedprice|buy-now|offer accepted|best offer)\b/.test(text)) return 'bin'
+  return 'unknown'
+}
+
 function extractBaseSales(player: ChecklistPlayer, asOf: number): BaseSalePoint[] {
   const rawSales = [
     ...(player.baseSales ?? []),
@@ -178,7 +237,7 @@ function extractBaseSales(player: ChecklistPlayer, asOf: number): BaseSalePoint[
       const price = salePrice(sale)
       const soldAt = saleTimestamp(sale)
       if (!isFinitePositive(price) || !soldAt || soldAt > asOf) return null
-      return { price, soldAt }
+      return { price, soldAt, channel: saleChannel(sale) }
     })
     .filter((point): point is BaseSalePoint => Boolean(point))
 
@@ -197,25 +256,72 @@ function ageDays(soldAt: number, asOf: number) {
   return Math.max(0, (asOf - soldAt) / 86_400_000)
 }
 
-function robustWeightedAverage(sales: BaseSalePoint[], asOf: number, halfLifeDays: number) {
-  if (sales.length === 0) return null
-  const sorted = [...sales].sort((left, right) => left.price - right.price)
-  const trimCount = sorted.length >= 10 ? Math.floor(sorted.length * 0.1) : 0
-  const trimmed = trimCount > 0 ? sorted.slice(trimCount, sorted.length - trimCount) : sorted
-  const weighted = trimmed.map((sale) => ({
-    value: sale.price,
-    weight: Math.pow(0.5, ageDays(sale.soldAt, asOf) / halfLifeDays),
-  }))
-  const totalWeight = weighted.reduce((total, sale) => total + sale.weight, 0)
-  if (totalWeight <= 0) return null
-  return weighted.reduce((total, sale) => total + sale.value * sale.weight, 0) / totalWeight
+function logVolatility(sales: BaseSalePoint[]) {
+  if (sales.length <= 1) return 0
+  const logs = sales.map((sale) => Math.log(sale.price))
+  const center = median(logs)
+  const absoluteDeviations = logs.map((value) => Math.abs(value - center))
+  const mad = median(absoluteDeviations)
+  return mad > 0 ? Math.min(1, mad * 1.4826) : Math.min(1, standardDeviation(logs))
 }
 
-function blend(values: Array<{ value: number | null; weight: number }>) {
+function robustTimeWeightedEstimate(sales: BaseSalePoint[], asOf: number, halfLifeDays: number): RobustEstimate | null {
+  if (sales.length === 0) return null
+  const logs = sales.map((sale) => Math.log(sale.price))
+  const center = median(logs)
+  const volatility = logVolatility(sales)
+  const fallbackSigma = standardDeviation(logs)
+  const sigma = volatility > 0 ? volatility : fallbackSigma
+  const clipWidth = sales.length >= 5 && sigma > 0 ? Math.max(0.2, sigma * 2.35) : Number.POSITIVE_INFINITY
+  const weighted = sales.map((sale) => {
+    const logPrice = Math.log(sale.price)
+    const clippedLogPrice = Math.min(center + clipWidth, Math.max(center - clipWidth, logPrice))
+    const weight = Math.pow(0.5, ageDays(sale.soldAt, asOf) / halfLifeDays)
+    return { logPrice: clippedLogPrice, weight }
+  })
+  const totalWeight = weighted.reduce((total, sale) => total + sale.weight, 0)
+  const squaredWeight = weighted.reduce((total, sale) => total + sale.weight ** 2, 0)
+  if (totalWeight <= 0 || squaredWeight <= 0) return null
+  const weightedLogPrice = weighted.reduce((total, sale) => total + sale.logPrice * sale.weight, 0) / totalWeight
+  return {
+    value: Math.exp(weightedLogPrice),
+    effectiveN: totalWeight ** 2 / squaredWeight,
+    count: sales.length,
+    volatility,
+  }
+}
+
+function blendLog(values: Array<{ value: number | null | undefined; weight: number }>) {
   const usable = values.filter((item) => isFinitePositive(item.value) && item.weight > 0)
   const totalWeight = usable.reduce((total, item) => total + item.weight, 0)
   if (totalWeight <= 0) return null
-  return usable.reduce((total, item) => total + (item.value as number) * item.weight, 0) / totalWeight
+  const blendedLog = usable.reduce((total, item) => total + Math.log(item.value as number) * item.weight, 0) / totalWeight
+  return Math.exp(blendedLog)
+}
+
+function channelEstimate(sales: BaseSalePoint[], asOf: number): RobustEstimate | null {
+  const auctionSales = sales.filter((sale) => sale.channel === 'auction')
+  const binSales = sales.filter((sale) => sale.channel === 'bin')
+  if (auctionSales.length < 2 || binSales.length < 2) return null
+
+  const auction = robustTimeWeightedEstimate(auctionSales, asOf, 35)
+  const bin = robustTimeWeightedEstimate(binSales, asOf, 35)
+  if (!auction || !bin) return null
+
+  const auctionWeight = 0.58 + clamp((auction.effectiveN - bin.effectiveN) / 24, -0.08, 0.08)
+  const binWeight = 1 - auctionWeight
+  const blended = blendLog([
+    { value: auction.value, weight: auctionWeight },
+    { value: bin.value, weight: binWeight },
+  ])
+  if (!blended) return null
+
+  return {
+    value: blended,
+    effectiveN: auction.effectiveN + bin.effectiveN,
+    count: auction.count + bin.count,
+    volatility: Math.max(auction.volatility, bin.volatility, Math.abs(Math.log(bin.value / auction.value)) / 2),
+  }
 }
 
 export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): BasePriceEstimate {
@@ -223,64 +329,56 @@ export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): B
   const sales = extractBaseSales(player, asOf)
   const sales30 = sales.filter((sale) => ageDays(sale.soldAt, asOf) <= 30)
   const sales90 = sales.filter((sale) => ageDays(sale.soldAt, asOf) <= 90)
-  const weighted30 = robustWeightedAverage(sales30, asOf, 14)
-  const weighted90 = robustWeightedAverage(sales90, asOf, 28)
+  const sales180 = sales.filter((sale) => ageDays(sale.soldAt, asOf) <= 180)
+  const auctionSales = sales.filter((sale) => sale.channel === 'auction').length
+  const binSales = sales.filter((sale) => sale.channel === 'bin').length
+  const unknownSales = Math.max(0, sales.length - auctionSales - binSales)
+  const weighted30 = robustTimeWeightedEstimate(sales30, asOf, 12)
+  const weighted90 = robustTimeWeightedEstimate(sales90, asOf, 30)
+  const weighted180 = robustTimeWeightedEstimate(sales180.length ? sales180 : sales, asOf, 60)
+  const channel = channelEstimate(sales90.length ? sales90 : sales, asOf)
   const latestSaleAt = sales[0] ? new Date(sales[0].soldAt).toISOString() : null
+  const latestAge = sales[0] ? ageDays(sales[0].soldAt, asOf) : Number.POSITIVE_INFINITY
+  const effectiveSales = Math.max(weighted30?.effectiveN ?? 0, weighted90?.effectiveN ?? 0, weighted180?.effectiveN ?? 0)
+  const volatility = Math.max(weighted90?.volatility ?? 0, channel?.volatility ?? 0, weighted180?.volatility ?? 0)
 
-  if (sales30.length >= 6 && weighted30) {
+  const evidence = Math.min(18, (weighted90?.effectiveN ?? 0) + Math.min(sales30.length, 8) * 0.35)
+  const fallbackWeight = fallbackPrice ? Math.max(0.06, 0.52 * Math.exp(-evidence / 4.5)) : 0
+  const blended = blendLog([
+    { value: weighted30?.value, weight: weighted30 ? clamp(weighted30.effectiveN / 9, 0.12, 0.42) : 0 },
+    { value: weighted90?.value, weight: weighted90 ? clamp(weighted90.effectiveN / 14, 0.1, 0.32) : 0 },
+    { value: weighted180?.value, weight: weighted180 ? clamp(weighted180.effectiveN / 28, 0.04, 0.16) : 0 },
+    { value: channel?.value, weight: channel ? clamp(channel.effectiveN / 18, 0.08, 0.28) : 0 },
+    { value: fallbackPrice, weight: fallbackWeight },
+  ])
+
+  const recencyScore = latestAge <= 14 ? 0.08 : latestAge <= 45 ? 0.04 : latestAge <= 90 ? 0 : -0.08
+  const channelScore = auctionSales > 0 && binSales > 0 ? 0.06 : auctionSales + binSales > 0 ? 0.025 : 0
+  const sampleScore = Math.min(effectiveSales, 14) / 24 + Math.min(sales30.length, 10) / 55
+  const volatilityPenalty = Math.min(0.22, volatility * 0.28)
+  const confidenceCeiling = sales30.length >= 6 ? 0.94 : sales90.length >= 4 ? 0.84 : 0.74
+  const confidence = clamp(0.4 + sampleScore + channelScore + recencyScore - volatilityPenalty, 0.34, confidenceCeiling)
+
+  if (blended && sales.length > 0) {
+    const methodParts = [
+      channel ? 'auction/BIN channel blend' : sales30.length >= 3 ? 'robust recency ensemble' : 'thin sales shrinkage',
+      `${Number(effectiveSales.toFixed(1))} eff`,
+    ]
     return {
-      price: Number(weighted30.toFixed(2)),
-      source: 'weighted-sales',
-      confidence: Math.min(0.94, 0.78 + Math.min(sales30.length, 12) / 75),
+      price: Number(blended.toFixed(2)),
+      source: sales30.length >= 6 ? 'weighted-sales' : 'blended-sales',
+      confidence,
       rawSales: sales.length,
       sales30: sales30.length,
       sales90: sales90.length,
+      auctionSales,
+      binSales,
+      unknownSales,
+      effectiveSales: Number(effectiveSales.toFixed(2)),
+      volatility: Number(volatility.toFixed(3)),
       latestSaleAt,
       fallbackPrice,
-      methodLabel: '30d weighted',
-    }
-  }
-
-  if (sales30.length >= 3 && weighted30) {
-    const blended = blend([
-      { value: weighted30, weight: 0.7 },
-      { value: weighted90, weight: 0.2 },
-      { value: fallbackPrice, weight: fallbackPrice ? 0.1 : 0 },
-    ])
-
-    if (blended) {
-      return {
-        price: Number(blended.toFixed(2)),
-        source: 'blended-sales',
-        confidence: Math.min(0.84, 0.64 + sales30.length / 40 + Math.min(sales90.length, 12) / 100),
-        rawSales: sales.length,
-        sales30: sales30.length,
-        sales90: sales90.length,
-        latestSaleAt,
-        fallbackPrice,
-        methodLabel: '30d/90d blend',
-      }
-    }
-  }
-
-  if (sales90.length >= 4 && weighted90) {
-    const blended = blend([
-      { value: weighted90, weight: 0.7 },
-      { value: fallbackPrice, weight: fallbackPrice ? 0.3 : 0 },
-    ])
-
-    if (blended) {
-      return {
-        price: Number(blended.toFixed(2)),
-        source: 'blended-sales',
-        confidence: Math.min(0.74, 0.54 + Math.min(sales90.length, 12) / 80),
-        rawSales: sales.length,
-        sales30: sales30.length,
-        sales90: sales90.length,
-        latestSaleAt,
-        fallbackPrice,
-        methodLabel: '90d/fallback blend',
-      }
+      methodLabel: methodParts.join(' / '),
     }
   }
 
@@ -291,6 +389,11 @@ export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): B
     rawSales: sales.length,
     sales30: sales30.length,
     sales90: sales90.length,
+    auctionSales,
+    binSales,
+    unknownSales,
+    effectiveSales: Number(effectiveSales.toFixed(2)),
+    volatility: Number(volatility.toFixed(3)),
     latestSaleAt,
     fallbackPrice,
     methodLabel: sales.length > 0 ? 'thin sales fallback' : 'ProspectPulse TWMA',
@@ -428,6 +531,11 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
         rawBaseSales: baseEstimate.rawSales,
         baseSales30: baseEstimate.sales30,
         baseSales90: baseEstimate.sales90,
+        baseAuctionSales: baseEstimate.auctionSales,
+        baseBinSales: baseEstimate.binSales,
+        baseUnknownSales: baseEstimate.unknownSales,
+        baseEffectiveSales: baseEstimate.effectiveSales,
+        baseVolatility: baseEstimate.volatility,
         basePriceSource: baseEstimate.source,
         baseConfidence: baseEstimate.confidence,
         latestBaseSaleAt: baseEstimate.latestSaleAt,

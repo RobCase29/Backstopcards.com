@@ -112,6 +112,16 @@ export interface ChecklistSale {
   id?: string
   title?: string | null
   variation?: string | null
+  saleType?: string | null
+  sale_type?: string | null
+  sellingFormat?: string | null
+  selling_format?: string | null
+  buyingFormat?: string | null
+  buying_format?: string | null
+  listingType?: string | null
+  listing_type?: string | null
+  format?: string | null
+  source?: string | null
   saleDate?: string | null
   sale_date?: string | null
   soldAt?: string | null

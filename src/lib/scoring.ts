@@ -9,6 +9,7 @@ import type {
   ScoreSettings,
   ValuationSource,
 } from '../types'
+import { estimateBasePrice } from './matrix'
 
 export const DEFAULT_SETTINGS: ScoreSettings = {
   minDiscountPct: 0,
@@ -517,11 +518,13 @@ function findVariation<T extends { variation: string }>(listing: NormalizedListi
 
 function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | null) {
   const player = findChecklistPlayer(listing, model)
+  const baseEstimate = player ? estimateBasePrice(player) : null
+  const modeledBasePrice = baseEstimate?.price ?? player?.baseAvgPrice ?? 0
   const playerVariation = player ? findVariation(listing, player.variations) : null
   const releaseVariation = model ? findVariation(listing, model.multipliers) : null
   const baseTwmaPrice =
-    player?.baseAvgPrice && releaseVariation?.item.avgMultiplier
-      ? player.baseAvgPrice * releaseVariation.item.avgMultiplier
+    modeledBasePrice && releaseVariation?.item.avgMultiplier
+      ? modeledBasePrice * releaseVariation.item.avgMultiplier
       : null
   const variationPrice = playerVariation?.item.avgPrice ?? null
   const compPrice = listing.marketPrice > 0 ? listing.marketPrice : null
@@ -532,9 +535,10 @@ function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | 
 
   if (variationPrice && baseTwmaPrice) {
     const variationSales = playerVariation?.item.salesCount ?? 0
-    const baseSales = player?.baseSalesCount ?? 0
+    const baseSales = baseEstimate?.effectiveSales ?? player?.baseSalesCount ?? 0
+    const baseConfidence = baseEstimate?.confidence ?? 0.5
     const variationWeight = clamp(0.42 + Math.min(variationSales, 8) / 28, 0.42, 0.68)
-    const baseWeight = clamp(0.5 + Math.min(baseSales, 12) / 30, 0.5, 0.82)
+    const baseWeight = clamp(0.42 + baseConfidence * 0.5 + Math.min(baseSales, 12) / 80, 0.5, 0.86)
     const compWeight = compPrice ? clamp(listing.compCount / 16, 0.08, 0.28) : 0
     modelPrice = weightedAverage([
       { value: variationPrice, weight: variationWeight },
@@ -544,7 +548,8 @@ function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | 
     modelConfidence = clamp(
       0.64 +
         Math.min(variationSales, 8) / 42 +
-        Math.min(baseSales, 12) / 55 +
+        baseConfidence * 0.18 +
+        Math.min(baseSales, 12) / 80 +
         Math.min(releaseVariation?.item.totalSales ?? 0, 250) / 1_200,
       0,
       0.95,
@@ -557,11 +562,13 @@ function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | 
     matchedVariation = playerVariation.item.variation
     valuationSource = 'player-variation'
   } else if (baseTwmaPrice && player && releaseVariation) {
+    const baseConfidence = baseEstimate?.confidence ?? 0.5
+    const baseSales = baseEstimate?.effectiveSales ?? player.baseSalesCount
     modelPrice = weightedAverage([
       { value: baseTwmaPrice, weight: 0.82 },
       { value: compPrice ?? 0, weight: compPrice ? clamp(listing.compCount / 14, 0.08, 0.3) : 0 },
     ])
-    modelConfidence = clamp(0.58 + Math.min(player.baseSalesCount, 8) / 32 + Math.min(releaseVariation.item.totalSales ?? 0, 200) / 900)
+    modelConfidence = clamp(0.42 + baseConfidence * 0.34 + Math.min(baseSales, 8) / 44 + Math.min(releaseVariation.item.totalSales ?? 0, 200) / 900)
     matchedVariation = releaseVariation.item.variation
     valuationSource = 'player-base-curve'
   } else if (releaseVariation?.item.avgPrice) {

@@ -135,6 +135,40 @@ describe('rankOpportunities', () => {
     expect(opportunities[0]?.edgeDollars).toBeGreaterThan(opportunities[1]?.edgeDollars ?? 0)
   })
 
+  it('uses the hardened base estimate when valuing active BIN listings', () => {
+    const hardenedModel: ChecklistModel = {
+      ...model,
+      multipliers: [
+        {
+          variation: 'Blue /150',
+          avgMultiplier: 3,
+          playerCount: 40,
+          totalSales: 160,
+        },
+      ],
+      players: [
+        {
+          playerName: 'Eli Willits',
+          baseAvgPrice: 50,
+          baseSalesCount: 6,
+          baseSales: [
+            { salePrice: 100, saleDate: new Date(Date.now() - 2 * 86_400_000).toISOString(), saleType: 'Auction' },
+            { salePrice: 104, saleDate: new Date(Date.now() - 5 * 86_400_000).toISOString(), saleType: 'Auction' },
+            { salePrice: 98, saleDate: new Date(Date.now() - 8 * 86_400_000).toISOString(), saleType: 'Fixed Price' },
+            { salePrice: 102, saleDate: new Date(Date.now() - 12 * 86_400_000).toISOString(), saleType: 'Buy It Now' },
+          ],
+          variations: [],
+        },
+      ],
+    }
+
+    const opportunities = rankOpportunities([listing({ current_price: 225, comps: [] })], DEFAULT_SETTINGS, hardenedModel)
+
+    expect(opportunities).toHaveLength(1)
+    expect(opportunities[0]?.valuationSource).toBe('player-base-curve')
+    expect(opportunities[0]?.baseTwmaPrice).toBeGreaterThan(275)
+  })
+
   it('excludes Sapphire listings from regular Bowman model matching', () => {
     const superfractorModel: ChecklistModel = {
       ...model,

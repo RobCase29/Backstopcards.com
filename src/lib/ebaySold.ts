@@ -32,6 +32,14 @@ export type RawEbaySoldItem = {
   lastSoldDate?: string
   dateSold?: string
   transactionDate?: string
+  saleType?: string
+  sale_type?: string
+  buyingFormat?: string
+  buying_format?: string
+  listingType?: string
+  listing_type?: string
+  format?: string
+  buyingOptions?: string[]
   _bowmanTraderQuery?: EbaySoldQueryMeta
 }
 
@@ -48,6 +56,7 @@ export interface EbaySoldComp {
   variationLabel: string
   serialDenominator: number | null
   listingUrl: string
+  saleType?: string
 }
 
 export interface EbaySoldModelStats {
@@ -142,6 +151,27 @@ function firstString(values: unknown[], fallback = '') {
     if (trimmed) return trimmed
   }
   return fallback
+}
+
+function soldSaleType(item: RawEbaySoldItem) {
+  const explicit = firstString(
+    [
+      item.saleType,
+      item.sale_type,
+      item.buyingFormat,
+      item.buying_format,
+      item.listingType,
+      item.listing_type,
+      item.format,
+      ...(item.buyingOptions ?? []),
+    ],
+    '',
+  )
+  if (explicit) return explicit
+  const title = firstString([item.title], '').toLowerCase()
+  if (/\b(auction|bid|bids)\b/.test(title)) return 'Auction'
+  if (/\bbest offer|buy it now|fixed price|bin\b/.test(title)) return 'Fixed Price'
+  return ''
 }
 
 function normalizeText(value: string) {
@@ -293,6 +323,7 @@ function checklistSaleFromComp(comp: EbaySoldComp): ChecklistSale {
     title: comp.title,
     saleDate: comp.soldAt,
     salePrice: comp.salePrice,
+    saleType: comp.saleType,
     variation: comp.kind === 'base' ? 'Base Auto' : comp.variationLabel,
   }
 }
@@ -366,6 +397,7 @@ export function mapEbaySoldItemToComp(
     variationLabel: variation?.label ?? 'Base Auto',
     serialDenominator: serialDenominatorFromTitle(title),
     listingUrl: firstString([item.itemAffiliateWebUrl, item.itemWebUrl], ''),
+    saleType: soldSaleType(item),
   }
 }
 

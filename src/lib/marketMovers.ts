@@ -166,6 +166,7 @@ function rawItemFromMarketMovers(row: MarketMoversSaleRow, playerName: string, m
     itemWebUrl: `https://www.ebay.com/itm/${row.itemId}`,
     soldPrice: { value: row.salePrice, currency: 'USD' },
     itemSoldDate: row.soldDate,
+    saleType: row.saleType,
     _bowmanTraderQuery: {
       q: `${playerName} Market Movers`,
       playerName,
