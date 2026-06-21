@@ -260,6 +260,24 @@ describe('fetchEbayBinListings', () => {
                 _bowmanTraderQuery: body.queries[0],
               },
               {
+                itemId: 'sapphire-auto',
+                title: '2026 Bowman Sapphire Chrome Eli Willits 1st Bowman Auto Orange /25',
+                price: { value: '750.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'bowmans-best-auto',
+                title: "2026 Bowman's Best Eli Willits Chrome Auto Gold /50",
+                price: { value: '300.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'leaf-auto',
+                title: '2026 Leaf Eli Willits Auto Gold /50',
+                price: { value: '80.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
                 itemId: 'real-chrome',
                 title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Orange Shimmer /25',
                 price: { value: '1500.00', currency: 'USD' },
@@ -283,6 +301,6 @@ describe('fetchEbayBinListings', () => {
     const result = await fetchEbayBinListings({ model, playerLimit: 1 })
 
     expect(result.listings.map((listing) => listing.item_id)).toEqual(['real-chrome'])
-    expect(result.stats.rejectedPlayerMismatches).toBe(5)
+    expect(result.stats.rejectedPlayerMismatches).toBe(8)
   })
 })

@@ -1,4 +1,5 @@
 import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
+import { titleEligibleForBowmanChromeAutoModel } from './cardTitleGuards'
 import { estimateBasePrice, releaseVariationCurve, variationKey } from './matrix'
 
 type EbaySoldQueryMeta = {
@@ -96,25 +97,6 @@ type VariationCandidate = ChecklistVariation & {
 const BASE_PARALLEL_TERMS =
   /\b(refractor|speckle|purple|blue|aqua|green|gold|orange|red|superfractor|sapphire|lava|shimmer|wave|raywave|mini\s*diamond|rose|yellow|black|pearl|atomic|mojo|x\s*(?:re)?fractor|xfractor|image\s+variation|packfractor|logofractor|firefractor|geometric|reptilian|grass)\b/i
 
-const SOLD_MODEL_BLOCKERS = [
-  /\btopps\s+bunt\s+digital\b/i,
-  /\btopps\s+bunt\b/i,
-  /\bbunt\b/i,
-  /\bdigital\b/i,
-  /\bredeemed\b/i,
-  /\bpaper\b/i,
-  /(?:^|\s|#)bpa[-\s]?[a-z0-9]+/i,
-  /\bpower\s*chords?\b/i,
-  /\bdie[-\s]?cut\b/i,
-  /\belectric\s+sluggers?\b/i,
-  /\bunder\s+the\s+radar\b/i,
-  /\bpatchwork\b/i,
-  /\bcrystall?ized\b/i,
-  /\banime\b/i,
-  /\bkanji\b/i,
-  /\bspotlights?\b/i,
-]
-
 const DISTINCT_PARALLEL_MODIFIERS = [
   { key: 'mojo', pattern: /\bmojo\b/ },
   { key: 'shimmer', pattern: /\bshimmer\b/ },
@@ -184,10 +166,6 @@ function titleMatchesPlayer(title: string, playerName: string) {
   return playerWords.every((word) => titleWords.has(word))
 }
 
-function titleEligibleForSoldModel(title: string) {
-  return !SOLD_MODEL_BLOCKERS.some((pattern) => pattern.test(title))
-}
-
 function serialDenominatorFromTitle(title: string) {
   const match = title.match(/(?:\/|#\/|numbered\s+to\s+)(\d{1,3})\b/i)
   return match ? Number(match[1]) : null
@@ -248,6 +226,13 @@ function variationSpecificity(variation: string) {
 function variationScore(title: string, variation: string) {
   const target = comparableVariationText(variation)
   if (!target) return 0
+  const titleText = comparableVariationText(title)
+  const targetIsSapphire = /\bsapphire\b/.test(target)
+  const titleIsSapphire = /\bsapphire\b/.test(titleText)
+  const targetIsSuperfractor = /\b(super|superfractor)\b/.test(target)
+  const titleIsSuperfractor = /\b(super|superfractor)\b/.test(titleText)
+  if (targetIsSapphire !== titleIsSapphire) return 0
+  if (targetIsSuperfractor && !titleIsSuperfractor) return 0
   if (hasUnmatchedDistinctModifier(title, variation)) return 0
 
   const targetTokens = comparableVariationTokens(variation)
@@ -258,7 +243,7 @@ function variationScore(title: string, variation: string) {
   const serialHits = serialTokens.filter((part) => tokenMatchesVariationPart(part, titleTokens)).length
   const specificScore = specificTokens.length ? specificHits / specificTokens.length : 0
   const serialScore = serialTokens.length ? serialHits / serialTokens.length : 0
-  const exactBoost = comparableVariationText(title).includes(target) ? 0.16 : 0
+  const exactBoost = titleText.includes(target) ? 0.16 : 0
   const score = Math.min(1, Math.max(0, specificScore * 0.72 + serialScore * 0.28 + exactBoost))
   if (serialTokens.length > 0 && serialHits === 0) return Math.min(score, 0.52)
   return score
@@ -349,7 +334,7 @@ export function mapEbaySoldItemToComp(item: RawEbaySoldItem, model: ChecklistMod
   if (!playerName || !title || !titleMatchesPlayer(title, playerName)) return null
   if (!/\bbowman\b/i.test(title) || !/\bchrome\b/i.test(title) || !/\b(auto|autograph|autographs|autographed)\b/i.test(title)) return null
   if (!/\b(1st|first)\b/i.test(title)) return null
-  if (!titleEligibleForSoldModel(title)) return null
+  if (!titleEligibleForBowmanChromeAutoModel(title)) return null
 
   const salePrice = moneyValue([item.itemSoldPrice, item.soldPrice, item.totalPrice, item.price])
   const soldAt = soldAtFromItem(item)

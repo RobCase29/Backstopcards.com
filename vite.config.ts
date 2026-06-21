@@ -7,6 +7,7 @@ const DEFAULT_SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJobG9udGJkaWV6cGVmZ2Jia3FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU2MzIwNjcsImV4cCI6MjA4MTIwODA2N30.H12G7ZC2yUzpXZ0sCrqvhdlIiniGGP6uUgrmEqdOkpk'
 const EBAY_OAUTH_SCOPE = 'https://api.ebay.com/oauth/api_scope'
 const EBAY_SEARCH_CONCURRENCY = 5
+const EBAY_SOLD_SEARCH_CONCURRENCY = 2
 
 async function readRequestBody(request: IncomingMessage) {
   let body = ''
@@ -28,6 +29,13 @@ function clampInt(value: unknown, fallback: number, min: number, max: number) {
 
 function ebayHost(sandbox: boolean) {
   return sandbox ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com'
+}
+
+function ebayRouteErrorMessage(route: string, message: string) {
+  if (route === 'sold' && /403|access denied|insufficient permissions|marketplace.?insights/i.test(message)) {
+    return 'Marketplace Insights access denied for eBay sold listings. Enable item-sales search permissions for this keyset, then retry.'
+  }
+  return message
 }
 
 type EbaySearchJob = {
@@ -429,7 +437,8 @@ function ebayProxy(): Plugin {
             sandbox,
             route === 'sold' ? env.EBAY_MARKETPLACE_INSIGHTS_SCOPE || EBAY_OAUTH_SCOPE : EBAY_OAUTH_SCOPE,
           )
-          const settled = await mapWithLimit(queries, EBAY_SEARCH_CONCURRENCY, async (job) => {
+          const concurrency = route === 'sold' ? EBAY_SOLD_SEARCH_CONCURRENCY : EBAY_SEARCH_CONCURRENCY
+          const settled = await mapWithLimit(queries, concurrency, async (job) => {
             try {
               const value =
                 route === 'sold'
@@ -457,7 +466,7 @@ function ebayProxy(): Plugin {
             } catch (error) {
               return {
                 status: 'rejected' as const,
-                reason: error instanceof Error ? error.message : 'eBay query failed',
+                reason: ebayRouteErrorMessage(route, error instanceof Error ? error.message : 'eBay query failed'),
                 query: job.q,
               }
             }
@@ -489,7 +498,7 @@ function ebayProxy(): Plugin {
           })
         } catch (error) {
           writeJson(response, 502, {
-            error: error instanceof Error ? error.message : 'eBay proxy request failed',
+            error: ebayRouteErrorMessage(route, error instanceof Error ? error.message : 'eBay proxy request failed'),
           })
         }
       })

@@ -2638,6 +2638,18 @@ thead .matrix-player-col span,
   background: rgba(255, 250, 240, 0.045);
 }
 
+.bin-empty-state.blocked {
+  border-style: solid;
+  border-color: rgba(240, 182, 74, 0.24);
+  background:
+    linear-gradient(90deg, rgba(240, 182, 74, 0.1), transparent 36%),
+    rgba(255, 250, 240, 0.045);
+}
+
+.bin-empty-state.blocked svg {
+  color: #f0b64a;
+}
+
 .bin-empty-state svg {
   flex: 0 0 auto;
   color: var(--pulse);

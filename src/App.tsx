@@ -164,6 +164,10 @@ function friendlySoldModelError(error: unknown) {
   return message
 }
 
+function soldModelAccessBlocked(message: string | null) {
+  return Boolean(message && /access denied|insufficient permissions|marketplace.?insights|sold-comps endpoint/i.test(message))
+}
+
 function compactVariation(label: string) {
   return label
     .replace(/\b(autograph|autographs|autographed|auto)\b/gi, '')
@@ -1051,6 +1055,8 @@ function SoldModelLab({
   const configured = Boolean(ebayStatus?.configured)
   const playerCount = model?.players.length ?? 0
   const canScan = configured && Boolean(model) && playerCount > 0 && !loading
+  const missingPlayers = Boolean(model) && playerCount === 0
+  const accessBlocked = soldModelAccessBlocked(error)
   const topSoldMultipliers =
     scan?.model.multipliers
       .filter((variation) => !/^base/i.test(variation.variation))
@@ -1073,9 +1079,15 @@ function SoldModelLab({
             {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
             {configured ? 'eBay sold' : 'eBay keys needed'}
           </span>
-          <span>{model ? '2026 Bowman' : 'Model pending'}</span>
+          <span>{model ? `2026 Bowman / ${playerCount.toLocaleString()} players` : 'Model pending'}</span>
           <span>{scan ? `${scan.stats.mappedComps.toLocaleString()} sold comps` : 'No scan yet'}</span>
-          <span>{scan ? `${scan.stats.soldDerivedMultipliers.toLocaleString()} sold multipliers` : 'Overlay pending'}</span>
+          <span className={accessBlocked ? 'offline' : scan ? 'connected' : undefined}>
+            {accessBlocked
+              ? 'Insights blocked'
+              : scan
+                ? `${scan.stats.soldDerivedMultipliers.toLocaleString()} sold multipliers`
+                : 'Overlay pending'}
+          </span>
           {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
         </div>
       </div>
@@ -1083,7 +1095,17 @@ function SoldModelLab({
       <div className="bin-radar-controls">
         <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
           <RefreshCw size={16} className={loading ? 'spin' : undefined} />
-          {loading ? 'Building' : configured ? 'Build Sold Model' : 'eBay offline'}
+          {loading
+            ? 'Building'
+            : !configured
+              ? 'eBay offline'
+              : !model
+                ? 'Model Loading'
+              : missingPlayers
+                ? 'Player List Needed'
+                : accessBlocked
+                  ? 'Retry Sold Access'
+                  : 'Build Sold Model'}
         </button>
         {scan ? (
           <div className="bin-scan-stats">
@@ -1110,12 +1132,31 @@ function SoldModelLab({
             <span>Sold-listing modeling uses the eBay sold items endpoint rather than ProspectPulse.</span>
           </div>
         </div>
+      ) : accessBlocked ? (
+        <div className="bin-empty-state blocked">
+          <ShieldCheck size={24} />
+          <div>
+            <strong>Marketplace Insights is not enabled yet.</strong>
+            <span>
+              Active BIN scans can keep running. The sold-comp overlay will unlock after eBay grants item-sales search access to this
+              production keyset.
+            </span>
+          </div>
+        </div>
       ) : !model ? (
         <div className="bin-empty-state">
           <Database size={24} />
           <div>
             <strong>2026 Bowman is loading.</strong>
             <span>The sold model uses the checklist player universe as its guardrail.</span>
+          </div>
+        </div>
+      ) : missingPlayers ? (
+        <div className="bin-empty-state muted">
+          <Database size={24} />
+          <div>
+            <strong>Waiting on checklist players.</strong>
+            <span>Connect ProspectPulse or reload the checklist before building sold-comp variation math.</span>
           </div>
         </div>
       ) : !scan ? (

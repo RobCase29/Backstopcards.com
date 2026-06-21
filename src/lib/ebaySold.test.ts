@@ -90,10 +90,14 @@ describe('eBay sold variation modeling', () => {
       '2026 Bowman Baseball 1st Bowman Eli Willits Red Paper Auto 1/5',
       '2026 Topps Bunt Digital Bowman Eli Willits Chrome Auto Blue /150',
       '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150 Redeemed',
+      '2026 Bowman Sapphire Chrome Eli Willits 1st Bowman Auto Orange /25',
+      "2026 Bowman's Best Eli Willits Chrome Auto Gold /50",
+      '2026 Leaf Eli Willits Auto Gold /50',
+      '2026 Bowman Mega Box Chrome Eli Willits 1st Bowman Auto Mojo',
       '2026 Bowman Chrome Different Player 1st Bowman Auto',
     ]
 
-    expect(badTitles.map((title) => mapEbaySoldItemToComp(soldItem({ title }), model))).toEqual([null, null, null, null])
+    expect(badTitles.map((title) => mapEbaySoldItemToComp(soldItem({ title }), model))).toEqual(badTitles.map(() => null))
   })
 
   it('builds sold-derived base anchors and variation multipliers', () => {
