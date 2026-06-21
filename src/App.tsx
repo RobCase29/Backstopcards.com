@@ -4,6 +4,7 @@ import {
   BarChart3,
   BookOpenCheck,
   Brain,
+  Calculator,
   Database,
   Download,
   ExternalLink,
@@ -33,6 +34,7 @@ import {
   isPulseAuthError,
   loginProspectPulse,
   savePulseSession,
+  type PulseAuthMode,
 } from './lib/prospectPulse'
 import {
   fetchEbayBinListings,
@@ -59,8 +61,8 @@ import {
   type PricingRow,
   type VariationQuote,
 } from './lib/matrix'
-import { DEFAULT_SETTINGS, rankOpportunities } from './lib/scoring'
-import type { ChecklistModel, Opportunity, ProspectPulseListing } from './types'
+import { DEFAULT_SETTINGS, estimateGradedPremium, rankOpportunities } from './lib/scoring'
+import type { ChecklistModel, GradingCompany, Opportunity, ProspectPulseListing } from './types'
 
 type CategoryFilter = 'all' | ChecklistModel['category']
 type BaseSourceFilter = 'all' | BasePriceSource
@@ -80,7 +82,28 @@ type SortMode =
   | 'release-desc'
 type BinPlayerScope = 'all' | 'top-40' | 'target-50'
 type BinSearchMode = EbayBinSearchMode
-type BinResultSort = 'edge-desc' | 'score-desc' | 'sts-rank' | 'prospect-rank' | 'trend-desc' | 'price-asc' | 'price-desc' | 'roi-desc'
+type BinResultSort =
+  | 'conviction-desc'
+  | 'edge-desc'
+  | 'score-desc'
+  | 'sts-rank'
+  | 'prospect-rank'
+  | 'trend-desc'
+  | 'price-asc'
+  | 'price-desc'
+  | 'roi-desc'
+type QuickGradeKey =
+  | 'raw'
+  | 'psa-8'
+  | 'psa-9'
+  | 'psa-10'
+  | 'bgs-9'
+  | 'bgs-95'
+  | 'bgs-10'
+  | 'sgc-9'
+  | 'sgc-10'
+  | 'cgc-9'
+  | 'cgc-10'
 type WorkMode = 'lookup' | 'deals' | 'beta'
 
 const CATEGORY_LABELS: Record<ChecklistModel['category'], string> = {
@@ -119,6 +142,7 @@ const STS_FILTER_LABELS: Record<StsFilter, string> = {
 }
 
 const BIN_RESULT_SORT_LABELS: Record<BinResultSort, string> = {
+  'conviction-desc': 'Conviction',
   'edge-desc': 'Spread',
   'score-desc': 'Model score',
   'sts-rank': 'STS rank',
@@ -129,8 +153,26 @@ const BIN_RESULT_SORT_LABELS: Record<BinResultSort, string> = {
   'roi-desc': 'ROI',
 }
 
+const QUICK_GRADE_OPTIONS: Array<{ key: QuickGradeKey; label: string; company?: GradingCompany; grade?: number }> = [
+  { key: 'raw', label: 'Raw' },
+  { key: 'psa-8', label: 'PSA 8', company: 'PSA', grade: 8 },
+  { key: 'psa-9', label: 'PSA 9', company: 'PSA', grade: 9 },
+  { key: 'psa-10', label: 'PSA 10', company: 'PSA', grade: 10 },
+  { key: 'bgs-9', label: 'BGS 9', company: 'BGS', grade: 9 },
+  { key: 'bgs-95', label: 'BGS 9.5', company: 'BGS', grade: 9.5 },
+  { key: 'bgs-10', label: 'BGS 10', company: 'BGS', grade: 10 },
+  { key: 'sgc-9', label: 'SGC 9', company: 'SGC', grade: 9 },
+  { key: 'sgc-10', label: 'SGC 10', company: 'SGC', grade: 10 },
+  { key: 'cgc-9', label: 'CGC 9', company: 'CGC', grade: 9 },
+  { key: 'cgc-10', label: 'CGC 10', company: 'CGC', grade: 10 },
+]
+
 function rankOrInfinity(value: number | null) {
   return value ?? Number.POSITIVE_INFINITY
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
 }
 
 function scoreDynastyBaseValue(row: PricingRow) {
@@ -266,6 +308,31 @@ function percent(value: number) {
   return `${Math.round(value * 100)}%`
 }
 
+function parseMoneyInput(value: string) {
+  const parsed = Number(value.replace(/[$,\s]/g, ''))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function serialDenominatorFromLabel(label: string) {
+  const match = label.match(/\/\s*(\d{1,4})\b/)
+  return match ? Number(match[1]) : null
+}
+
+function pricingVerdict(spread: number | null, modelValue: number, askPrice: number | null) {
+  if (!askPrice) return { label: 'No Ask', tone: 'neutral' as const }
+  if (askPrice <= modelValue * 0.78) return { label: 'Buy Zone', tone: 'good' as const }
+  if (spread !== null && spread >= 0) return { label: 'Under Model', tone: 'good' as const }
+  if (askPrice <= modelValue * 1.2) return { label: 'Near Model', tone: 'watch' as const }
+  return { label: 'Rich', tone: 'risk' as const }
+}
+
+function listingGradingLabel(listing: Opportunity['listing']) {
+  if (!listing.isEligibleGraded) return null
+  const company = listing.gradingCompany ?? String(listing.grader ?? 'Graded').toUpperCase()
+  const grade = listing.gradeNumber ?? listing.grade
+  return grade ? `${company} ${grade}` : company
+}
+
 function friendlySoldModelError(error: unknown) {
   const message = error instanceof Error ? error.message : 'eBay sold model scan failed'
   if (/access denied|insufficient permissions|marketplace.?insights/i.test(message)) {
@@ -363,6 +430,16 @@ function opportunityStsContext(opportunity: Opportunity) {
   }
 }
 
+function binConvictionScore(opportunity: Opportunity, sts = opportunityStsContext(opportunity)) {
+  const roiSignal = clampNumber((opportunity.expectedRoiPct + 0.05) / 0.75, 0, 1) * 27
+  const dollarSignal = clampNumber(Math.log1p(Math.max(0, opportunity.edgeDollars)) / Math.log1p(2_500), 0, 1) * 24
+  const trustSignal = clampNumber(opportunity.trustScore / 100, 0, 1) * 22
+  const momentumSignal = clampNumber(((sts.momentumScore ?? 50) - 38) / 42, 0, 1) * 14
+  const rankSignal = sts.rank ? clampNumber((1_200 - Math.min(sts.rank, 1_200)) / 1_200, 0, 1) * 7 : 0
+  const slabSignal = opportunity.gradingMultiplier ? clampNumber((opportunity.gradingMultiplier - 1) / 1.55, 0, 1) * 6 : 0
+  return Math.round(roiSignal + dollarSignal + trustSignal + momentumSignal + rankSignal + slabSignal)
+}
+
 function sortBinOpportunities(opportunities: Opportunity[], sortMode: BinResultSort) {
   const sorted = opportunities.map((opportunity) => ({
     opportunity,
@@ -370,6 +447,13 @@ function sortBinOpportunities(opportunities: Opportunity[], sortMode: BinResultS
   }))
 
   sorted.sort((left, right) => {
+    if (sortMode === 'conviction-desc') {
+      return (
+        binConvictionScore(right.opportunity, right.sts) - binConvictionScore(left.opportunity, left.sts) ||
+        right.opportunity.edgeDollars - left.opportunity.edgeDollars ||
+        right.opportunity.score - left.opportunity.score
+      )
+    }
     if (sortMode === 'score-desc') {
       return right.opportunity.score - left.opportunity.score || right.opportunity.edgeDollars - left.opportunity.edgeDollars
     }
@@ -596,6 +680,7 @@ function MarketTape({
   topVariation,
   loadedSets,
   liveConnected,
+  sourceLabel,
 }: {
   rowCount: number
   variationCount: number
@@ -604,6 +689,7 @@ function MarketTape({
   topVariation: number
   loadedSets: number
   liveConnected: boolean
+  sourceLabel: string
 }) {
   const cells = [
     ['SETS', loadedSets > 0 ? loadedSets.toLocaleString() : '--', 'neutral'],
@@ -612,7 +698,7 @@ function MarketTape({
     ['SOLVED', solvedCells.toLocaleString(), solvedCells > 0 ? 'up' : 'flat'],
     ['TOP BASE', money(topBase), topBase > 0 ? 'up' : 'flat'],
     ['TOP MODEL', money(topVariation), topVariation > 0 ? 'up' : 'flat'],
-    ['SOURCE', liveConnected ? 'CONNECTED' : 'PUBLIC', liveConnected ? 'up' : 'flat'],
+    ['SOURCE', sourceLabel, liveConnected ? 'up' : 'flat'],
   ] as const
 
   return (
@@ -913,6 +999,176 @@ function LadderDetail({ row }: { row?: PricingRow }) {
   )
 }
 
+function QuickPriceModule({
+  row,
+  onScanPlayer,
+}: {
+  row?: PricingRow
+  onScanPlayer: (row: PricingRow) => void
+}) {
+  const [cardInput, setCardInput] = useState<{
+    rowId: string
+    variationKey: string
+    gradeKey: QuickGradeKey
+    askInput: string
+  }>({
+    rowId: '',
+    variationKey: '',
+    gradeKey: 'raw',
+    askInput: '',
+  })
+
+  if (!row) {
+    return (
+      <section className="detail-card quick-price-card">
+        <div className="empty-state compact">
+          <Calculator size={24} />
+          <strong>No player selected.</strong>
+        </div>
+      </section>
+    )
+  }
+
+  const activeRow = row
+  const hasCurrentInput = cardInput.rowId === activeRow.id
+  const defaultVariationKey = activeRow.ladder[0]?.key ?? ''
+  const activeVariationKey =
+    hasCurrentInput && activeRow.ladder.some((candidate) => candidate.key === cardInput.variationKey)
+      ? cardInput.variationKey
+      : defaultVariationKey
+  const gradeKey = hasCurrentInput ? cardInput.gradeKey : 'raw'
+  const askInput = hasCurrentInput ? cardInput.askInput : ''
+
+  function updateCardInput(next: Partial<typeof cardInput>) {
+    setCardInput({
+      rowId: activeRow.id,
+      variationKey: activeVariationKey,
+      gradeKey,
+      askInput,
+      ...next,
+    })
+  }
+
+  const quote = activeRow.ladder.find((candidate) => candidate.key === activeVariationKey) ?? activeRow.ladder[0]
+  const rawValue = quote?.price ?? activeRow.baseTwmaPrice
+  const gradeOption = QUICK_GRADE_OPTIONS.find((grade) => grade.key === gradeKey) ?? QUICK_GRADE_OPTIONS[0]
+  const serialDenominator = serialDenominatorFromLabel(quote?.label ?? 'Base')
+  const gradeModel = {
+    ...estimateGradedPremium({
+      rawPrice: rawValue,
+      serialDenominator,
+      gradingCompany: gradeOption.company ?? null,
+      gradeNumber: gradeOption.grade ?? null,
+    }),
+    option: gradeOption,
+    serialDenominator,
+  }
+  const modelValue = rawValue * gradeModel.multiplier
+  const askPrice = parseMoneyInput(askInput)
+  const spread = askPrice ? modelValue - askPrice : null
+  const rawFloorSpread = askPrice ? rawValue - askPrice : null
+  const roi = askPrice && spread !== null ? spread / askPrice : null
+  const buyZone = modelValue * (1 - DEFAULT_SETTINGS.targetMarginPct / 100)
+  const watchCeiling = modelValue * (1 + BIN_MODEL_WINDOW_PCT)
+  const confidence = clampNumber(activeRow.baseConfidence * gradeModel.confidence, 0, 1)
+  const verdict = pricingVerdict(spread, modelValue, askPrice)
+  const gradeLabel = gradeModel.option.label
+
+  return (
+    <section className="detail-card quick-price-card">
+      <div className="detail-title quick-price-title">
+        <Calculator size={18} />
+        <div>
+          <span>Quick Price</span>
+          <h2>{money(modelValue)}</h2>
+          <small>{activeRow.playerName}</small>
+        </div>
+        <span className={`quick-verdict ${verdict.tone}`}>{verdict.label}</span>
+      </div>
+
+      <div className="quick-price-controls">
+        <label>
+          <span>Variation</span>
+          <select value={quote?.key ?? ''} onChange={(event) => updateCardInput({ variationKey: event.target.value })}>
+            {activeRow.ladder.map((candidate) => (
+              <option value={candidate.key} key={`${activeRow.id}:quick:${candidate.key}`}>
+                {compactVariation(candidate.label)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Grade</span>
+          <select value={gradeKey} onChange={(event) => updateCardInput({ gradeKey: event.target.value as QuickGradeKey })}>
+            {QUICK_GRADE_OPTIONS.map((option) => (
+              <option value={option.key} key={option.key}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>All In</span>
+          <input
+            inputMode="decimal"
+            placeholder="$0"
+            value={askInput}
+            onChange={(event) => updateCardInput({ askInput: event.target.value })}
+            aria-label="All-in price"
+          />
+        </label>
+      </div>
+
+      <div className="quick-price-grid">
+        <div>
+          <span>Raw Model</span>
+          <strong>{money(rawValue)}</strong>
+          <small>{formatMultiplier(quote?.multiplier ?? 1)} multiple</small>
+        </div>
+        <div>
+          <span>{gradeLabel}</span>
+          <strong>{formatMultiplier(gradeModel.multiplier)}</strong>
+          <small>{gradeModel.note}</small>
+        </div>
+        <div>
+          <span>Buy Zone</span>
+          <strong>{money(buyZone)}</strong>
+          <small>{DEFAULT_SETTINGS.targetMarginPct}% margin</small>
+        </div>
+        <div>
+          <span>Watch Cap</span>
+          <strong>{money(watchCeiling)}</strong>
+          <small>20% window</small>
+        </div>
+      </div>
+
+      {askPrice ? (
+        <div className="quick-edge-strip">
+          <span className={spread !== null && spread >= 0 ? 'good' : 'risk'}>
+            Model {spread !== null ? money(spread) : '--'}
+          </span>
+          <span className={rawFloorSpread !== null && rawFloorSpread >= 0 ? 'good' : 'neutral'}>
+            Raw floor {rawFloorSpread !== null ? money(rawFloorSpread) : '--'}
+          </span>
+          <span className={roi !== null && roi >= 0 ? 'good' : 'risk'}>{roi !== null ? percent(roi) : '--'} ROI</span>
+        </div>
+      ) : null}
+
+      <div className="quick-source-strip">
+        <span>{Math.round(confidence * 100)}% confidence</span>
+        <span>{activeRow.basePriceSource.replace('-', ' ')}</span>
+        {activeRow.stsRank ? <span>STS #{activeRow.stsRank.toLocaleString()}</span> : null}
+        {gradeModel.serialDenominator ? <span>/{gradeModel.serialDenominator}</span> : null}
+      </div>
+
+      <button className="ghost-button quick-scan-button" type="button" onClick={() => onScanPlayer(activeRow)}>
+        <Radio size={15} />
+        Scan BINs
+      </button>
+    </section>
+  )
+}
+
 function ModelStatus({
   models,
   loading,
@@ -974,6 +1230,7 @@ function ModelStatus({
 
 function ProspectPulsePanel({
   liveConnected,
+  authMode,
   authEmail,
   authPassword,
   authBusy,
@@ -983,6 +1240,7 @@ function ProspectPulsePanel({
   onDisconnect,
 }: {
   liveConnected: boolean
+  authMode: PulseAuthMode
   authEmail: string
   authPassword: string
   authBusy: boolean
@@ -991,6 +1249,10 @@ function ProspectPulsePanel({
   onConnect: (event: FormEvent<HTMLFormElement>) => void | Promise<void>
   onDisconnect: () => void
 }) {
+  const isServerManaged = liveConnected && authMode === 'server'
+  const connectedLabel = isServerManaged ? 'Managed server session' : 'Connected'
+  const connectedIdentity = isServerManaged ? 'Private deployment token' : authEmail || 'Local browser session'
+
   return (
     <section className="detail-card connection-card source-card">
       <div className="section-title">
@@ -998,13 +1260,16 @@ function ProspectPulsePanel({
         <h2>ProspectPulse</h2>
       </div>
       {liveConnected ? (
-        <div className="connected-box">
-          <span>Connected</span>
-          <strong>{authEmail || 'Local session'}</strong>
-          <button className="ghost-button" type="button" onClick={onDisconnect}>
-            <LogOut size={16} />
-            Disconnect
-          </button>
+        <div className={`connected-box ${isServerManaged ? 'managed' : ''}`}>
+          <span>{connectedLabel}</span>
+          <strong>{connectedIdentity}</strong>
+          <p>{isServerManaged ? 'Credential stays on the server; every approved user gets live checklist data.' : 'Stored only in this browser.'}</p>
+          {!isServerManaged && (
+            <button className="ghost-button" type="button" onClick={onDisconnect}>
+              <LogOut size={16} />
+              Disconnect
+            </button>
+          )}
         </div>
       ) : (
         <form className="connect-form" onSubmit={(event) => void onConnect(event)}>
@@ -1168,7 +1433,7 @@ function BinRadar({
             {configured ? 'eBay live' : 'eBay keys needed'}
           </span>
           <span className={hasPlayerUniverse ? 'connected' : 'offline'}>{readinessLabel}</span>
-          <span>Raw model</span>
+          <span>Raw + 9+ slabs</span>
           <span>{selectedSetPill}</span>
           <span>{playerCount.toLocaleString()} players</span>
           <span>{searchMode === 'checklist' ? 'Checklist scan' : `${searchMode}: ${trimmedSearchTerm || 'focus needed'}`}</span>
@@ -1313,6 +1578,8 @@ function BinRadar({
           </div>
           {opportunities.map((opportunity, index) => {
             const sts = opportunityStsContext(opportunity)
+            const convictionScore = binConvictionScore(opportunity, sts)
+            const gradingLabel = listingGradingLabel(opportunity.listing)
             return (
               <article className={`bin-opportunity-row lane-${opportunity.lane}`} key={opportunity.listing.id}>
                 <div className="bin-rank-cell">
@@ -1324,6 +1591,18 @@ function BinRadar({
                   <span>{opportunity.listing.title}</span>
                   <div className="bin-evidence-strip">
                     <small>{opportunity.matchedVariation ?? opportunity.listing.variationLabel}</small>
+                    <small className="conviction-chip">Conviction {convictionScore}</small>
+                    <small className={opportunity.trustScore >= 72 ? 'trust-chip good' : opportunity.trustScore >= 58 ? 'trust-chip' : 'trust-chip warning'}>
+                      Trust {opportunity.trustScore}
+                    </small>
+                    {gradingLabel ? (
+                      <>
+                        <small className="graded-chip">
+                          {gradingLabel} {formatMultiplier(opportunity.gradingMultiplier ?? 1)} model
+                        </small>
+                        <small className="graded-chip">Raw floor {money(opportunity.rawFairValue)}</small>
+                      </>
+                    ) : null}
                     {searchMode === 'variation' && trimmedSearchTerm ? <small>Title hit: {trimmedSearchTerm}</small> : null}
                     <small>{opportunity.valuationSource.replaceAll('-', ' ')}</small>
                     {sts.ranking ? (
@@ -1347,7 +1626,10 @@ function BinRadar({
                 </div>
                 <div className="bin-money-cell">
                   <strong>{money(opportunity.fairValue)}</strong>
-                  <span>{Math.round(opportunity.modelConfidence * 100)}% model</span>
+                  <span>
+                    {Math.round(opportunity.modelConfidence * 100)}% model
+                    {opportunity.gradingNote ? ` / ${opportunity.gradingNote}` : ''}
+                  </span>
                 </div>
                 <div className={`bin-money-cell ${opportunity.edgeDollars >= 0 ? 'edge' : 'near-model'}`}>
                   <strong>{money(opportunity.edgeDollars)}</strong>
@@ -1780,6 +2062,7 @@ function SoldModelLab({
 
 function App() {
   const [liveConnected, setLiveConnected] = useState(false)
+  const [pulseAuthMode, setPulseAuthMode] = useState<PulseAuthMode>(() => (getStoredPulseSession()?.access_token ? 'local' : 'public'))
   const [authEmail, setAuthEmail] = useState(() => getStoredPulseSession()?.user?.email ?? '')
   const [authPassword, setAuthPassword] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
@@ -1806,7 +2089,7 @@ function App() {
   const [binPlayerScope, setBinPlayerScope] = useState<BinPlayerScope>('all')
   const [binSearchMode, setBinSearchMode] = useState<BinSearchMode>('checklist')
   const [binSearchTerm, setBinSearchTerm] = useState('')
-  const [binResultSort, setBinResultSort] = useState<BinResultSort>('edge-desc')
+  const [binResultSort, setBinResultSort] = useState<BinResultSort>('conviction-desc')
   const [binModelKey, setBinModelKey] = useState('')
   const [binScan, setBinScan] = useState<EbayBinScanResult | null>(null)
   const [caseHitScan, setCaseHitScan] = useState<CaseHitScanResult | null>(null)
@@ -1908,10 +2191,14 @@ function App() {
     const ebayController = new AbortController()
     getPulseStatus()
       .then((status) => {
-        if (active) setLiveConnected(status.connected)
+        if (!active) return
+        setLiveConnected(status.connected)
+        setPulseAuthMode(status.authMode)
       })
       .catch(() => {
-        if (active) setLiveConnected(false)
+        if (!active) return
+        setLiveConnected(false)
+        setPulseAuthMode(getStoredPulseSession()?.access_token ? 'local' : 'public')
       })
     fetchEbayStatus(ebayController.signal)
       .then((status) => {
@@ -1996,6 +2283,7 @@ function App() {
       minCompCount: 0,
       minDiscountPct: 0,
       minPrice: binMinPrice,
+      mode: 'raw-plus-graded' as const,
       releaseScope: effectiveBinModelKey === BIN_ALL_MODELS_KEY ? ('all' as const) : ('selected' as const),
       targetCategory: selectedModel?.category ?? 'bowman',
       targetReleaseYear: selectedModel?.releaseYear ?? 2026,
@@ -2036,6 +2324,13 @@ function App() {
       : mathHealth === 'warning'
         ? `${matrix.missingBaseRows.toLocaleString()} base gaps / ${matrix.unresolvedMultipliers.toLocaleString()} multiplier gaps`
         : 'Math clean'
+  const pulseSourceLabel =
+    pulseAuthMode === 'server'
+      ? 'ProspectPulse managed'
+      : liveConnected
+        ? 'ProspectPulse connected'
+        : 'Public multiples only'
+  const pulseTapeLabel = pulseAuthMode === 'server' ? 'MANAGED' : liveConnected ? 'CONNECTED' : 'PUBLIC'
 
   async function refreshChecklistUniverse() {
     const catalog = await loadChecklistCatalog()
@@ -2053,22 +2348,31 @@ function App() {
       savePulseSession(session)
       sessionSaved = true
       setLiveConnected(true)
+      setPulseAuthMode('local')
       setAuthEmail(session.user?.email ?? authEmail.trim())
       setAuthPassword('')
       await loadChecklistModel(releaseOptions)
     } catch (connectError) {
       setLiveConnected(sessionSaved && !isPulseAuthError(connectError))
+      setPulseAuthMode(sessionSaved && !isPulseAuthError(connectError) ? 'local' : 'public')
       setChecklistError(connectError instanceof Error ? connectError.message : 'Could not connect ProspectPulse')
     } finally {
       setAuthBusy(false)
     }
   }
 
-  function disconnectProspectPulse() {
+  async function disconnectProspectPulse() {
     clearPulseSession()
-    setLiveConnected(false)
     setAuthPassword('')
-    void loadChecklistModel(releaseOptions)
+    try {
+      const status = await getPulseStatus()
+      setLiveConnected(status.connected)
+      setPulseAuthMode(status.authMode)
+    } catch {
+      setLiveConnected(false)
+      setPulseAuthMode('public')
+    }
+    await loadChecklistModel(releaseOptions)
   }
 
   function resetBinScan() {
@@ -2409,7 +2713,7 @@ function App() {
       <section className="status-strip valuation-status">
         <span className={`source-chip ${liveConnected ? 'connected' : 'offline'}`}>
           {liveConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
-          {liveConnected ? 'ProspectPulse connected' : 'Public multiples only'}
+          {pulseSourceLabel}
         </span>
         <span>{releaseOptions.length.toLocaleString()} checklist releases</span>
         <span>{matrix.totalPricedPlayers.toLocaleString()} priced players</span>
@@ -2436,6 +2740,7 @@ function App() {
         topVariation={topVariation}
         loadedSets={checklistModels.length}
         liveConnected={liveConnected}
+        sourceLabel={pulseTapeLabel}
       />
 
       <WorkflowCommand
@@ -2540,6 +2845,7 @@ function App() {
           </div>
 
           <aside className="detail-rail">
+            <QuickPriceModule row={selectedRow} onScanPlayer={scanBinsForLookupRow} />
             <LadderDetail row={selectedRow} />
             <ModelStatus
               models={checklistModels}
@@ -2619,6 +2925,7 @@ function App() {
           />
           <ProspectPulsePanel
             liveConnected={liveConnected}
+            authMode={pulseAuthMode}
             authEmail={authEmail}
             authPassword={authPassword}
             authBusy={authBusy}

@@ -985,6 +985,23 @@ button {
   word-break: break-word;
 }
 
+.connected-box p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.connected-box.managed {
+  border: 1px solid rgba(181, 255, 55, 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(181, 255, 55, 0.1), transparent 58%),
+    rgba(255, 250, 240, 0.04);
+  padding: 12px;
+}
+
 .model-facts {
   display: grid;
   grid-template-columns: 1.15fr 0.7fr 0.7fr;
@@ -1972,6 +1989,168 @@ thead .matrix-player-col span,
 .detail-title small {
   display: block;
   margin-top: 4px;
+}
+
+.quick-price-card {
+  display: grid;
+  gap: 12px;
+}
+
+.quick-price-title {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.quick-price-title > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.quick-price-title h2 {
+  font-family: var(--mono);
+  font-size: 1.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-verdict {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid rgba(103, 105, 99, 0.18);
+  border-radius: 999px;
+  background: rgba(103, 105, 99, 0.08);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 950;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.quick-verdict.good {
+  color: #087545;
+  border-color: rgba(15, 159, 95, 0.28);
+  background: rgba(15, 159, 95, 0.1);
+}
+
+.quick-verdict.watch {
+  color: #9c6a12;
+  border-color: rgba(240, 182, 74, 0.28);
+  background: rgba(240, 182, 74, 0.12);
+}
+
+.quick-verdict.risk {
+  color: #a9422d;
+  border-color: rgba(193, 79, 53, 0.24);
+  background: rgba(193, 79, 53, 0.08);
+}
+
+.quick-price-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(94px, 0.78fr) minmax(94px, 0.72fr);
+  gap: 8px;
+}
+
+.quick-price-controls label,
+.quick-price-grid div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(251, 248, 238, 0.68);
+}
+
+.quick-price-controls span,
+.quick-price-grid span,
+.quick-price-grid small,
+.quick-source-strip span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.quick-price-controls select,
+.quick-price-controls input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 0.9rem;
+  font-weight: 850;
+}
+
+.quick-price-controls input {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-price-controls input::placeholder {
+  color: rgba(103, 105, 99, 0.52);
+}
+
+.quick-price-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-price-grid strong {
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quick-edge-strip,
+.quick-source-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quick-edge-strip span,
+.quick-source-strip span {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid rgba(103, 105, 99, 0.16);
+  border-radius: 999px;
+  background: rgba(103, 105, 99, 0.07);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.quick-edge-strip span.good {
+  color: #087545;
+  border-color: rgba(15, 159, 95, 0.26);
+  background: rgba(15, 159, 95, 0.1);
+}
+
+.quick-edge-strip span.risk {
+  color: #a9422d;
+  border-color: rgba(193, 79, 53, 0.24);
+  background: rgba(193, 79, 53, 0.08);
+}
+
+.quick-scan-button {
+  width: 100%;
+  justify-content: center;
+  color: var(--text-strong);
+  border-color: rgba(8, 127, 140, 0.18);
+  background: rgba(8, 127, 140, 0.065);
 }
 
 .formula-strip {
@@ -3162,6 +3341,38 @@ thead .matrix-player-col span,
   background: rgba(240, 182, 74, 0.07);
 }
 
+.bin-evidence-strip small.graded-chip {
+  color: #fff1c2;
+  border-color: rgba(240, 182, 74, 0.26);
+  background:
+    linear-gradient(180deg, rgba(240, 182, 74, 0.12), rgba(240, 182, 74, 0.06)),
+    rgba(255, 250, 240, 0.045);
+}
+
+.bin-evidence-strip small.conviction-chip {
+  color: #061f21;
+  border-color: rgba(198, 255, 73, 0.36);
+  background: linear-gradient(180deg, #eaff96, #ccff62);
+}
+
+.bin-evidence-strip small.trust-chip {
+  color: rgba(255, 250, 240, 0.78);
+  border-color: rgba(255, 250, 240, 0.16);
+  background: rgba(255, 250, 240, 0.065);
+}
+
+.bin-evidence-strip small.trust-chip.good {
+  color: var(--pulse);
+  border-color: rgba(159, 216, 207, 0.24);
+  background: rgba(159, 216, 207, 0.08);
+}
+
+.bin-evidence-strip small.trust-chip.warning {
+  color: #ffd9a1;
+  border-color: rgba(240, 182, 74, 0.22);
+  background: rgba(240, 182, 74, 0.07);
+}
+
 .bin-evidence-strip small.sts-chip {
   color: rgba(196, 236, 229, 0.9);
   border-color: rgba(159, 216, 207, 0.18);
@@ -3436,8 +3647,36 @@ thead .matrix-player-col span,
   background: linear-gradient(90deg, var(--amber), var(--foil), var(--clay));
 }
 
+.valuation-app .quick-price-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(90deg, var(--foil), var(--amber), var(--pulse));
+}
+
+.valuation-app .quick-price-card {
+  background:
+    linear-gradient(135deg, rgba(159, 216, 207, 0.16), transparent 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 250, 240, 0.84)),
+    var(--panel);
+}
+
 .valuation-app .detail-title h2 {
   font-size: 1.42rem;
+}
+
+.valuation-app .quick-price-title h2 {
+  color: #087f8c;
+  font-size: 1.72rem;
+}
+
+.valuation-app .quick-price-controls label,
+.valuation-app .quick-price-grid div {
+  border-color: rgba(12, 16, 20, 0.08);
+  background:
+    linear-gradient(145deg, rgba(142, 215, 255, 0.07), transparent 42%),
+    rgba(255, 250, 240, 0.74);
 }
 
 .valuation-app .formula-strip div {
@@ -3507,6 +3746,10 @@ thead .matrix-player-col span,
 
   .valuation-app .valuation-toolbar {
     position: static;
+  }
+
+  .quick-price-controls {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .workflow-command,
@@ -3599,6 +3842,11 @@ thead .matrix-player-col span,
 
   .workflow-mode-card {
     min-height: 96px;
+  }
+
+  .quick-price-controls,
+  .quick-price-grid {
+    grid-template-columns: 1fr;
   }
 
   .bin-radar {

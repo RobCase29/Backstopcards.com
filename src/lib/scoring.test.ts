@@ -99,6 +99,30 @@ describe('normalizeListing', () => {
     expect(normalizeListing(listing({ title: '2026 Bowman Chrome Eli Willits 1st Auto GEM MT 10 Blue /150' })).isGraded).toBe(true)
   })
 
+  it('normalizes major-grader 9+ slab details', () => {
+    const normalized = normalizeListing(
+      listing({
+        title: '2026 Bowman Chrome Eli Willits 1st Auto PSA GEM MT 10 Blue /150',
+      }),
+    )
+
+    expect(normalized.gradingCompany).toBe('PSA')
+    expect(normalized.gradeNumber).toBe(10)
+    expect(normalized.isEligibleGraded).toBe(true)
+  })
+
+  it('does not treat a graded card below 9 as eligible for the raw-floor slab model', () => {
+    const normalized = normalizeListing(
+      listing({
+        title: '2026 Bowman Chrome Eli Willits 1st Auto PSA 8 Blue /150',
+      }),
+    )
+
+    expect(normalized.isGraded).toBe(true)
+    expect(normalized.gradeNumber).toBe(8)
+    expect(normalized.isEligibleGraded).toBe(false)
+  })
+
   it('does not treat Bowman First Edition as a 1st Bowman auto by itself', () => {
     const normalized = normalizeListing(
       listing({
@@ -535,6 +559,41 @@ describe('rankOpportunities', () => {
         }),
       ],
       DEFAULT_SETTINGS,
+      model,
+    )
+
+    expect(opportunities).toEqual([])
+  })
+
+  it('includes PSA/BGS/SGC/CGC 9+ slabs in raw-plus-graded rankings with raw floor plus graded model', () => {
+    const rawOpportunity = rankOpportunities([listing({ item_id: 'raw-card' })], DEFAULT_SETTINGS, model)[0]
+    const opportunities = rankOpportunities(
+      [
+        listing({ item_id: 'psa-10', title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150 PSA10' }),
+        listing({ item_id: 'bgs-9', title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150 BGS 9' }),
+        listing({ item_id: 'sgc-9', title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150 SGC 9' }),
+        listing({ item_id: 'cgc-10', title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150 CGC 10' }),
+      ],
+      { ...DEFAULT_SETTINGS, mode: 'raw-plus-graded' },
+      model,
+    )
+
+    expect(opportunities.map((opportunity) => opportunity.listing.id).sort()).toEqual(['bgs-9', 'cgc-10', 'psa-10', 'sgc-9'])
+    expect(opportunities.every((opportunity) => opportunity.rawFairValue === rawOpportunity?.fairValue)).toBe(true)
+    expect(opportunities.every((opportunity) => opportunity.fairValue >= opportunity.rawFairValue)).toBe(true)
+    expect(opportunities.find((opportunity) => opportunity.listing.id === 'psa-10')?.fairValue).toBeGreaterThan(rawOpportunity?.fairValue ?? 0)
+    expect(opportunities.every((opportunity) => (opportunity.gradingMultiplier ?? 0) >= 0.9)).toBe(true)
+    expect(opportunities.every((opportunity) => opportunity.reasons.some((reason) => /graded model|premium curve|slab premium/i.test(reason)))).toBe(true)
+    expect(opportunities.every((opportunity) => opportunity.trustScore > 0)).toBe(true)
+  })
+
+  it('excludes low-grade or unclear slabs from raw-plus-graded rankings', () => {
+    const opportunities = rankOpportunities(
+      [
+        listing({ item_id: 'psa-8', title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150 PSA 8' }),
+        listing({ item_id: 'unknown-slab', title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150 graded slabbed' }),
+      ],
+      { ...DEFAULT_SETTINGS, mode: 'raw-plus-graded' },
       model,
     )
 

@@ -1,6 +1,7 @@
 import type {
   ChecklistModel,
   CompSale,
+  GradingCompany,
   ListingStatus,
   NormalizedListing,
   Opportunity,
@@ -138,7 +139,7 @@ function imageUrl(listing: ProspectPulseListing) {
 }
 
 function inferIsGraded(listing: ProspectPulseListing) {
-  const text = searchText(listing)
+  const text = gradingText(listing)
   const gradeText = String(listing.grade ?? '').trim()
   return Boolean(
     listing.is_graded ||
@@ -149,6 +150,57 @@ function inferIsGraded(listing: ProspectPulseListing) {
       /\b(gem\s+(?:mt|mint)|mint\s+10|gem\s+10|pristine|black\s+label|slabbed|graded)\b/.test(text) ||
       /\b(?:9|9\.5|10)\s*\/\s*10\b/.test(text),
   )
+}
+
+function gradingText(listing: ProspectPulseListing) {
+  return [
+    listing.title,
+    listing.grader,
+    listing.grade,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
+function normalizeGradingCompany(value: unknown): GradingCompany | null {
+  const text = String(value ?? '').toUpperCase()
+  if (/\bPSA\b/.test(text)) return 'PSA'
+  if (/\bBGS\b|BECKETT/.test(text)) return 'BGS'
+  if (/\bSGC\b/.test(text)) return 'SGC'
+  if (/\bCGC\b/.test(text)) return 'CGC'
+  return null
+}
+
+function parseGradeNumber(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const text = String(value ?? '').trim()
+  const direct = text.match(/\b(10|[1-9](?:\.\d)?)\b/)
+  return direct ? Number(direct[1]) : null
+}
+
+function inferGradeDetails(listing: ProspectPulseListing) {
+  const text = gradingText(listing)
+  const graderPattern = /\b(psa|bgs|sgc|cgc|beckett)\b/i
+  const company = normalizeGradingCompany(listing.grader) ?? normalizeGradingCompany(text.match(graderPattern)?.[1])
+  const compactMatch =
+    text.match(/\b(psa|bgs|sgc|cgc)\s*(?:gem\s*(?:mt|mint)?|mint|pristine|black\s*label)?\s*(10|[1-9](?:\.\d)?)\b/i) ??
+    text.match(/\b(psa|bgs|sgc|cgc)(10|[1-9](?:\.\d)?)\b/i)
+  const reverseMatch = text.match(/\b(10|[1-9](?:\.\d)?)\s*(?:\/\s*10)?\s*(psa|bgs|sgc|cgc)\b/i)
+  const gradeNumber =
+    parseGradeNumber(listing.grade) ??
+    (compactMatch ? Number(compactMatch[2]) : null) ??
+    (reverseMatch ? Number(reverseMatch[1]) : null)
+  const gradingCompany =
+    company ?? normalizeGradingCompany(compactMatch?.[1]) ?? normalizeGradingCompany(reverseMatch?.[2])
+  const isGraded = inferIsGraded(listing)
+
+  return {
+    isGraded,
+    gradingCompany,
+    gradeNumber,
+    isEligibleGraded: Boolean(isGraded && gradingCompany && gradeNumber !== null && gradeNumber >= 9),
+  }
 }
 
 function hoursBetween(date?: string | null, endDate = Date.now()) {
@@ -314,6 +366,7 @@ export function normalizeListing(listing: ProspectPulseListing): NormalizedListi
   const serialDenominator = inferSerialDenominator(listing)
   const playerName = firstString([listing.player_name, prospect?.name], 'Unknown player')
   const title = firstString([listing.title, playerName], 'Untitled listing')
+  const gradeDetails = inferGradeDetails(listing)
 
   return {
     id: String(listing.item_id ?? listing.id ?? `${listing.player_name ?? 'card'}-${listing.title ?? ''}`),
@@ -341,9 +394,12 @@ export function normalizeListing(listing: ProspectPulseListing): NormalizedListi
     releaseLabel: releaseLabel(listing, releaseYear),
     variationLabel: variationLabel(listing, serialDenominator),
     serialDenominator,
-    isGraded: inferIsGraded(listing),
+    isGraded: gradeDetails.isGraded,
     grader: listing.grader,
     grade: listing.grade,
+    gradingCompany: gradeDetails.gradingCompany,
+    gradeNumber: gradeDetails.gradeNumber,
+    isEligibleGraded: gradeDetails.isEligibleGraded,
     ...universe,
     listingAgeHours: hoursBetween(createdAt),
     hoursToClose: hoursUntil(endTime),
@@ -654,6 +710,8 @@ function buildReasons(args: {
   confidence: number
   maxEntry: number
   modelConfidence: number
+  gradingMultiplier?: number | null
+  gradingNote?: string | null
   matchedVariation?: string | null
   valuationSource: ValuationSource
 }) {
@@ -666,6 +724,8 @@ function buildReasons(args: {
     confidence,
     maxEntry,
     modelConfidence,
+    gradingMultiplier,
+    gradingNote,
     matchedVariation,
     valuationSource,
   } = args
@@ -687,6 +747,13 @@ function buildReasons(args: {
   else if (discountPct < 0) warnings.push(`${Math.abs(Math.round(discountPct * 100))}% over model`)
   if (edgeDollars >= 100) reasons.push(`$${Math.round(edgeDollars)} model spread`)
   else if (edgeDollars >= 25) reasons.push(`$${Math.round(edgeDollars)} spread`)
+  if (listing.isEligibleGraded) {
+    const gradeLabel =
+      listing.gradingCompany && listing.gradeNumber !== null
+        ? `${listing.gradingCompany} ${listing.gradeNumber}`
+        : '9+ slab'
+    reasons.push(`${gradeLabel} ${(gradingMultiplier ?? 1).toFixed(2)}x ${gradingNote ?? 'graded model'}`)
+  }
   if (listing.allInPrice <= maxEntry) reasons.push('inside max entry')
   if (matchedVariation && modelConfidence > 0.2) {
     reasons.push(
@@ -722,6 +789,7 @@ function buildReasons(args: {
   if (!listing.listingUrl) warnings.push('missing eBay link')
 
   if (listing.serialDenominator && listing.serialDenominator <= 99) tags.push(`/${listing.serialDenominator}`)
+  if (listing.isEligibleGraded && listing.gradingCompany && listing.gradeNumber !== null) tags.push(`${listing.gradingCompany} ${listing.gradeNumber}`)
   if (listing.prospect?.level) tags.push(listing.prospect.level)
   if (listing.kind === 'bin') tags.push('BIN')
   else if (listing.kind === 'live') tags.push('auction')
@@ -750,19 +818,109 @@ function releaseCategoryMatches(listing: NormalizedListing, category: ScoreSetti
   return /\bbowman\b/.test(text) && !/\bdraft\b/.test(text)
 }
 
+function marketModeMatches(listing: NormalizedListing, mode: ScoreSettings['mode']) {
+  if (mode === 'raw') return !listing.isGraded
+  if (mode === 'raw-plus-graded') return !listing.isGraded || listing.isEligibleGraded
+  return listing.isGraded
+}
+
+function priceCompression(rawPrice: number, highMultiple: number, lowMultiple: number) {
+  const minPrice = Math.log10(25)
+  const maxPrice = Math.log10(1_000)
+  const position = clamp((Math.log10(Math.max(10, rawPrice)) - minPrice) / (maxPrice - minPrice), 0, 1)
+  return highMultiple - (highMultiple - lowMultiple) * position
+}
+
+function scarcityDrag(serialDenominator: number | null | undefined) {
+  if (!serialDenominator) return 0
+  if (serialDenominator <= 5) return 0.32
+  if (serialDenominator <= 25) return 0.23
+  if (serialDenominator <= 50) return 0.14
+  if (serialDenominator <= 99) return 0.08
+  if (serialDenominator <= 150) return 0.04
+  return 0
+}
+
+function gradeCompanyAdjustment(company: GradingCompany | null | undefined, gradeNumber: number | null | undefined) {
+  if (!company || !gradeNumber) return 1
+  if (company === 'PSA') return 1
+  if (company === 'BGS') return gradeNumber >= 10 ? 1 : gradeNumber >= 9.5 ? 0.96 : 0.92
+  if (company === 'CGC') return gradeNumber >= 10 ? 0.88 : 0.9
+  if (company === 'SGC') return gradeNumber >= 10 ? 0.84 : 0.88
+  return 1
+}
+
+export function estimateGradedPremium({
+  rawPrice,
+  serialDenominator,
+  gradingCompany,
+  gradeNumber,
+}: {
+  rawPrice: number
+  serialDenominator?: number | null
+  gradingCompany?: GradingCompany | null
+  gradeNumber?: number | null
+}) {
+  if (!gradeNumber || !gradingCompany) {
+    return {
+      multiplier: 1,
+      confidence: 0.96,
+      note: 'Raw model',
+    }
+  }
+
+  const drag = scarcityDrag(serialDenominator)
+  let baseMultiple: number
+  if (gradeNumber < 9) {
+    baseMultiple = rawPrice < 25 ? 1.02 : 0.88 - drag * 0.45
+  } else if (gradeNumber < 10) {
+    baseMultiple = priceCompression(rawPrice, 1.3, 1.05) - drag * 0.42
+  } else {
+    baseMultiple = priceCompression(rawPrice, 2.75, 1.62) - drag * 0.88
+  }
+
+  const adjusted = baseMultiple * gradeCompanyAdjustment(gradingCompany, gradeNumber)
+  const minMultiple = gradeNumber < 9 ? 0.68 : gradeNumber < 10 ? 1 : 1.18
+  const maxMultiple = gradeNumber < 9 ? 1.08 : gradeNumber < 10 ? 1.35 : 3.05
+  const multiplier = Number(clamp(adjusted, minMultiple, maxMultiple).toFixed(2))
+  const confidence = clamp(0.86 - drag * 0.48 - (gradingCompany === 'PSA' ? 0 : 0.08), 0.55, 0.9)
+
+  return {
+    multiplier,
+    confidence,
+    note:
+      gradeNumber < 9
+        ? 'Condition discount'
+        : gradeNumber < 10
+          ? 'Compressed slab premium'
+          : 'Gem premium curve',
+  }
+}
+
 export function scoreListing(
   listing: NormalizedListing,
   settings: ScoreSettings = DEFAULT_SETTINGS,
   checklistModel?: ChecklistModel | null,
 ): Opportunity {
   const valuation = estimateValuation(listing, checklistModel)
-  const marketPrice = valuation.fairValue
+  const rawMarketPrice = valuation.fairValue
+  const gradePremium = listing.isEligibleGraded
+    ? estimateGradedPremium({
+        rawPrice: rawMarketPrice,
+        serialDenominator: listing.serialDenominator,
+        gradingCompany: listing.gradingCompany,
+        gradeNumber: listing.gradeNumber,
+      })
+    : { multiplier: 1, confidence: 1, note: null }
+  const marketPrice = rawMarketPrice * gradePremium.multiplier
+  const modelConfidence = clamp(valuation.modelConfidence * gradePremium.confidence)
   const discountPct = marketPrice > 0 ? (marketPrice - listing.allInPrice) / marketPrice : 0
   const edgeDollars = marketPrice - listing.allInPrice
+  const rawEdgeDollars = rawMarketPrice - listing.allInPrice
   const dollarBias = clamp(settings.dollarEdgeWeight / 100)
   const rawEdge = dollarEdgeScore(edgeDollars)
   const percentEdge = percentEdgeScore(discountPct)
-  const compQuality = clamp(compQualityScore(listing) * 0.78 + valuation.modelConfidence * 0.22)
+  const compQuality = clamp(compQualityScore(listing) * 0.78 + modelConfidence * 0.22)
   const availability = availabilityScore(listing)
   const liquidity = liquidityScore(listing)
   const hoursToClose = listing.hoursToClose ?? null
@@ -783,7 +941,7 @@ export function scoreListing(
       (weakCurveOnly ? 0.16 : 0) +
       levelAgePenalty(listing.prospect) +
       (listing.bidCount > 18 ? 0.1 : 0) +
-      (marketPrice < 35 ? 0.08 : 0),
+      (rawMarketPrice < 35 ? 0.08 : 0),
   )
   const rawWeight = 0.34 + dollarBias * 0.25
   const percentWeight = 0.34 - dollarBias * 0.16
@@ -794,7 +952,7 @@ export function scoreListing(
       compQuality * 0.15 +
       targetFit * 0.12 +
       executionScore * 0.1 +
-      valuation.modelConfidence * 0.07 +
+      modelConfidence * 0.07 +
       prospect * 0.08 -
       riskScore * 0.14,
   )
@@ -802,7 +960,7 @@ export function scoreListing(
     compQuality * 0.43 +
       targetFit * 0.23 +
       availability * 0.16 +
-      valuation.modelConfidence * 0.1 +
+      modelConfidence * 0.1 +
       prospect * 0.08 -
       riskScore * 0.12,
   )
@@ -816,7 +974,9 @@ export function scoreListing(
     availability,
     confidence,
     maxEntry,
-    modelConfidence: valuation.modelConfidence,
+    modelConfidence,
+    gradingMultiplier: listing.isEligibleGraded ? gradePremium.multiplier : null,
+    gradingNote: listing.isEligibleGraded ? gradePremium.note : null,
     matchedVariation: valuation.matchedVariation,
     valuationSource: valuation.valuationSource,
   })
@@ -847,6 +1007,16 @@ export function scoreListing(
   else if (score >= 0.7) grade = 'A'
   else if (score >= 0.56) grade = 'B'
   else if (score >= 0.42) grade = 'C'
+  const trustScore = Math.round(
+    clamp(
+      confidence * 0.46 +
+        targetFit * 0.21 +
+        modelConfidence * 0.17 +
+        compQuality * 0.13 +
+        availability * 0.03 -
+        Math.min(warnings.length, 4) * 0.035,
+    ) * 100,
+  )
 
   return {
     listing,
@@ -855,18 +1025,24 @@ export function scoreListing(
     action,
     lane,
     fairValue: marketPrice,
-    modelPrice: valuation.modelPrice,
+    rawFairValue: rawMarketPrice,
+    modelPrice: valuation.modelPrice ? valuation.modelPrice * gradePremium.multiplier : valuation.modelPrice,
     baseTwmaPrice: valuation.baseTwmaPrice,
-    variationPrice: valuation.variationPrice,
+    variationPrice: valuation.variationPrice ? valuation.variationPrice * gradePremium.multiplier : valuation.variationPrice,
     compPrice: valuation.compPrice,
-    modelConfidence: valuation.modelConfidence,
+    modelConfidence,
+    gradingMultiplier: listing.isEligibleGraded ? gradePremium.multiplier : null,
+    gradingConfidence: listing.isEligibleGraded ? gradePremium.confidence : null,
+    gradingNote: listing.isEligibleGraded ? gradePremium.note : null,
     matchedVariation: valuation.matchedVariation,
     valuationSource: valuation.valuationSource,
     discountPct,
     edgeDollars,
+    rawEdgeDollars,
     maxEntry,
     expectedRoiPct,
     confidence,
+    trustScore,
     compQualityScore: compQuality,
     availabilityScore: availability,
     universeScore: targetFit,
@@ -880,7 +1056,7 @@ export function scoreListing(
       compQuality,
       targetFit,
       availability,
-      variationModel: valuation.modelConfidence,
+      variationModel: modelConfidence,
       prospect,
       riskPenalty: riskScore,
     },
@@ -905,7 +1081,7 @@ export function rankOpportunities(
     .map(normalizeListing)
     .filter((listing) => listing.allInPrice > 0)
     .filter((listing) => {
-      const modeMatches = mergedSettings.mode === 'raw' ? !listing.isGraded : listing.isGraded
+      const modeMatches = marketModeMatches(listing, mergedSettings.mode)
       const releaseMatches =
         mergedSettings.releaseScope === 'all' || listing.releaseYear === mergedSettings.targetReleaseYear
       const categoryMatches =

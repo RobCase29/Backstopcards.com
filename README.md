@@ -31,7 +31,23 @@ Option B: create `.env.local` from `.env.example` and set:
 PROSPECTPULSE_ACCESS_TOKEN=your_supabase_access_token
 ```
 
-The token stays server-side in the Vite dev proxy.
+The token stays server-side in the Vite dev proxy. When this value is present, the app treats ProspectPulse as a managed connection: the UI shows `ProspectPulse managed`, every approved browser uses the same server-side token, and the local disconnect button is hidden because users do not own that session.
+
+For a private deployment, set `PROSPECTPULSE_ACCESS_TOKEN` in the host's server environment and protect the site with an invite-only gate such as Cloudflare Access, Vercel password protection/auth middleware, or Google Workspace sign-in. Do not commit `.env.local`, ProspectPulse passwords, or live tokens.
+
+## Security Notes
+
+Treat the API proxy as private infrastructure. It holds the ProspectPulse and eBay credentials server-side, so the site should not be reachable without an access gate.
+
+Minimum safe setup before sharing:
+
+1. Keep `.env.local` local only. It is ignored by git via `*.local`.
+2. Put any hosted version behind Cloudflare Access, Tailscale, Vercel auth middleware, or another invite-only gate before sharing the URL.
+3. Do not expose `npm run dev` directly to the public internet. Use a private tunnel/access layer for local sharing, or deploy with an equivalent server-side API/proxy layer.
+4. Keep ProspectPulse and eBay tokens in server environment variables only. Never place them in `VITE_` variables or client code.
+5. Rotate any credential that was pasted into chat, screenshots, logs, or a public issue tracker.
+
+The local proxy rejects cross-origin POSTs, oversized JSON bodies, unknown ProspectPulse function routes, and non-Bowman eBay queries to reduce accidental token/API-quota exposure.
 
 ## eBay BIN Radar
 

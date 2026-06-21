@@ -1,6 +1,8 @@
 export type ListingKind = 'live' | 'bin' | 'sold'
 
-export type MarketMode = 'raw' | 'graded'
+export type MarketMode = 'raw' | 'graded' | 'raw-plus-graded'
+
+export type GradingCompany = 'PSA' | 'BGS' | 'SGC' | 'CGC'
 
 export type TargetUniverse = 'strict' | 'expanded'
 
@@ -191,6 +193,9 @@ export interface NormalizedListing {
   isGraded: boolean
   grader?: string | null
   grade?: string | number | null
+  gradingCompany?: GradingCompany | null
+  gradeNumber?: number | null
+  isEligibleGraded: boolean
   isBowman: boolean
   isAutograph: boolean
   isFirstBowman: boolean
@@ -207,18 +212,24 @@ export interface Opportunity {
   action: 'Buy now' | 'Make offer' | 'Bid window' | 'Watchlist' | 'Pass'
   lane: 'buy' | 'watch' | 'risk'
   fairValue: number
+  rawFairValue: number
   modelPrice?: number | null
   baseTwmaPrice?: number | null
   variationPrice?: number | null
   compPrice?: number | null
   modelConfidence: number
+  gradingMultiplier?: number | null
+  gradingConfidence?: number | null
+  gradingNote?: string | null
   matchedVariation?: string | null
   valuationSource: ValuationSource
   discountPct: number
   edgeDollars: number
+  rawEdgeDollars: number
   maxEntry: number
   expectedRoiPct: number
   confidence: number
+  trustScore: number
   compQualityScore: number
   availabilityScore: number
   universeScore: number

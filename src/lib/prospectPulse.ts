@@ -21,8 +21,12 @@ interface ListingFetchOptions {
   priceMax?: number
 }
 
+export type PulseAuthMode = 'server' | 'local' | 'public'
+
 interface PulseStatus {
   connected: boolean
+  serverConnected?: boolean
+  authMode?: PulseAuthMode
   hasAnonKey: boolean
   message?: string
 }
@@ -163,9 +167,14 @@ export async function getPulseStatus() {
   const response = await fetch('/api/prospectpulse/status')
   const status = await readJson<PulseStatus>(response)
   const session = getStoredPulseSession()
+  const serverConnected = Boolean(status.serverConnected ?? status.authMode === 'server')
+  const localConnected = Boolean(session?.access_token)
+  const authMode: PulseAuthMode = serverConnected ? 'server' : localConnected ? 'local' : 'public'
   return {
     ...status,
-    connected: status.connected || Boolean(session?.access_token),
+    authMode,
+    serverConnected,
+    connected: serverConnected || localConnected,
   }
 }
 

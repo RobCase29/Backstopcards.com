@@ -8,10 +8,32 @@ const DEFAULT_SUPABASE_ANON_KEY =
 const EBAY_OAUTH_SCOPE = 'https://api.ebay.com/oauth/api_scope'
 const EBAY_SEARCH_CONCURRENCY = 5
 const EBAY_SOLD_SEARCH_CONCURRENCY = 2
+const MAX_JSON_BODY_BYTES = 1_000_000
+const MAX_EBAY_BODY_BYTES = 256_000
+const MAX_LOGIN_BODY_BYTES = 16_000
+const MAX_EBAY_QUERIES = 140
+const MAX_EBAY_QUERY_LENGTH = 140
+const PROSPECTPULSE_FUNCTION_ROUTES = new Set(['api-checklists', 'api-listings'])
+const EBAY_ROUTES = new Set(['search', 'sold'])
 
-async function readRequestBody(request: IncomingMessage) {
+class ProxyRequestError extends Error {
+  statusCode: number
+
+  constructor(statusCode: number, message: string) {
+    super(message)
+    this.statusCode = statusCode
+  }
+}
+
+async function readRequestBody(request: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES) {
   let body = ''
-  for await (const chunk of request) body += chunk
+  let bytes = 0
+  for await (const chunk of request) {
+    const value = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+    bytes += Buffer.byteLength(value)
+    if (bytes > maxBytes) throw new ProxyRequestError(413, 'Request body is too large')
+    body += value
+  }
   return body
 }
 
@@ -25,6 +47,54 @@ function clampInt(value: unknown, fallback: number, min: number, max: number) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return fallback
   return Math.min(max, Math.max(min, Math.floor(parsed)))
+}
+
+function isJsonPost(request: IncomingMessage) {
+  return String(request.headers['content-type'] ?? '').toLowerCase().includes('application/json')
+}
+
+function trustedSameOrigin(request: IncomingMessage) {
+  const origin = String(request.headers.origin ?? '')
+  if (!origin) return true
+  const host = String(request.headers.host ?? '')
+  if (!host) return false
+  try {
+    return new URL(origin).host === host
+  } catch {
+    return false
+  }
+}
+
+async function readJsonBody<T>(request: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES) {
+  if (!isJsonPost(request)) throw new ProxyRequestError(415, 'Expected application/json')
+  const body = await readRequestBody(request, maxBytes)
+  try {
+    return JSON.parse(body) as T
+  } catch {
+    throw new ProxyRequestError(400, 'Invalid JSON body')
+  }
+}
+
+function rejectUnsafePost(request: IncomingMessage, response: ServerResponse) {
+  if (request.method !== 'POST') return false
+  if (!trustedSameOrigin(request)) {
+    writeJson(response, 403, { error: 'Cross-origin requests are not allowed' })
+    return true
+  }
+  if (!isJsonPost(request)) {
+    writeJson(response, 415, { error: 'Expected application/json' })
+    return true
+  }
+  return false
+}
+
+function routeErrorStatus(error: unknown) {
+  return error instanceof ProxyRequestError ? error.statusCode : 502
+}
+
+function routeErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message
+  return fallback
 }
 
 function ebayHost(sandbox: boolean) {
@@ -87,7 +157,7 @@ async function getEbayAccessToken(env: Record<string, string>, sandbox: boolean,
   })
 
   const text = await upstream.text()
-  if (!upstream.ok) throw new Error(`eBay OAuth failed (${upstream.status}): ${text.slice(0, 240)}`)
+  if (!upstream.ok) throw new Error(`eBay OAuth failed (${upstream.status})`)
 
   const token = JSON.parse(text) as { access_token?: string; expires_in?: number }
   if (!token.access_token) throw new Error('eBay OAuth response did not include an access token')
@@ -159,8 +229,8 @@ async function searchEbayJob(options: {
 
   const limit = clampInt(payload.limit, 100, 1, 200)
   const maxPages = clampInt(payload.maxPages, 1, 1, 3)
-  const marketplaceId = String(payload.marketplaceId || defaultMarketplaceId || 'EBAY_US')
-  const categoryId = String(payload.categoryId || defaultCategoryId || '').trim()
+  const marketplaceId = String(defaultMarketplaceId || 'EBAY_US')
+  const categoryId = String(defaultCategoryId || '').trim()
   const allItems: Array<Record<string, unknown>> = []
   let total = 0
   let pagesFetched = 0
@@ -186,7 +256,7 @@ async function searchEbayJob(options: {
 
     const upstream = await fetch(url, { headers })
     const text = await upstream.text()
-    if (!upstream.ok) throw new Error(`eBay search failed for "${query}" (${upstream.status}): ${text.slice(0, 240)}`)
+    if (!upstream.ok) throw new Error(`eBay search failed for "${query}" (${upstream.status})`)
 
     const data = JSON.parse(text) as { itemSummaries?: Array<Record<string, unknown>>; total?: number }
     const items = data.itemSummaries ?? []
@@ -219,8 +289,8 @@ async function searchEbaySoldJob(options: {
 
   const limit = clampInt(payload.limit, 100, 1, 200)
   const maxPages = clampInt(payload.maxPages, 1, 1, 3)
-  const marketplaceId = String(payload.marketplaceId || defaultMarketplaceId || 'EBAY_US')
-  const categoryId = String(payload.categoryId || defaultCategoryId || '').trim()
+  const marketplaceId = String(defaultMarketplaceId || 'EBAY_US')
+  const categoryId = String(defaultCategoryId || '').trim()
   const allItems: Array<Record<string, unknown>> = []
   let total = 0
   let pagesFetched = 0
@@ -242,7 +312,7 @@ async function searchEbaySoldJob(options: {
       },
     })
     const text = await upstream.text()
-    if (!upstream.ok) throw new Error(`eBay sold search failed for "${query}" (${upstream.status}): ${text.slice(0, 240)}`)
+    if (!upstream.ok) throw new Error(`eBay sold search failed for "${query}" (${upstream.status})`)
 
     const data = JSON.parse(text) as {
       itemSales?: Array<Record<string, unknown>>
@@ -275,6 +345,18 @@ function canUsePublicChecklist(body: string) {
   }
 }
 
+function safeEbayQueries(payload: EbaySearchPayload) {
+  return (payload.queries ?? [])
+    .flatMap((query) => {
+      const q = String(query.q ?? '').replace(/\s+/g, ' ').trim()
+      if (!q) return []
+      if (q.length > MAX_EBAY_QUERY_LENGTH) throw new ProxyRequestError(400, 'eBay query is too long')
+      if (!/\bbowman\b/i.test(q)) throw new ProxyRequestError(400, 'eBay queries must be scoped to Bowman cards')
+      return [{ ...query, q }]
+    })
+    .slice(0, MAX_EBAY_QUERIES)
+}
+
 function prospectPulseProxy(): Plugin {
   return {
     name: 'prospect-pulse-local-proxy',
@@ -292,19 +374,23 @@ function prospectPulseProxy(): Plugin {
           response.end(
             JSON.stringify({
               connected: Boolean(envAccessToken),
+              serverConnected: Boolean(envAccessToken),
+              authMode: envAccessToken ? 'server' : 'public',
               hasAnonKey: Boolean(anonKey),
-              message: envAccessToken ? 'ProspectPulse token loaded' : 'No server access token configured',
+              message: envAccessToken ? 'ProspectPulse managed token loaded' : 'No server access token configured',
             }),
           )
           return
         }
 
+        if (rejectUnsafePost(request, response)) return
+
         if (request.method === 'POST' && route === 'login') {
           try {
-            const payload = JSON.parse(await readRequestBody(request)) as {
+            const payload = await readJsonBody<{
               email?: string
               password?: string
-            }
+            }>(request, MAX_LOGIN_BODY_BYTES)
             if (!payload.email || !payload.password) {
               response.statusCode = 400
               response.setHeader('Content-Type', 'application/json')
@@ -329,13 +415,9 @@ function prospectPulseProxy(): Plugin {
             response.setHeader('Content-Type', upstream.headers.get('Content-Type') ?? 'application/json')
             response.end(text)
           } catch (error) {
-            response.statusCode = 400
-            response.setHeader('Content-Type', 'application/json')
-            response.end(
-              JSON.stringify({
-                error: error instanceof Error ? error.message : 'Login request failed',
-              }),
-            )
+            writeJson(response, routeErrorStatus(error), {
+              error: routeErrorMessage(error, 'Login request failed'),
+            })
           }
           return
         }
@@ -346,7 +428,20 @@ function prospectPulseProxy(): Plugin {
           return
         }
 
-        const body = await readRequestBody(request)
+        if (!PROSPECTPULSE_FUNCTION_ROUTES.has(route)) {
+          writeJson(response, 404, { error: 'Unknown ProspectPulse route' })
+          return
+        }
+
+        let body: string
+        try {
+          body = await readRequestBody(request, MAX_JSON_BODY_BYTES)
+          JSON.parse(body)
+        } catch (error) {
+          writeJson(response, routeErrorStatus(error), { error: routeErrorMessage(error, 'Invalid ProspectPulse request') })
+          return
+        }
+
         const headerToken = request.headers['x-prospectpulse-access-token']
         const accessToken =
           envAccessToken ||
@@ -410,11 +505,13 @@ function ebayProxy(): Plugin {
           return
         }
 
-        if (request.method !== 'POST' || !['search', 'sold'].includes(route)) {
+        if (request.method !== 'POST' || !EBAY_ROUTES.has(route)) {
           response.statusCode = 404
           response.end()
           return
         }
+
+        if (rejectUnsafePost(request, response)) return
 
         if (!configured) {
           writeJson(response, 401, { error: 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in .env.local' })
@@ -422,10 +519,8 @@ function ebayProxy(): Plugin {
         }
 
         try {
-          const payload = JSON.parse(await readRequestBody(request)) as EbaySearchPayload
-          const queries = (payload.queries ?? [])
-            .filter((query) => String(query.q ?? '').trim())
-            .slice(0, 140)
+          const payload = await readJsonBody<EbaySearchPayload>(request, MAX_EBAY_BODY_BYTES)
+          const queries = safeEbayQueries(payload)
 
           if (queries.length === 0) {
             writeJson(response, 400, { error: 'At least one eBay query is required' })
@@ -497,7 +592,7 @@ function ebayProxy(): Plugin {
             },
           })
         } catch (error) {
-          writeJson(response, 502, {
+          writeJson(response, routeErrorStatus(error), {
             error: ebayRouteErrorMessage(route, error instanceof Error ? error.message : 'eBay proxy request failed'),
           })
         }
