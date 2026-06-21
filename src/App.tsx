@@ -8,6 +8,7 @@ import {
   Download,
   ExternalLink,
   Gauge,
+  Gem,
   KeyRound,
   Layers,
   LogOut,
@@ -40,6 +41,12 @@ import {
   type EbayBinSearchMode,
   type EbayStatus,
 } from './lib/ebay'
+import {
+  CRYSTALLIZED_CHECKLIST,
+  fetchCrystallizedCaseHits,
+  type CaseHitOpportunity,
+  type CaseHitScanResult,
+} from './lib/caseHits'
 import {
   buildPricingMatrix,
   filterPricingRows,
@@ -138,6 +145,7 @@ const CHECKLIST_MIN_YEAR = 2021
 const CHECKLIST_LOAD_CONCURRENCY = 6
 const LEADERBOARD_RENDER_LIMIT = 500
 const BIN_RENDER_LIMIT = 40
+const CASE_HIT_RENDER_LIMIT = 24
 
 function money(value: number) {
   return currency.format(value)
@@ -802,6 +810,220 @@ function BinRadar({
   )
 }
 
+function caseHitSourceLabel(source: CaseHitOpportunity['source']) {
+  return source.replaceAll('-', ' ')
+}
+
+function caseHitModelSourceLabel(source: CaseHitScanResult['valuationRows'][number]['source']) {
+  return source.replaceAll('-', ' ')
+}
+
+function CaseHitLab({
+  scan,
+  loading,
+  error,
+  ebayStatus,
+  minPrice,
+  onMinPriceChange,
+  onScan,
+}: {
+  scan: CaseHitScanResult | null
+  loading: boolean
+  error: string | null
+  ebayStatus: EbayStatus | null
+  minPrice: number
+  onMinPriceChange: (value: number) => void
+  onScan: () => void
+}) {
+  const configured = Boolean(ebayStatus?.configured)
+  const opportunities = scan?.opportunities ?? []
+  const rendered = opportunities.slice(0, CASE_HIT_RENDER_LIMIT)
+  const valuationRows = scan?.valuationRows ?? []
+  const positiveEdges = opportunities.filter((opportunity) => opportunity.edgeDollars > 0).length
+  const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
+  const canScan = configured && !loading
+  const scanButtonLabel = loading ? 'Scanning' : configured ? 'Scan Crystallized' : 'eBay offline'
+
+  return (
+    <section className="bin-radar case-hit-lab">
+      <div className="bin-radar-header">
+        <div className="section-title">
+          <Gem size={18} />
+          <div>
+            <h2>Case Hit Lab</h2>
+            <span>2026 Bowman Crystallized active BINs, modeled from eBay asks only</span>
+          </div>
+        </div>
+        <div className="bin-radar-pills">
+          <span className={configured ? 'connected' : 'offline'}>
+            {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
+            {configured ? 'eBay only' : 'eBay keys needed'}
+          </span>
+          <span>{CRYSTALLIZED_CHECKLIST.length} cards</span>
+          <span>{scan ? `${scan.listings.length.toLocaleString()} mapped` : 'No scan yet'}</span>
+          <span>{scan ? `${positiveEdges.toLocaleString()} ask edges` : 'Ask model pending'}</span>
+          {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
+        </div>
+      </div>
+
+      <div className="bin-radar-controls">
+        <label className="bin-control">
+          <span>Min BIN</span>
+          <input
+            aria-label="Minimum Crystallized BIN price"
+            min="0"
+            step="5"
+            type="number"
+            value={minPrice}
+            onChange={(event) => onMinPriceChange(Math.max(0, Number(event.target.value) || 0))}
+          />
+        </label>
+        <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
+          <RefreshCw size={16} className={loading ? 'spin' : undefined} />
+          {scanButtonLabel}
+        </button>
+        {scan ? (
+          <div className="bin-scan-stats">
+            <strong>{scan.stats.queriesSucceeded.toLocaleString()}</strong>
+            <span>
+              queries / {scan.stats.pagesFetched.toLocaleString()} pages / {scan.stats.rejectedListings.toLocaleString()} rejects
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {error ? (
+        <div className="bin-radar-alert">
+          <ShieldCheck size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {!configured ? (
+        <div className="bin-empty-state">
+          <KeyRound size={24} />
+          <div>
+            <strong>eBay production keys are required.</strong>
+            <span>This lab does not use ProspectPulse; it builds from active eBay Crystallized BINs only.</span>
+          </div>
+        </div>
+      ) : !scan ? (
+        <div className="bin-empty-state ready">
+          <Gem size={24} />
+          <div>
+            <strong>Ready to trial eBay-only case-hit modeling.</strong>
+            <span>
+              The model scans the 20-card Crystallized checklist, rejects adjacent inserts/autos, and estimates value from active ask comps
+              plus pack-odds rarity.
+            </span>
+          </div>
+        </div>
+      ) : rendered.length === 0 ? (
+        <div className="bin-empty-state muted">
+          <Gem size={24} />
+          <div>
+            <strong>No Crystallized listings survived the title filters.</strong>
+            <span>{scan.stats.dedupedItems.toLocaleString()} eBay items were reviewed before checklist and insert filtering.</span>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="case-hit-model-board">
+            <div className="case-hit-model-title">
+              <strong>Crystallized Variation Model</strong>
+              <span>Modeled prices across every checklist player and parallel, using active eBay asks plus pack-odds rarity.</span>
+            </div>
+            <div className="case-hit-model-list">
+              {valuationRows.map((row, index) => (
+                <article className="case-hit-model-row" key={row.cardNo}>
+                  <div className="case-hit-player-cell">
+                    <span>#{index + 1}</span>
+                    <strong>{row.playerName}</strong>
+                    <small>
+                      {row.cardNo} / {row.team}
+                    </small>
+                  </div>
+                  <div className="case-hit-base-cell">
+                    <span>Base ask</span>
+                    <strong>{money(row.baseAsk)}</strong>
+                    <small>
+                      {Math.round(row.confidence * 100)}% / {row.activeListings} listings / {caseHitModelSourceLabel(row.source)}
+                    </small>
+                  </div>
+                  <div className="case-hit-variation-strip">
+                    {row.variations.map((variation) => (
+                      <span className="case-hit-variation-cell" key={`${row.cardNo}:${variation.key}`}>
+                        <small>{variation.label}</small>
+                        <strong>{money(variation.price)}</strong>
+                        <em>{variation.rarityMultiplier}x</em>
+                      </span>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="bin-opportunity-list">
+            <div className="bin-opportunity-head">
+              <span>Rank</span>
+              <span>Listing</span>
+              <span>All In</span>
+              <span>Variation Model</span>
+              <span>Spread</span>
+              <span>Signal</span>
+            </div>
+            {rendered.map((opportunity, index) => (
+              <article
+                className={`bin-opportunity-row case-hit-row ${
+                  opportunity.edgeDollars > 0 ? 'lane-buy' : opportunity.confidence < 0.38 ? 'lane-risk' : 'lane-watch'
+                }`}
+                key={opportunity.listing.itemId}
+              >
+                <div className="bin-rank-cell">
+                  <strong>#{index + 1}</strong>
+                  <span>{opportunity.grade}</span>
+                </div>
+                <div className="bin-listing-cell">
+                  <strong>{opportunity.listing.playerName}</strong>
+                  <span>{opportunity.listing.title}</span>
+                  <div className="bin-evidence-strip">
+                    <small>{opportunity.listing.variationLabel}</small>
+                    <small>{opportunity.listing.cardNo}</small>
+                    <small>{opportunity.compCount} active comps</small>
+                    <small>{caseHitSourceLabel(opportunity.source)}</small>
+                  </div>
+                </div>
+                <div className="bin-money-cell">
+                  <strong>{money(opportunity.listing.allIn)}</strong>
+                  <span>BIN + ship</span>
+                </div>
+                <div className="bin-money-cell">
+                  <strong>{money(opportunity.modelPrice)}</strong>
+                  <span>{Math.round(opportunity.confidence * 100)}% model</span>
+                </div>
+                <div className={`bin-money-cell ${opportunity.edgeDollars > 0 ? 'edge' : ''}`}>
+                  <strong>{money(opportunity.edgeDollars)}</strong>
+                  <span>{percent(opportunity.discountPct)} spread</span>
+                </div>
+                <div className="bin-signal-cell">
+                  <span>{opportunity.edgeDollars > 0 ? 'Inspect BIN' : 'Market check'}</span>
+                  {opportunity.listing.listingUrl ? (
+                    <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={14} />
+                      eBay
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
 function App() {
   const [liveConnected, setLiveConnected] = useState(false)
   const [authEmail, setAuthEmail] = useState(() => getStoredPulseSession()?.user?.email ?? '')
@@ -829,9 +1051,14 @@ function App() {
   const [binSearchMode, setBinSearchMode] = useState<BinSearchMode>('checklist')
   const [binSearchTerm, setBinSearchTerm] = useState('')
   const [binScan, setBinScan] = useState<EbayBinScanResult | null>(null)
+  const [caseHitScan, setCaseHitScan] = useState<CaseHitScanResult | null>(null)
+  const [caseHitLoading, setCaseHitLoading] = useState(false)
+  const [caseHitError, setCaseHitError] = useState<string | null>(null)
+  const [caseHitMinPrice, setCaseHitMinPrice] = useState(20)
   const checklistRequestRef = useRef<AbortController | null>(null)
   const checklistRequestIdRef = useRef(0)
   const binRequestRef = useRef<AbortController | null>(null)
+  const caseHitRequestRef = useRef<AbortController | null>(null)
 
   const loadChecklistCatalog = useCallback(async (signal?: AbortSignal) => {
     setCatalogLoading(true)
@@ -957,6 +1184,7 @@ function App() {
       checklistRequestIdRef.current += 1
       checklistRequestRef.current?.abort()
       binRequestRef.current?.abort()
+      caseHitRequestRef.current?.abort()
     }
   }, [])
 
@@ -1064,6 +1292,12 @@ function App() {
     resetBinScan()
   }
 
+  function updateCaseHitMinPrice(value: number) {
+    setCaseHitMinPrice(value)
+    setCaseHitScan(null)
+    setCaseHitError(null)
+  }
+
   async function scanEbayBinListings() {
     if (!bowman2026Model) {
       setBinError('2026 Bowman is not loaded yet.')
@@ -1114,6 +1348,40 @@ function App() {
       if (binRequestRef.current === controller) {
         setBinLoading(false)
         binRequestRef.current = null
+      }
+    }
+  }
+
+  async function scanCrystallizedCaseHits() {
+    if (!ebayStatus?.configured) {
+      setCaseHitError(ebayStatus?.message ?? 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in .env.local')
+      return
+    }
+
+    caseHitRequestRef.current?.abort()
+    const controller = new AbortController()
+    caseHitRequestRef.current = controller
+    setCaseHitLoading(true)
+    setCaseHitError(null)
+
+    try {
+      const scanResult = await fetchCrystallizedCaseHits({
+        minPrice: caseHitMinPrice,
+        signal: controller.signal,
+      })
+      setCaseHitScan(scanResult)
+      setCaseHitError(
+        scanResult.errors.length > 0
+          ? `${scanResult.errors.length.toLocaleString()} eBay quer${scanResult.errors.length === 1 ? 'y' : 'ies'} failed; ranked successful results.`
+          : null,
+      )
+    } catch (scanError) {
+      if (controller.signal.aborted) return
+      setCaseHitError(scanError instanceof Error ? scanError.message : 'Crystallized scan failed')
+    } finally {
+      if (caseHitRequestRef.current === controller) {
+        setCaseHitLoading(false)
+        caseHitRequestRef.current = null
       }
     }
   }
@@ -1205,6 +1473,16 @@ function App() {
         onSearchModeChange={updateBinSearchMode}
         onSearchTermChange={updateBinSearchTerm}
         onScan={() => void scanEbayBinListings()}
+      />
+
+      <CaseHitLab
+        scan={caseHitScan}
+        loading={caseHitLoading}
+        error={caseHitError}
+        ebayStatus={ebayStatus}
+        minPrice={caseHitMinPrice}
+        onMinPriceChange={updateCaseHitMinPrice}
+        onScan={() => void scanCrystallizedCaseHits()}
       />
 
       <section className="workbench-layout">
