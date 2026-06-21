@@ -183,6 +183,36 @@ function comparableText(value: string) {
     .trim()
 }
 
+function comparableTokens(value: string) {
+  return comparableText(value).split(' ').filter(Boolean)
+}
+
+function tokenMatchesVariationPart(part: string, tokens: string[]) {
+  const tokenSet = new Set(tokens)
+  if (part.startsWith('/')) return tokenSet.has(part)
+  if (part === 'x') return tokenSet.has('x') || tokenSet.has('xfractor')
+  if (part === 'fractor') return tokenSet.has('fractor') || tokenSet.has('xfractor')
+  return tokenSet.has(part)
+}
+
+const ADJACENT_PRODUCT_BLOCKERS = [
+  /\bsapphire\b/,
+  /\bmega\s*box\b|\bmega\b/,
+  /\bsterling\b/,
+  /\binception\b/,
+  /\btranscendent\b/,
+  /\bfinest\b/,
+  /\bbowman'?s?\s+best\b/,
+  /\bpanini\b/,
+  /\bleaf\b/,
+]
+
+function listingProductBlockedForModel(listing: NormalizedListing, model: ChecklistModel) {
+  const listingText = `${listing.title} ${listing.releaseLabel}`.toLowerCase()
+  const modelText = model.release.toLowerCase()
+  return ADJACENT_PRODUCT_BLOCKERS.some((pattern) => pattern.test(listingText) && !pattern.test(modelText))
+}
+
 function detectUniverse(listing: ProspectPulseListing) {
   const text = searchText(listing)
   const isBowman = /\bbowman\b/.test(text)
@@ -398,6 +428,7 @@ function findChecklistModelForListing(
     }
     if (listing.releaseYear && listing.releaseYear !== model.releaseYear) continue
     if (!releaseCategoryMatches(listing, model.category)) continue
+    if (listingProductBlockedForModel(listing, model)) continue
 
     const player = findChecklistPlayer(listing, model)
     if (!player) continue
@@ -419,19 +450,19 @@ function variationScore(haystack: string, variation: string) {
   if (targetIsSapphire !== haystackIsSapphire) return 0
   if (targetIsSuperfractor && !haystackIsSuperfractor) return 0
 
-  const parts = target.split(' ').filter(Boolean)
-  const hits = parts.filter((part) => haystack.includes(part)).length
-  const missedSpecifics = parts.filter(
-    (part) =>
-      !haystack.includes(part) &&
-      /^(x|fractor|wave|shimmer|lava|speckle|speckle|reptilian|reptillian|raywave|atomic|sapphire|mojo|choice|sparkle|ink)$/.test(
-        part,
-      ),
-  ).length
-  const serial = target.match(/\/\d+/)?.[0]
-  const serialBoost = serial && haystack.includes(serial) ? 0.24 : 0
-  const exactBoost = haystack.includes(target) ? 0.34 : 0
-  return clamp(hits / Math.max(parts.length, 1) + exactBoost + serialBoost - missedSpecifics * 0.22)
+  const targetTokens = comparableTokens(variation)
+  const haystackTokens = comparableTokens(haystack)
+  const serialTokens = targetTokens.filter((part) => /^\/\d+$/.test(part))
+  const specificTokens = targetTokens.filter((part) => !/^\/\d+$/.test(part) && !/^(variation|parallel)$/.test(part))
+  const specificHits = specificTokens.filter((part) => tokenMatchesVariationPart(part, haystackTokens)).length
+  const serialHits = serialTokens.filter((part) => tokenMatchesVariationPart(part, haystackTokens)).length
+  const specificScore = specificTokens.length > 0 ? specificHits / specificTokens.length : 0
+  const serialScore = serialTokens.length > 0 ? serialHits / serialTokens.length : 0
+  const exactBoost = haystack.includes(target) ? 0.18 : 0
+  const score = clamp(specificScore * 0.72 + serialScore * 0.28 + exactBoost)
+
+  if (serialTokens.length > 0 && serialHits === 0) return Math.min(score, 0.52)
+  return score
 }
 
 function findVariation<T extends { variation: string }>(listing: NormalizedListing, variations: T[]) {

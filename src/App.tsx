@@ -6,12 +6,15 @@ import {
   Brain,
   Database,
   Download,
+  ExternalLink,
   Gauge,
   KeyRound,
   Layers,
   LogOut,
+  Radio,
   RefreshCw,
   Search,
+  ShieldCheck,
   Sigma,
   TableProperties,
   Wifi,
@@ -31,6 +34,13 @@ import {
   savePulseSession,
 } from './lib/prospectPulse'
 import {
+  fetchEbayBinListings,
+  fetchEbayStatus,
+  type EbayBinScanResult,
+  type EbayBinSearchMode,
+  type EbayStatus,
+} from './lib/ebay'
+import {
   buildPricingMatrix,
   filterPricingRows,
   formatMultiplier,
@@ -40,11 +50,14 @@ import {
   type ReleaseMathSummary,
   type VariationQuote,
 } from './lib/matrix'
-import type { ChecklistModel } from './types'
+import { DEFAULT_SETTINGS, rankOpportunities } from './lib/scoring'
+import type { ChecklistModel, Opportunity, ProspectPulseListing } from './types'
 
 type CategoryFilter = 'all' | ChecklistModel['category']
 type BaseSourceFilter = 'all' | BasePriceSource
 type SortMode = 'base-desc' | 'top-desc' | 'confidence-desc' | 'player-asc' | 'release-desc'
+type BinPlayerScope = 'all' | 'top-40'
+type BinSearchMode = EbayBinSearchMode
 
 const CATEGORY_LABELS: Record<ChecklistModel['category'], string> = {
   bowman: 'Bowman',
@@ -124,9 +137,14 @@ const CHECKLIST_CATEGORIES: ChecklistModel['category'][] = ['bowman', 'chrome', 
 const CHECKLIST_MIN_YEAR = 2021
 const CHECKLIST_LOAD_CONCURRENCY = 6
 const LEADERBOARD_RENDER_LIMIT = 500
+const BIN_RENDER_LIMIT = 40
 
 function money(value: number) {
   return currency.format(value)
+}
+
+function percent(value: number) {
+  return `${Math.round(value * 100)}%`
 }
 
 function compactVariation(label: string) {
@@ -523,6 +541,267 @@ function ModelStatus({
   )
 }
 
+function BinRadar({
+  model,
+  opportunities,
+  listingCount,
+  scan,
+  ebayStatus,
+  loading,
+  modelLoading,
+  error,
+  minPrice,
+  playerScope,
+  searchMode,
+  searchTerm,
+  onMinPriceChange,
+  onPlayerScopeChange,
+  onSearchModeChange,
+  onSearchTermChange,
+  onScan,
+}: {
+  model?: ChecklistModel | null
+  opportunities: Opportunity[]
+  listingCount: number
+  scan: EbayBinScanResult | null
+  ebayStatus: EbayStatus | null
+  loading: boolean
+  modelLoading: boolean
+  error: string | null
+  minPrice: number
+  playerScope: BinPlayerScope
+  searchMode: BinSearchMode
+  searchTerm: string
+  onMinPriceChange: (value: number) => void
+  onPlayerScopeChange: (value: BinPlayerScope) => void
+  onSearchModeChange: (value: BinSearchMode) => void
+  onSearchTermChange: (value: string) => void
+  onScan: () => void
+}) {
+  const configured = Boolean(ebayStatus?.configured)
+  const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
+  const playerCount = model?.players.length ?? 0
+  const hasPlayerUniverse = playerCount > 0
+  const trimmedSearchTerm = searchTerm.trim()
+  const requiresFocus = searchMode !== 'checklist'
+  const hasFocus = !requiresFocus || trimmedSearchTerm.length > 0
+  const canScan = configured && Boolean(model) && hasPlayerUniverse && hasFocus && !loading && !modelLoading
+  const readinessLabel = !configured
+    ? 'eBay offline'
+    : !model
+      ? 'Model pending'
+      : !hasPlayerUniverse
+        ? 'Player list needed'
+        : !hasFocus
+          ? searchMode === 'player'
+            ? 'Enter player'
+            : 'Enter variation'
+        : 'Ready'
+  const scanButtonLabel = loading
+    ? 'Scanning'
+    : modelLoading
+      ? 'Model loading'
+      : !configured
+        ? 'eBay offline'
+        : !model || !hasPlayerUniverse
+          ? 'Player list needed'
+          : !hasFocus
+            ? searchMode === 'player'
+              ? 'Enter player'
+              : 'Enter variation'
+          : 'Scan BINs'
+  const focusPlaceholder = searchMode === 'player' ? 'Eli Willits' : 'packfractor'
+  const scanCopy =
+    searchMode === 'player'
+      ? trimmedSearchTerm
+        ? `Searching checklist matches for "${trimmedSearchTerm}".`
+        : 'Type a player name to rank that player only.'
+      : searchMode === 'variation'
+        ? trimmedSearchTerm
+          ? `Scanning ${trimmedSearchTerm} listings across the queued players.`
+          : 'Type a parallel name such as packfractor, gold shimmer, or red lava.'
+        : `${playerScope === 'top-40' ? 'Top 40 players' : `${playerCount.toLocaleString()} players`} queued against the modeled 2026 Bowman ladder.`
+
+  return (
+    <section className="bin-radar">
+      <div className="bin-radar-header">
+        <div className="section-title">
+          <Radio size={18} />
+          <div>
+            <h2>BIN Deal Radar</h2>
+            <span>2026 Bowman active Buy It Now vs modeled price</span>
+          </div>
+        </div>
+        <div className="bin-radar-pills">
+          <span className={configured ? 'connected' : 'offline'}>
+            {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
+            {configured ? 'eBay live' : 'eBay keys needed'}
+          </span>
+          <span className={hasPlayerUniverse ? 'connected' : 'offline'}>{readinessLabel}</span>
+          <span>{playerCount.toLocaleString()} players</span>
+          <span>{searchMode === 'checklist' ? 'Checklist scan' : `${searchMode}: ${trimmedSearchTerm || 'focus needed'}`}</span>
+          <span>{listingCount.toLocaleString()} listings</span>
+          <span>{scan ? `${opportunities.length.toLocaleString()} edges` : 'No scan yet'}</span>
+          {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
+        </div>
+      </div>
+
+      <div className="bin-radar-controls">
+        <div className="bin-mode-control" role="group" aria-label="BIN scan mode">
+          {(['checklist', 'player', 'variation'] as const).map((mode) => (
+            <button
+              className={searchMode === mode ? 'active' : ''}
+              key={mode}
+              type="button"
+              onClick={() => onSearchModeChange(mode)}
+            >
+              {mode === 'checklist' ? 'Checklist' : mode === 'player' ? 'Player' : 'Variation'}
+            </button>
+          ))}
+        </div>
+        {searchMode !== 'checklist' ? (
+          <label className="bin-control focus">
+            <Search size={15} />
+            <input
+              aria-label={searchMode === 'player' ? 'Player search' : 'Variation search'}
+              placeholder={focusPlaceholder}
+              value={searchTerm}
+              onChange={(event) => onSearchTermChange(event.target.value)}
+            />
+          </label>
+        ) : null}
+        <label className="bin-control">
+          <span>Min BIN</span>
+          <input
+            aria-label="Minimum BIN price"
+            min="0"
+            step="5"
+            type="number"
+            value={minPrice}
+            onChange={(event) => onMinPriceChange(Math.max(0, Number(event.target.value) || 0))}
+          />
+        </label>
+        <label className="bin-control wide">
+          <span>Players</span>
+          <select value={playerScope} onChange={(event) => onPlayerScopeChange(event.target.value as BinPlayerScope)}>
+            <option value="all">Full 2026 checklist</option>
+            <option value="top-40">Top 40 by base</option>
+          </select>
+        </label>
+        <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
+          <RefreshCw size={16} className={loading ? 'spin' : undefined} />
+          {scanButtonLabel}
+        </button>
+        {scan ? (
+          <div className="bin-scan-stats">
+            <strong>{scan.stats.queriesSucceeded.toLocaleString()}</strong>
+            <span>queries / {scan.stats.pagesFetched.toLocaleString()} pages / {scan.stats.rejectedPlayerMismatches.toLocaleString()} rejects</span>
+          </div>
+        ) : null}
+      </div>
+
+      {error ? (
+        <div className="bin-radar-alert">
+          <ShieldCheck size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {!model ? (
+        <div className="bin-empty-state">
+          <Database size={24} />
+          <div>
+            <strong>2026 Bowman model is loading.</strong>
+            <span>Pricing comes first; market scan unlocks after the model is on the board.</span>
+          </div>
+        </div>
+      ) : !configured ? (
+        <div className="bin-empty-state">
+          <KeyRound size={24} />
+          <div>
+            <strong>eBay production keys are missing.</strong>
+            <span>Browse API access is required before live BINs can be priced.</span>
+          </div>
+        </div>
+      ) : !hasPlayerUniverse ? (
+        <div className="bin-empty-state">
+          <Database size={24} />
+          <div>
+            <strong>ProspectPulse player list is not loaded.</strong>
+            <span>Public multiples are present, but BIN scanning needs checklist player names.</span>
+          </div>
+        </div>
+      ) : !scan ? (
+        <div className="bin-empty-state ready">
+          <Radio size={24} />
+          <div>
+            <strong>Ready to scan active BINs.</strong>
+            <span>{scanCopy}</span>
+          </div>
+        </div>
+      ) : opportunities.length === 0 ? (
+        <div className="bin-empty-state muted">
+          <Radio size={24} />
+          <div>
+            <strong>No positive BIN edges cleared the model.</strong>
+            <span>{listingCount.toLocaleString()} active listings reviewed; none priced below modeled value.</span>
+          </div>
+        </div>
+      ) : (
+        <div className="bin-opportunity-list">
+          <div className="bin-opportunity-head">
+            <span>Rank</span>
+            <span>Listing</span>
+            <span>All In</span>
+            <span>Model</span>
+            <span>Spread</span>
+            <span>Signal</span>
+          </div>
+          {opportunities.map((opportunity, index) => (
+            <article className={`bin-opportunity-row lane-${opportunity.lane}`} key={opportunity.listing.id}>
+              <div className="bin-rank-cell">
+                <strong>#{index + 1}</strong>
+                <span>{opportunity.grade}</span>
+              </div>
+              <div className="bin-listing-cell">
+                <strong>{opportunity.listing.playerName}</strong>
+                <span>{opportunity.listing.title}</span>
+                <div className="bin-evidence-strip">
+                  <small>{opportunity.matchedVariation ?? opportunity.listing.variationLabel}</small>
+                  {searchMode === 'variation' && trimmedSearchTerm ? <small>Title hit: {trimmedSearchTerm}</small> : null}
+                  <small>{opportunity.valuationSource.replaceAll('-', ' ')}</small>
+                  {opportunity.warnings[0] ? <small className="warning">{opportunity.warnings[0]}</small> : null}
+                </div>
+              </div>
+              <div className="bin-money-cell">
+                <strong>{money(opportunity.listing.allInPrice)}</strong>
+                <span>BIN + ship</span>
+              </div>
+              <div className="bin-money-cell">
+                <strong>{money(opportunity.fairValue)}</strong>
+                <span>{Math.round(opportunity.modelConfidence * 100)}% model</span>
+              </div>
+              <div className="bin-money-cell edge">
+                <strong>{money(opportunity.edgeDollars)}</strong>
+                <span>{percent(opportunity.expectedRoiPct)} ROI</span>
+              </div>
+              <div className="bin-signal-cell">
+                <span>{opportunity.action}</span>
+                {opportunity.listing.listingUrl ? (
+                  <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
+                    <ExternalLink size={14} />
+                    eBay
+                  </a>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function App() {
   const [liveConnected, setLiveConnected] = useState(false)
   const [authEmail, setAuthEmail] = useState(() => getStoredPulseSession()?.user?.email ?? '')
@@ -541,8 +820,18 @@ function App() {
   const [baseSourceFilter, setBaseSourceFilter] = useState<BaseSourceFilter>('all')
   const [sortMode, setSortMode] = useState<SortMode>('base-desc')
   const [selectedRowId, setSelectedRowId] = useState<string | undefined>()
+  const [ebayStatus, setEbayStatus] = useState<EbayStatus | null>(null)
+  const [binListings, setBinListings] = useState<ProspectPulseListing[]>([])
+  const [binLoading, setBinLoading] = useState(false)
+  const [binError, setBinError] = useState<string | null>(null)
+  const [binMinPrice, setBinMinPrice] = useState(25)
+  const [binPlayerScope, setBinPlayerScope] = useState<BinPlayerScope>('all')
+  const [binSearchMode, setBinSearchMode] = useState<BinSearchMode>('checklist')
+  const [binSearchTerm, setBinSearchTerm] = useState('')
+  const [binScan, setBinScan] = useState<EbayBinScanResult | null>(null)
   const checklistRequestRef = useRef<AbortController | null>(null)
   const checklistRequestIdRef = useRef(0)
+  const binRequestRef = useRef<AbortController | null>(null)
 
   const loadChecklistCatalog = useCallback(async (signal?: AbortSignal) => {
     setCatalogLoading(true)
@@ -625,12 +914,28 @@ function App() {
   useEffect(() => {
     let active = true
     const catalogController = new AbortController()
+    const ebayController = new AbortController()
     getPulseStatus()
       .then((status) => {
         if (active) setLiveConnected(status.connected)
       })
       .catch(() => {
         if (active) setLiveConnected(false)
+      })
+    fetchEbayStatus(ebayController.signal)
+      .then((status) => {
+        if (active) setEbayStatus(status)
+      })
+      .catch((statusError) => {
+        if (active && !ebayController.signal.aborted) {
+          setEbayStatus({
+            configured: false,
+            environment: 'production',
+            marketplaceId: 'EBAY_US',
+            hasCategoryId: false,
+            message: statusError instanceof Error ? statusError.message : 'Could not read eBay status',
+          })
+        }
       })
     const modelTimer = window.setTimeout(() => {
       void (async () => {
@@ -642,6 +947,7 @@ function App() {
     return () => {
       active = false
       catalogController.abort()
+      ebayController.abort()
       window.clearTimeout(modelTimer)
     }
   }, [loadChecklistCatalog, loadChecklistModel])
@@ -650,10 +956,37 @@ function App() {
     return () => {
       checklistRequestIdRef.current += 1
       checklistRequestRef.current?.abort()
+      binRequestRef.current?.abort()
     }
   }, [])
 
   const matrix = useMemo(() => buildPricingMatrix(checklistModels), [checklistModels])
+  const bowman2026Model = useMemo(
+    () => checklistModels.find((model) => model.releaseYear === 2026 && model.category === 'bowman') ?? null,
+    [checklistModels],
+  )
+  const binOpportunities = useMemo(
+    () =>
+      rankOpportunities(
+        binListings,
+        {
+          ...DEFAULT_SETTINGS,
+          activeOnly: true,
+          checklistOnly: true,
+          maxPrice: null,
+          minCompCount: 0,
+          minDiscountPct: 0,
+          minPrice: binMinPrice,
+          releaseScope: 'selected',
+          targetCategory: 'bowman',
+          targetReleaseYear: 2026,
+        },
+        bowman2026Model ? [bowman2026Model] : [],
+      )
+        .filter((opportunity) => opportunity.edgeDollars > 0)
+        .slice(0, BIN_RENDER_LIMIT),
+    [binListings, binMinPrice, bowman2026Model],
+  )
   const visibleRows = useMemo(() => {
     const searchedRows = filterPricingRows(matrix.rows, query)
     const filteredRows = searchedRows.filter((row) => {
@@ -704,15 +1037,101 @@ function App() {
     void loadChecklistModel(releaseOptions)
   }
 
+  function resetBinScan() {
+    setBinListings([])
+    setBinScan(null)
+    setBinError(null)
+  }
+
+  function updateBinSearchMode(mode: BinSearchMode) {
+    setBinSearchMode(mode)
+    setBinSearchTerm('')
+    resetBinScan()
+  }
+
+  function updateBinSearchTerm(term: string) {
+    setBinSearchTerm(term)
+    resetBinScan()
+  }
+
+  function updateBinPlayerScope(scope: BinPlayerScope) {
+    setBinPlayerScope(scope)
+    resetBinScan()
+  }
+
+  function updateBinMinPrice(value: number) {
+    setBinMinPrice(value)
+    resetBinScan()
+  }
+
+  async function scanEbayBinListings() {
+    if (!bowman2026Model) {
+      setBinError('2026 Bowman is not loaded yet.')
+      return
+    }
+
+    if (!ebayStatus?.configured) {
+      setBinError(ebayStatus?.message ?? 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in .env.local')
+      return
+    }
+
+    if (bowman2026Model.players.length === 0) {
+      setBinError('ProspectPulse player list is not loaded for 2026 Bowman.')
+      return
+    }
+
+    if (binSearchMode !== 'checklist' && !binSearchTerm.trim()) {
+      setBinError(binSearchMode === 'player' ? 'Enter a player name to scan.' : 'Enter a variation to scan.')
+      return
+    }
+
+    binRequestRef.current?.abort()
+    const controller = new AbortController()
+    binRequestRef.current = controller
+    setBinLoading(true)
+    setBinError(null)
+
+    try {
+      const scanResult = await fetchEbayBinListings({
+        model: bowman2026Model,
+        minPrice: binMinPrice,
+        playerLimit: binPlayerScope === 'top-40' ? 40 : null,
+        searchMode: binSearchMode,
+        searchTerm: binSearchTerm,
+        signal: controller.signal,
+      })
+      setBinListings(scanResult.listings)
+      setBinScan(scanResult)
+      setBinError(
+        scanResult.errors.length > 0
+          ? `${scanResult.errors.length.toLocaleString()} eBay quer${scanResult.errors.length === 1 ? 'y' : 'ies'} failed; ranked successful results.`
+          : null,
+      )
+    } catch (scanError) {
+      if (controller.signal.aborted) return
+      setBinError(scanError instanceof Error ? scanError.message : 'eBay BIN scan failed')
+    } finally {
+      if (binRequestRef.current === controller) {
+        setBinLoading(false)
+        binRequestRef.current = null
+      }
+    }
+  }
+
   return (
     <main className="app-shell valuation-app">
       <section className="workbench-topbar">
         <div className="brand-block">
-          <div className="eyebrow">
-            <Activity size={14} />
-            Recency Valuation Board
+          <div className="brand-lockup">
+            <img className="brand-logo" src="/backstop-logo.jpeg" alt="Backstop Cards" />
+            <div>
+              <div className="eyebrow">
+                <Activity size={14} />
+                Live Bowman Market Desk
+              </div>
+              <h1>Backstop Card Finder</h1>
+            </div>
           </div>
-          <h1>Bowman Trader</h1>
           <div className="release-line">
             <span>{releaseOptions.length} releases</span>
             <span>{CHECKLIST_MIN_YEAR}+ seasons</span>
@@ -767,6 +1186,26 @@ function App() {
       />
 
       <MathAudit summaries={matrix.summaries} missingBaseRows={matrix.missingBaseRows} unresolvedMultipliers={matrix.unresolvedMultipliers} />
+
+      <BinRadar
+        model={bowman2026Model}
+        opportunities={binOpportunities}
+        listingCount={binListings.length}
+        scan={binScan}
+        ebayStatus={ebayStatus}
+        loading={binLoading}
+        modelLoading={checklistLoading}
+        error={binError}
+        minPrice={binMinPrice}
+        playerScope={binPlayerScope}
+        searchMode={binSearchMode}
+        searchTerm={binSearchTerm}
+        onMinPriceChange={updateBinMinPrice}
+        onPlayerScopeChange={updateBinPlayerScope}
+        onSearchModeChange={updateBinSearchMode}
+        onSearchTermChange={updateBinSearchTerm}
+        onScan={() => void scanEbayBinListings()}
+      />
 
       <section className="workbench-layout">
         <div className="valuation-workspace">

@@ -1,13 +1,17 @@
 .app-shell {
+  --app-pad: clamp(12px, 1.2vw, 24px);
+  --stage-max: 1560px;
+  --rail-width: 354px;
+  --content-gap: 18px;
   min-height: 100svh;
-  padding: 22px;
+  padding: var(--app-pad);
 }
 
 .topbar,
 .dashboard-grid,
 .status-strip,
 .market-tape {
-  width: min(1560px, 100%);
+  width: min(var(--stage-max), 100%);
   margin: 0 auto;
 }
 
@@ -279,8 +283,8 @@ button {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 354px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) var(--rail-width);
+  gap: var(--content-gap);
   padding-top: 18px;
 }
 
@@ -1189,11 +1193,11 @@ button {
 }
 
 .matrix-layout {
-  width: min(1560px, 100%);
+  width: min(var(--stage-max), 100%);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, var(--rail-width));
+  gap: var(--content-gap);
   padding-top: 18px;
 }
 
@@ -1573,7 +1577,7 @@ thead .matrix-player-col span,
 .workbench-topbar,
 .workbench-layout,
 .math-audit {
-  width: min(1560px, 100%);
+  width: min(var(--stage-max), 100%);
   margin: 0 auto;
 }
 
@@ -1729,8 +1733,8 @@ thead .matrix-player-col span,
 
 .workbench-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, var(--rail-width));
+  gap: var(--content-gap);
   align-items: start;
   padding-top: 16px;
 }
@@ -2148,9 +2152,13 @@ thead .matrix-player-col span,
 }
 
 .app-shell.valuation-app {
+  --app-pad: clamp(12px, 1.45vw, 42px);
+  --stage-max: 3180px;
+  --rail-width: clamp(380px, 18vw, 560px);
+  --content-gap: clamp(14px, 0.8vw, 28px);
   position: relative;
   overflow-x: hidden;
-  padding-top: 28px;
+  padding-top: 24px;
 }
 
 .app-shell.valuation-app::before {
@@ -2160,71 +2168,78 @@ thead .matrix-player-col span,
   z-index: -1;
   pointer-events: none;
   background:
-    linear-gradient(135deg, transparent 0 18%, rgba(201, 255, 74, 0.055) 18% 18.3%, transparent 18.3% 46%),
-    linear-gradient(45deg, transparent 0 52%, rgba(142, 215, 255, 0.055) 52% 52.25%, transparent 52.25%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 28rem);
+    linear-gradient(135deg, transparent 0 18%, rgba(201, 119, 49, 0.085) 18% 18.35%, transparent 18.35% 46%),
+    linear-gradient(45deg, transparent 0 52%, rgba(159, 216, 207, 0.08) 52% 52.28%, transparent 52.28%),
+    linear-gradient(180deg, rgba(255, 246, 229, 0.06), transparent 30rem);
 }
 
 .valuation-app .workbench-topbar {
-  min-height: 150px;
-  align-items: end;
-  border-bottom: 1px solid rgba(255, 250, 240, 0.14);
+  min-height: 172px;
+  align-items: center;
+  padding: 16px 0 18px;
+  border-bottom: 1px solid rgba(255, 246, 229, 0.16);
 }
 
 .valuation-app .brand-block {
   position: relative;
-  padding-right: min(28vw, 360px);
+  padding-right: 0;
 }
 
 .valuation-app .brand-block::after {
-  content: '';
-  position: absolute;
-  right: 22px;
-  bottom: -8px;
-  width: min(260px, 26vw);
-  aspect-ratio: 1.42;
-  border: 1px solid rgba(255, 250, 240, 0.22);
-  border-radius: 8px;
-  background:
-    linear-gradient(115deg, transparent 0 16%, rgba(255, 255, 255, 0.3) 16% 16.8%, transparent 16.8% 28%),
-    linear-gradient(135deg, rgba(201, 255, 74, 0.2), rgba(142, 215, 255, 0.16) 36%, rgba(193, 79, 53, 0.18) 62%, transparent),
-    linear-gradient(90deg, rgba(255, 250, 240, 0.1) 0 1px, transparent 1px 12px),
-    rgba(255, 250, 240, 0.045);
+  display: none;
+}
+
+.valuation-app .brand-lockup {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  min-width: 0;
+}
+
+.valuation-app .brand-logo {
+  width: 116px;
+  height: 116px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 246, 229, 0.28);
+  border-radius: 22px;
+  background: #fff6e5;
   box-shadow:
-    inset 0 0 0 1px rgba(12, 16, 20, 0.36),
-    0 22px 60px rgba(0, 0, 0, 0.22);
-  transform: perspective(700px) rotateX(9deg) rotateZ(-3deg);
+    0 22px 54px rgba(0, 0, 0, 0.26),
+    inset 0 0 0 5px rgba(9, 47, 49, 0.06);
+  transform: rotate(-2deg);
 }
 
 .valuation-app .eyebrow {
-  color: rgba(255, 250, 240, 0.62);
+  color: rgba(255, 246, 229, 0.68);
 }
 
 .valuation-app .eyebrow svg {
-  color: var(--pulse);
+  color: var(--amber);
 }
 
 .valuation-app .brand-block h1 {
-  max-width: 860px;
-  color: #fffaf0;
+  max-width: 930px;
+  color: #fff6e5;
+  font-size: clamp(2.4rem, 5.1vw, 4.35rem);
   font-weight: 900;
-  text-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);
+  text-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
 }
 
 .valuation-app .release-line span {
-  border-color: rgba(255, 250, 240, 0.16);
-  background: rgba(255, 250, 240, 0.08);
-  color: rgba(255, 250, 240, 0.78);
+  border-color: rgba(255, 246, 229, 0.17);
+  background: rgba(255, 246, 229, 0.08);
+  color: rgba(255, 246, 229, 0.8);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(16px);
 }
 
 .valuation-app .primary-button {
   background:
-    linear-gradient(180deg, rgba(201, 255, 74, 0.22), transparent),
-    #0c1014;
+    linear-gradient(180deg, rgba(223, 164, 81, 0.24), transparent),
+    #061f21;
   color: #faffee;
-  border: 1px solid rgba(201, 255, 74, 0.28);
+  border: 1px solid rgba(223, 164, 81, 0.38);
   box-shadow:
     0 14px 34px rgba(0, 0, 0, 0.26),
     inset 0 1px 0 rgba(255, 255, 255, 0.12);
@@ -2267,13 +2282,13 @@ thead .matrix-player-col span,
 
 .valuation-status .source-chip.connected {
   color: var(--pulse);
-  border-color: rgba(201, 255, 74, 0.28);
+  border-color: rgba(159, 216, 207, 0.28);
 }
 
 .valuation-app .market-tape {
-  border-color: rgba(201, 255, 74, 0.22);
+  border-color: rgba(159, 216, 207, 0.22);
   background:
-    linear-gradient(90deg, rgba(201, 255, 74, 0.08), transparent 22%),
+    linear-gradient(90deg, rgba(159, 216, 207, 0.08), transparent 22%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent),
     #080b0d;
   box-shadow:
@@ -2327,7 +2342,7 @@ thead .matrix-player-col span,
   position: absolute;
   inset: 0 0 auto;
   height: 3px;
-  background: linear-gradient(90deg, var(--pulse), var(--foil), var(--clay));
+  background: linear-gradient(90deg, var(--amber), var(--foil), var(--clay));
 }
 
 .valuation-app .stat-icon {
@@ -2342,9 +2357,9 @@ thead .matrix-player-col span,
 }
 
 .valuation-app .audit-title {
-  border-color: rgba(201, 255, 74, 0.2);
+  border-color: rgba(159, 216, 207, 0.2);
   background:
-    linear-gradient(135deg, rgba(201, 255, 74, 0.13), transparent 45%),
+    linear-gradient(135deg, rgba(159, 216, 207, 0.13), transparent 45%),
     linear-gradient(90deg, rgba(142, 215, 255, 0.1), transparent),
     #0b0f12;
   box-shadow:
@@ -2366,6 +2381,451 @@ thead .matrix-player-col span,
 
 .valuation-app .audit-card em {
   color: var(--accent);
+}
+
+.bin-radar {
+  box-sizing: border-box;
+  width: min(var(--stage-max), 100%);
+  margin: 14px auto 0;
+  padding: 16px;
+  border: 1px solid rgba(159, 216, 207, 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(100deg, rgba(159, 216, 207, 0.09), transparent 30%),
+    linear-gradient(145deg, rgba(142, 215, 255, 0.08), transparent 42%),
+    #0a0e12;
+  box-shadow:
+    0 22px 52px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.bin-radar-header {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(260px, 1.2fr);
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.bin-radar .section-title {
+  color: #fffaf0;
+}
+
+.bin-radar .section-title svg {
+  color: var(--pulse);
+}
+
+.bin-radar .section-title span {
+  display: block;
+  margin-top: 3px;
+  color: rgba(255, 250, 240, 0.56);
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.bin-radar-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.bin-radar-pills span {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 250, 240, 0.12);
+  border-radius: 999px;
+  color: rgba(255, 250, 240, 0.68);
+  background: rgba(255, 250, 240, 0.06);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.bin-radar-pills .connected {
+  color: var(--pulse);
+  border-color: rgba(159, 216, 207, 0.28);
+}
+
+.bin-radar-pills .offline {
+  color: #f0b64a;
+}
+
+.bin-radar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 13px;
+}
+
+.bin-mode-control {
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 250, 240, 0.14);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.08), rgba(255, 250, 240, 0.035)),
+    rgba(255, 250, 240, 0.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.bin-mode-control button {
+  height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  color: rgba(255, 250, 240, 0.62);
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.bin-mode-control button.active {
+  color: #061f21;
+  background: linear-gradient(180deg, #fff6e5, var(--foil));
+  box-shadow:
+    0 8px 20px rgba(159, 216, 207, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38);
+}
+
+.bin-control {
+  height: 46px;
+  min-width: 126px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 250, 240, 0.14);
+  border-radius: 8px;
+  color: #fffaf0;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.08), rgba(255, 250, 240, 0.045)),
+    rgba(255, 250, 240, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.bin-control.wide {
+  min-width: 230px;
+}
+
+.bin-control.focus {
+  min-width: 280px;
+}
+
+.bin-control.focus svg {
+  flex: 0 0 auto;
+  color: var(--pulse);
+}
+
+.bin-control span {
+  color: rgba(255, 250, 240, 0.52);
+  font-size: 0.66rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.bin-control select,
+.bin-control input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #fffaf0;
+  font-size: 0.96rem;
+  font-weight: 850;
+}
+
+.bin-control input {
+  width: 56px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.bin-control.focus input {
+  width: min(240px, 34vw);
+  font-family: inherit;
+  font-variant-numeric: normal;
+}
+
+.bin-control.focus input::placeholder {
+  color: rgba(255, 250, 240, 0.4);
+}
+
+.bin-control select {
+  width: 150px;
+}
+
+.bin-scan-button {
+  height: 46px;
+}
+
+.bin-scan-button:disabled {
+  opacity: 0.48;
+  color: rgba(255, 250, 240, 0.54);
+  border-color: rgba(255, 250, 240, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.055), rgba(255, 250, 240, 0.025)),
+    rgba(255, 250, 240, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.bin-scan-stats {
+  min-height: 46px;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-left: auto;
+  color: rgba(255, 250, 240, 0.6);
+}
+
+.bin-scan-stats strong {
+  color: var(--pulse);
+  font-family: var(--mono);
+  font-size: 1.35rem;
+}
+
+.bin-scan-stats span {
+  font-size: 0.75rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.bin-radar-alert {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 0 11px;
+  border: 1px solid rgba(240, 182, 74, 0.28);
+  border-radius: 8px;
+  color: #ffe2a3;
+  background: rgba(240, 182, 74, 0.1);
+  font-size: 0.84rem;
+  font-weight: 780;
+}
+
+.bin-empty-state {
+  min-height: 132px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px dashed rgba(255, 250, 240, 0.14);
+  border-radius: 8px;
+  color: rgba(255, 250, 240, 0.62);
+  background:
+    linear-gradient(90deg, rgba(159, 216, 207, 0.07), transparent 34%),
+    rgba(255, 250, 240, 0.055);
+}
+
+.bin-empty-state.ready {
+  border-style: solid;
+  border-color: rgba(159, 216, 207, 0.22);
+}
+
+.bin-empty-state.muted {
+  background: rgba(255, 250, 240, 0.045);
+}
+
+.bin-empty-state svg {
+  flex: 0 0 auto;
+  color: var(--pulse);
+}
+
+.bin-empty-state div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.bin-empty-state strong {
+  color: #fffaf0;
+  font-size: 1.05rem;
+  line-height: 1.18;
+}
+
+.bin-empty-state span {
+  max-width: 740px;
+  color: rgba(255, 250, 240, 0.62);
+  font-size: 0.9rem;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.bin-opportunity-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.bin-opportunity-head,
+.bin-opportunity-row {
+  display: grid;
+  grid-template-columns: 72px minmax(280px, 1.35fr) minmax(94px, 0.38fr) minmax(94px, 0.38fr) minmax(104px, 0.42fr) minmax(122px, 0.48fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.bin-opportunity-head {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 250, 240, 0.1);
+  border-radius: 8px;
+  color: rgba(255, 250, 240, 0.52);
+  background: rgba(255, 250, 240, 0.05);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.bin-opportunity-row {
+  min-height: 96px;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 250, 240, 0.1);
+  border-left: 4px solid rgba(255, 250, 240, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(159, 216, 207, 0.08), transparent 26%),
+    linear-gradient(180deg, rgba(255, 250, 240, 0.1), rgba(255, 250, 240, 0.065));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+.bin-opportunity-row.lane-buy {
+  border-left-color: var(--pulse);
+}
+
+.bin-opportunity-row.lane-watch {
+  border-left-color: var(--foil);
+}
+
+.bin-opportunity-row.lane-risk {
+  border-left-color: var(--amber);
+}
+
+.bin-rank-cell,
+.bin-listing-cell,
+.bin-money-cell,
+.bin-signal-cell {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.bin-rank-cell strong,
+.bin-money-cell strong {
+  color: #fffaf0;
+  font-family: var(--mono);
+  font-size: 1.08rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.bin-rank-cell span {
+  width: fit-content;
+  min-width: 34px;
+  min-height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(159, 216, 207, 0.28);
+  border-radius: 7px;
+  color: var(--pulse);
+  background: rgba(159, 216, 207, 0.1);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.bin-listing-cell strong {
+  color: #fffaf0;
+  font-size: 1rem;
+}
+
+.bin-listing-cell span,
+.bin-money-cell span {
+  min-width: 0;
+  color: rgba(255, 250, 240, 0.58);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bin-listing-cell span {
+  color: rgba(255, 250, 240, 0.76);
+  font-size: 0.84rem;
+  font-weight: 760;
+}
+
+.bin-listing-cell small,
+.bin-money-cell span {
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.bin-evidence-strip {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.bin-evidence-strip small {
+  max-width: 220px;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid rgba(255, 250, 240, 0.1);
+  border-radius: 999px;
+  color: rgba(255, 250, 240, 0.68);
+  background: rgba(255, 250, 240, 0.055);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bin-evidence-strip small:first-child {
+  color: var(--pulse);
+  border-color: rgba(159, 216, 207, 0.22);
+  background: rgba(159, 216, 207, 0.07);
+}
+
+.bin-evidence-strip small.warning {
+  color: #ffd9a1;
+  border-color: rgba(240, 182, 74, 0.22);
+  background: rgba(240, 182, 74, 0.07);
+}
+
+.bin-money-cell.edge strong {
+  color: var(--pulse);
+}
+
+.bin-signal-cell span {
+  color: #fffaf0;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.bin-signal-cell a {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--foil);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-decoration: none;
 }
 
 .valuation-app .valuation-toolbar {
@@ -2403,10 +2863,10 @@ thead .matrix-player-col span,
 .valuation-app .leaderboard-head {
   min-height: 42px;
   background:
-    linear-gradient(90deg, rgba(201, 255, 74, 0.08), transparent 34%),
+    linear-gradient(90deg, rgba(159, 216, 207, 0.08), transparent 34%),
     #0a0e12;
   color: rgba(255, 250, 240, 0.72);
-  border-bottom: 1px solid rgba(201, 255, 74, 0.18);
+  border-bottom: 1px solid rgba(159, 216, 207, 0.18);
 }
 
 .valuation-app .leaderboard-row {
@@ -2426,7 +2886,7 @@ thead .matrix-player-col span,
 .valuation-app .leaderboard-row:hover,
 .valuation-app .leaderboard-row.selected {
   background:
-    linear-gradient(90deg, rgba(201, 255, 74, 0.12), transparent 32%),
+    linear-gradient(90deg, rgba(159, 216, 207, 0.14), transparent 32%),
     rgba(255, 255, 255, 0.98);
   border-left-color: var(--pulse);
 }
@@ -2434,7 +2894,7 @@ thead .matrix-player-col span,
 .valuation-app .leaderboard-row.selected {
   box-shadow:
     inset 0 0 0 1px rgba(8, 127, 140, 0.18),
-    inset 5px 0 0 rgba(201, 255, 74, 0.28);
+    inset 5px 0 0 rgba(159, 216, 207, 0.28);
 }
 
 .valuation-app .rank-chip {
@@ -2457,7 +2917,7 @@ thead .matrix-player-col span,
 }
 
 .valuation-app .preview-quote:first-child {
-  border-color: rgba(201, 255, 74, 0.28);
+  border-color: rgba(159, 216, 207, 0.28);
 }
 
 .valuation-app .detail-rail {
@@ -2474,7 +2934,7 @@ thead .matrix-player-col span,
   position: absolute;
   inset: 0 0 auto;
   height: 4px;
-  background: linear-gradient(90deg, var(--pulse), var(--foil), var(--amber), var(--clay));
+  background: linear-gradient(90deg, var(--amber), var(--foil), var(--clay));
 }
 
 .valuation-app .detail-title h2 {
@@ -2503,7 +2963,7 @@ thead .matrix-player-col span,
 .valuation-app .variation-card.top {
   border-color: rgba(15, 159, 95, 0.34);
   background:
-    linear-gradient(135deg, rgba(201, 255, 74, 0.16), transparent 46%),
+    linear-gradient(135deg, rgba(159, 216, 207, 0.16), transparent 46%),
     rgba(255, 250, 240, 0.92);
 }
 
@@ -2535,8 +2995,47 @@ thead .matrix-player-col span,
     display: none;
   }
 
+  .valuation-app .brand-lockup {
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .valuation-app .brand-logo {
+    width: 92px;
+    height: 92px;
+    border-radius: 18px;
+  }
+
   .valuation-app .valuation-toolbar {
     position: static;
+  }
+
+  .bin-radar-header {
+    grid-template-columns: 1fr;
+  }
+
+  .bin-radar-pills {
+    justify-content: flex-start;
+  }
+
+  .bin-scan-stats {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .bin-opportunity-head {
+    display: none;
+  }
+
+  .bin-opportunity-row {
+    grid-template-columns: 58px minmax(0, 1fr) minmax(94px, auto);
+  }
+
+  .bin-money-cell,
+  .bin-signal-cell {
+    grid-column: 2 / -1;
+    grid-template-columns: 108px minmax(0, 1fr);
+    align-items: baseline;
   }
 }
 
@@ -2545,7 +3044,289 @@ thead .matrix-player-col span,
     padding-top: 18px;
   }
 
+  .valuation-app .workbench-topbar {
+    min-height: 0;
+  }
+
+  .valuation-app .brand-lockup {
+    grid-template-columns: 74px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .valuation-app .brand-logo {
+    width: 74px;
+    height: 74px;
+    border-radius: 16px;
+  }
+
+  .valuation-app .brand-block h1 {
+    font-size: clamp(2rem, 12vw, 3rem);
+    line-height: 0.96;
+  }
+
   .valuation-app .market-tape {
     grid-template-columns: 1fr;
+  }
+
+  .bin-radar {
+    padding: 12px;
+  }
+
+  .bin-control,
+  .bin-control.wide,
+  .bin-control.focus,
+  .bin-mode-control,
+  .bin-scan-button {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .bin-mode-control button {
+    flex: 1;
+  }
+
+  .bin-control.focus input {
+    width: min(260px, 58vw);
+  }
+
+  .bin-control select {
+    width: min(190px, 55vw);
+  }
+
+  .bin-opportunity-row {
+    grid-template-columns: 1fr;
+  }
+
+  .bin-rank-cell {
+    grid-template-columns: auto auto;
+    justify-content: start;
+    align-items: center;
+  }
+
+  .bin-money-cell,
+  .bin-signal-cell {
+    grid-column: auto;
+  }
+}
+
+@media (min-width: 1800px) {
+  .valuation-app .workbench-topbar {
+    min-height: 186px;
+  }
+
+  .valuation-app .brand-lockup {
+    grid-template-columns: 128px minmax(0, 1fr);
+    gap: 22px;
+  }
+
+  .valuation-app .brand-logo {
+    width: 128px;
+    height: 128px;
+    border-radius: 24px;
+  }
+
+  .valuation-app .brand-block h1 {
+    max-width: none;
+    font-size: clamp(4.2rem, 3.8vw, 5.7rem);
+  }
+
+  .valuation-app .workbench-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(420px, var(--rail-width));
+  }
+
+  .leaderboard-head,
+  .leaderboard-row {
+    grid-template-columns:
+      72px minmax(260px, 0.82fr) minmax(132px, 0.34fr)
+      minmax(150px, 0.38fr) minmax(640px, 1.65fr);
+    gap: 14px;
+  }
+
+  .leaderboard-row {
+    min-height: 92px;
+    padding-inline: 16px;
+  }
+
+  .curve-strip {
+    grid-template-columns: repeat(6, minmax(92px, 1fr));
+    gap: 8px;
+  }
+
+  .variation-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .bin-radar {
+    padding: 18px;
+  }
+
+  .bin-opportunity-head,
+  .bin-opportunity-row {
+    grid-template-columns:
+      78px minmax(420px, 1.55fr) minmax(130px, 0.36fr)
+      minmax(130px, 0.36fr) minmax(140px, 0.38fr) minmax(160px, 0.44fr);
+    gap: 14px;
+  }
+
+  .bin-evidence-strip small {
+    max-width: 280px;
+  }
+}
+
+@media (min-width: 2500px) {
+  .app-shell.valuation-app {
+    --rail-width: clamp(520px, 18vw, 660px);
+    --content-gap: 30px;
+  }
+
+  .valuation-app .workbench-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(520px, var(--rail-width));
+  }
+
+  .valuation-app .metric-grid {
+    grid-template-columns: repeat(4, minmax(230px, 1fr));
+  }
+
+  .valuation-app .variation-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .leaderboard-list {
+    max-height: calc(100svh - 430px);
+  }
+}
+
+@media (max-width: 720px) {
+  .valuation-app .leaderboard-shell {
+    overflow: visible;
+  }
+
+  .valuation-app .leaderboard-head {
+    display: none;
+  }
+
+  .valuation-app .leaderboard-list {
+    display: grid;
+    gap: 10px;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .valuation-app .leaderboard-row {
+    min-width: 0;
+    min-height: 0;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 9px 11px;
+    align-items: start;
+    padding: 12px;
+    border: 1px solid rgba(12, 16, 20, 0.1);
+    border-left: 4px solid transparent;
+    border-radius: 8px;
+  }
+
+  .valuation-app .leaderboard-row.selected {
+    border-left-color: var(--pulse);
+  }
+
+  .valuation-app .rank-chip {
+    width: 40px;
+    height: 40px;
+  }
+
+  .valuation-app .player-chip {
+    align-self: center;
+  }
+
+  .valuation-app .leaderboard-row .money-chip {
+    grid-column: 2 / -1;
+  }
+
+  .valuation-app .curve-strip {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 2px;
+  }
+
+  .valuation-app .preview-quote {
+    min-height: 50px;
+  }
+}
+
+@media (max-width: 480px) {
+  .valuation-app .brand-lockup {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .valuation-app .brand-logo {
+    width: 64px;
+    height: 64px;
+    border-radius: 14px;
+  }
+
+  .valuation-app .brand-block h1 {
+    font-size: clamp(1.72rem, 11vw, 2.4rem);
+  }
+
+  .valuation-app .release-line {
+    margin-top: 10px;
+  }
+
+  .valuation-app .top-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .valuation-app .bin-radar-controls {
+    gap: 8px;
+  }
+
+  .valuation-app .curve-strip,
+  .valuation-app .formula-strip,
+  .valuation-app .variation-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .app-shell.valuation-app .valuation-status {
+    min-height: 0;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .app-shell.valuation-app .valuation-status::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .valuation-status span,
+  .valuation-app .valuation-status .source-chip {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .valuation-app .market-tape {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .valuation-app .tape-cell,
+  .valuation-app .tape-cell:nth-child(3) {
+    border-right: 1px solid rgba(255, 250, 240, 0.1);
+    border-bottom: 1px solid rgba(255, 250, 240, 0.1);
+  }
+
+  .valuation-app .tape-cell:nth-child(even) {
+    border-right: 0;
+  }
+
+  .valuation-app .tape-cell:last-child {
+    grid-column: 1 / -1;
+    border-right: 0;
+    border-bottom: 0;
   }
 }

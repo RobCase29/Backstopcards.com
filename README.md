@@ -1,6 +1,6 @@
-# Bowman Trader
+# Backstop Card Finder
 
-Local price atlas for Bowman 1st auto cards. The app turns ProspectPulse checklist data into a player x variation model using a recency-weighted base price and the set-level variation multiples. Live BIN listings can come back later as a separate comparison layer against that model.
+Local price atlas for Bowman 1st auto cards. The app turns ProspectPulse checklist data into a player x variation model using a recency-weighted base price and the set-level variation multiples, then can scan active eBay Buy It Now listings for 2026 Bowman and rank them against the model by raw dollar edge.
 
 ## Run
 
@@ -33,6 +33,34 @@ PROSPECTPULSE_ACCESS_TOKEN=your_supabase_access_token
 
 The token stays server-side in the Vite dev proxy.
 
+## eBay BIN Radar
+
+The BIN Deal Radar starts with `2026-Bowman`. It builds one eBay Browse API query per checklist player, fetches active fixed-price listings, maps each item into the app's listing model, rejects player-title mismatches, excludes adjacent products such as Sapphire/Mega/Sterling/Inception from regular Bowman model matching, then ranks positive opportunities by:
+
+```text
+modeled variation price - all-in BIN price
+```
+
+The radar can scan the full 2026 checklist, focus on a specific player name, or focus on a variation/parallel term such as `packfractor`, `gold shimmer`, or `red lava`.
+
+To enable live scans, create `.env.local` from `.env.example` and set:
+
+```bash
+EBAY_CLIENT_ID=your_app_client_id
+EBAY_CLIENT_SECRET=your_app_client_secret
+EBAY_ENV=production
+EBAY_MARKETPLACE_ID=EBAY_US
+```
+
+Restart `npm run dev` after adding credentials. Optional fields:
+
+```bash
+EBAY_ZIP_CODE=10001
+EBAY_CATEGORY_ID=
+```
+
+`EBAY_ZIP_CODE` improves shipping context. `EBAY_CATEGORY_ID` can narrow search once you choose the correct eBay leaf category for trading cards.
+
 ## Checklist Model
 
 The modeled universe is discovered from ProspectPulse and capped at 2021+ for speed:
@@ -55,7 +83,7 @@ Modeled-price inputs:
 4. The selected release's variation multiplier
 5. Modeled value = modeled base x release multiplier
 
-When player-level checklist data is available, the board expands every checklist player across every set variation. The leaderboard is ranked by modeled base auto value, and each selected player exposes a complete multiplier valuation ladder. The lookup is model-first; eBay/BIN discovery can be layered on later without changing the pricing core.
+When player-level checklist data is available, the board expands every checklist player across every set variation. The leaderboard is ranked by modeled base auto value, and each selected player exposes a complete multiplier valuation ladder. The lookup is model-first; live eBay/BIN discovery is a downstream comparison layer against that pricing core.
 
 Authenticated checklist coverage should show the combined player count as `loaded / total` in the Variation Model panel. Public ProspectPulse overview currently reports 87 total players for 2026 Bowman and 102 total players for 2025 Bowman Draft.
 
@@ -72,8 +100,6 @@ Eli Willits,285,455,Blue /150,2026 Bowman Chrome,https://example.com,0,
 
 The board is sorted by modeled base auto value by default and includes database-style search, set/category/source filters, and sort controls. Export writes the full long-form valuation ladder to CSV, including base source, confidence, and 30/90-day sale counts.
 
-The optional live BIN overlay still ranks fetched listings by raw dollar spread, but it is now downstream of the model. Unsupported players and wrong-set matches are excluded instead of being modeled from broad ProspectPulse noise.
+The live BIN radar ranks fetched listings by raw dollar spread, but it is now downstream of the model. Unsupported players, wrong-set matches, and adjacent product families are excluded instead of being modeled from broad search noise.
 
-Deep refresh is the default. It requests active BIN price bands in parallel, emits partial band results while checklist coverage continues, uses short-lived API response caching, then finishes with a full checklist-player coverage pass.
-
-Known ended or sold listings are excluded from ranking by default. A listing with an expired `end_time` is treated as ended even if it came through the BIN feed. Availability still needs final confirmation on eBay because ProspectPulse can occasionally surface stale links without enough metadata to identify them locally.
+Known ended or sold listings are excluded from ranking by default. eBay Browse search should return active purchasable inventory; the local scorer still treats any listing with an expired `end_time` as ended.

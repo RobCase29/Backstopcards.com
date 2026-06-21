@@ -135,7 +135,7 @@ describe('rankOpportunities', () => {
     expect(opportunities[0]?.edgeDollars).toBeGreaterThan(opportunities[1]?.edgeDollars ?? 0)
   })
 
-  it('does not price Sapphire listings as Superfractors from serial text alone', () => {
+  it('excludes Sapphire listings from regular Bowman model matching', () => {
     const superfractorModel: ChecklistModel = {
       ...model,
       multipliers: [
@@ -180,9 +180,105 @@ describe('rankOpportunities', () => {
       superfractorModel,
     )
 
-    expect(opportunities[0]?.matchedVariation).not.toBe('Superfractor /1')
-    expect(opportunities[0]?.valuationSource).toBe('listing-comps')
-    expect(opportunities[0]?.fairValue).toBe(550)
+    expect(opportunities).toEqual([])
+  })
+
+  it('does not value PackFractor text as Red X-Fractor from substring noise', () => {
+    const packfractorModel: ChecklistModel = {
+      ...model,
+      multipliers: [
+        {
+          variation: 'Red X-Fractor /5',
+          avgMultiplier: 58.3,
+          avgPrice: 5830,
+          playerCount: 10,
+          totalSales: 20,
+        },
+        {
+          variation: 'Packfractor /89',
+          avgMultiplier: 9.3,
+          avgPrice: 930,
+          playerCount: 40,
+          totalSales: 90,
+        },
+      ],
+      players: [
+        {
+          playerName: 'Seong-Jun Kim',
+          baseAvgPrice: 100,
+          baseSalesCount: 9,
+          variations: [],
+        },
+      ],
+    }
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'packfractor-redemption-no-serial',
+          player_name: 'Seong-Jun Kim',
+          title: '2026 Bowman Seong-Jun Kim 1st Chrome PackFractor Auto Redemption Texas Rangers',
+          variation: 'packfractor',
+          serial_denominator: null,
+          current_price: 505,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      packfractorModel,
+    )
+
+    expect(opportunities).toEqual([])
+  })
+
+  it('matches a confirmed PackFractor serial to the PackFractor model', () => {
+    const packfractorModel: ChecklistModel = {
+      ...model,
+      multipliers: [
+        {
+          variation: 'Red X-Fractor /5',
+          avgMultiplier: 58.3,
+          avgPrice: 5830,
+          playerCount: 10,
+          totalSales: 20,
+        },
+        {
+          variation: 'Packfractor /89',
+          avgMultiplier: 9.3,
+          avgPrice: 930,
+          playerCount: 40,
+          totalSales: 90,
+        },
+      ],
+      players: [
+        {
+          playerName: 'Aiva Arquette',
+          baseAvgPrice: 100,
+          baseSalesCount: 9,
+          variations: [],
+        },
+      ],
+    }
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'packfractor-confirmed',
+          player_name: 'Aiva Arquette',
+          title: '2026 Bowman Aiva Arquette Chrome Auto Refractor PackFractor Variation 1st #/89',
+          variation: 'packfractor',
+          serial_denominator: 89,
+          current_price: 749,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      packfractorModel,
+    )
+
+    expect(opportunities).toHaveLength(1)
+    expect(opportunities[0]?.matchedVariation).toBe('Packfractor /89')
+    expect(opportunities[0]?.fairValue).toBeCloseTo(930)
   })
 
   it('enforces the min comp count control', () => {
