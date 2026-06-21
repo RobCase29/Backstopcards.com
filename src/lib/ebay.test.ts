@@ -248,6 +248,18 @@ describe('fetchEbayBinListings', () => {
                 _bowmanTraderQuery: body.queries[0],
               },
               {
+                itemId: 'bunt-digital',
+                title: '2026 Topps Bunt Digital Bowman Eli Willits Chrome Auto Blue /150',
+                price: { value: '25.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'redeemed-auto',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150 Redeemed',
+                price: { value: '100.00', currency: 'USD' },
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
                 itemId: 'real-chrome',
                 title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Orange Shimmer /25',
                 price: { value: '1500.00', currency: 'USD' },
@@ -271,6 +283,6 @@ describe('fetchEbayBinListings', () => {
     const result = await fetchEbayBinListings({ model, playerLimit: 1 })
 
     expect(result.listings.map((listing) => listing.item_id)).toEqual(['real-chrome'])
-    expect(result.stats.rejectedPlayerMismatches).toBe(3)
+    expect(result.stats.rejectedPlayerMismatches).toBe(5)
   })
 })

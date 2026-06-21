@@ -35,6 +35,24 @@ describe('case hit eBay modeling', () => {
     expect(listing?.variationKey).toBe('gold')
     expect(listing?.serial).toBe(50)
     expect(listing?.allIn).toBe(105)
+
+    const redSoxGold = mapEbayItemToCaseHitListing(
+      item({
+        title: '2026 Bowman Chrome Roman Anthony Crystallized Gold BWC-18 #15/50 Red Sox',
+        _bowmanTraderQuery: { playerName: 'Roman Anthony', caseHit: 'crystallized' },
+      }),
+    )
+
+    expect(redSoxGold?.variationKey).toBe('gold')
+
+    const redRefractor = mapEbayItemToCaseHitListing(
+      item({
+        title: '2026 Bowman Chrome Roman Anthony Crystallized Red Refractor /5 BWC-18 Red Sox',
+        _bowmanTraderQuery: { playerName: 'Roman Anthony', caseHit: 'crystallized' },
+      }),
+    )
+
+    expect(redRefractor?.variationKey).toBe('red')
   })
 
   it('rejects adjacent inserts and autos even when the player matches', () => {
@@ -69,6 +87,26 @@ describe('case hit eBay modeling', () => {
         item({
           title: '2026 Topps Bunt Bowman Francisco Lindor Red Crystallized 5cc Legendary Mets',
           _bowmanTraderQuery: { playerName: 'Francisco Lindor', caseHit: 'crystallized' },
+        }),
+      ),
+    ).toBeNull()
+
+    expect(
+      mapEbayItemToCaseHitListing(
+        item({
+          title: '2026 Topps Bunt DIGITAL Bowman Jac Caglianone Legendary Orange Crystallized 25cc',
+          _bowmanTraderQuery: { playerName: 'Jac Caglianone', caseHit: 'crystallized' },
+        }),
+      ),
+    ).toBeNull()
+  })
+
+  it('rejects redeemed Crystallized listings', () => {
+    expect(
+      mapEbayItemToCaseHitListing(
+        item({
+          title: '2026 Bowman Chrome Shohei Ohtani Crystallized insert #BWC-19 Dodgers Redeemed',
+          _bowmanTraderQuery: { playerName: 'Shohei Ohtani', caseHit: 'crystallized' },
         }),
       ),
     ).toBeNull()

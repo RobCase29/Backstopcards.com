@@ -132,6 +132,11 @@ function titleMatchesVariationTerm(title: string, variationTerm?: string) {
 }
 
 const CHROME_AUTO_MODEL_BLOCKERS = [
+  /\btopps\s+bunt\s+digital\b/i,
+  /\btopps\s+bunt\b/i,
+  /\bbunt\b/i,
+  /\bdigital\b/i,
+  /\bredeemed\b/i,
   /\bpaper\b/i,
   /(?:^|\s|#)bpa[-\s]?[a-z0-9]+/i,
   /\bpower\s*chords?\b/i,

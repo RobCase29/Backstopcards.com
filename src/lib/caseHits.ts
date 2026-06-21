@@ -189,7 +189,7 @@ export const CRYSTALLIZED_VARIATIONS: CaseHitVariation[] = [
 const BASE_ODDS = CRYSTALLIZED_VARIATIONS[0].minPackOdds
 
 const NON_CRYSTALLIZED_TERMS =
-  /\b(power\s*chord|patchwork|electric\s+sluggers|under\s+the\s+radar|bowman\s+sterling|anime|kanji|spotlight|auto|autograph|signed|topps\s+bunt|bunt|digital|virtual|\d+\s*cc)\b/i
+  /\b(power\s*chord|patchwork|electric\s+sluggers|under\s+the\s+radar|bowman\s+sterling|anime|kanji|spotlight|auto|autograph|signed|topps\s+bunt\s+digital|topps\s+bunt|bunt|digital|virtual|redeemed|\d+\s*cc)\b/i
 
 function normalizeText(value: string) {
   return value
@@ -274,7 +274,7 @@ export function rarityMultiplier(key: CaseHitVariationKey) {
 function classifyVariation(title: string): CaseHitVariationKey {
   const normalized = normalizeText(title)
   if (/\bsuperfractor\b|(?:^|\s|#)\/1(?:\s|$)/i.test(title)) return 'superfractor'
-  if (/\bred\b|(?:^|\s|#)\/5(?:\s|$)/i.test(title)) return 'red'
+  if (/\bred\s+(?:refractor|crystallized)\b/.test(normalized) || /(?:^|\s|#)\/5(?:\s|$)/i.test(title)) return 'red'
   if (/\borange\b|(?:^|\s|#)\/25(?:\s|$)/i.test(title)) return 'orange'
   if (/\bgold\b|(?:^|\s|#)\/50(?:\s|$)/i.test(title)) return 'gold'
   if (normalized.includes('refractor')) return 'base'
