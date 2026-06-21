@@ -144,10 +144,20 @@ function releaseProductLabel(model: ChecklistModel) {
   return 'Bowman'
 }
 
+function releaseQueryProduct(model: ChecklistModel) {
+  const product = releaseProductLabel(model).toLowerCase()
+  return product.includes('chrome') ? product : `${product} chrome`
+}
+
 function buildPlayerQuery(model: ChecklistModel, playerName: string, variationTerm = ''): EbayQueryMeta {
-  const queryCore = variationTerm
-    ? `${playerName} ${variationTerm} bowman chrome auto`
-    : `${playerName} 1st bowman chrome auto`
+  const queryParts = [
+    playerName,
+    variationTerm,
+    String(model.releaseYear),
+    releaseQueryProduct(model),
+    '1st auto',
+  ].filter(Boolean)
+  const queryCore = queryParts.join(' ')
   return {
     q: compactQuery(queryCore),
     playerName,
@@ -281,7 +291,8 @@ export async function fetchEbayBinListings(options: {
     searchTerm,
   })
   if (players.length === 0) {
-    throw new Error(searchMode === 'player' ? `No 2026 Bowman checklist player matches "${searchTerm}".` : 'No checklist players are available to scan.')
+    const releaseLabel = `${options.model.releaseYear} ${releaseProductLabel(options.model)}`
+    throw new Error(searchMode === 'player' ? `No ${releaseLabel} checklist player matches "${searchTerm}".` : 'No checklist players are available to scan.')
   }
 
   const queries = players.map((player) =>

@@ -66,7 +66,7 @@ type BaseSourceFilter = 'all' | BasePriceSource
 type SortMode = 'base-desc' | 'top-desc' | 'confidence-desc' | 'player-asc' | 'release-desc'
 type BinPlayerScope = 'all' | 'top-40'
 type BinSearchMode = EbayBinSearchMode
-type WorkMode = 'lookup' | 'deals'
+type WorkMode = 'lookup' | 'deals' | 'beta'
 
 const CATEGORY_LABELS: Record<ChecklistModel['category'], string> = {
   bowman: 'Bowman',
@@ -145,9 +145,11 @@ const FALLBACK_RELEASE_OPTIONS: ReleaseOption[] = [
 const CHECKLIST_CATEGORIES: ChecklistModel['category'][] = ['bowman', 'chrome', 'draft']
 const CHECKLIST_MIN_YEAR = 2021
 const CHECKLIST_LOAD_CONCURRENCY = 6
+const BIN_SCAN_CONCURRENCY = 2
 const LEADERBOARD_RENDER_LIMIT = 500
 const BIN_RENDER_LIMIT = 40
 const CASE_HIT_RENDER_LIMIT = 24
+const BIN_ALL_MODELS_KEY = 'all-checklists'
 
 function money(value: number) {
   return currency.format(value)
@@ -180,6 +182,77 @@ function latestFetchedAt(models: ChecklistModel[]) {
   const timestamps = models.map((model) => Date.parse(model.fetchedAt)).filter(Number.isFinite)
   if (timestamps.length === 0) return null
   return new Date(Math.max(...timestamps)).toISOString()
+}
+
+function checklistModelKey(model: ChecklistModel) {
+  return `${model.category}:${model.releaseYear}:${model.release}`
+}
+
+function checklistModelLabel(model: ChecklistModel) {
+  const label = model.release.replace(/-/g, ' ').replace(/\s+/g, ' ').trim()
+  return label || `${model.releaseYear} ${CATEGORY_LABELS[model.category]}`
+}
+
+function sortChecklistModels(models: ChecklistModel[]) {
+  const categoryOrder = new Map<ChecklistModel['category'], number>([
+    ['bowman', 0],
+    ['draft', 1],
+    ['chrome', 2],
+  ])
+  return [...models].sort(
+    (left, right) =>
+      right.releaseYear - left.releaseYear ||
+      (categoryOrder.get(left.category) ?? 9) - (categoryOrder.get(right.category) ?? 9) ||
+      checklistModelLabel(left).localeCompare(checklistModelLabel(right)),
+  )
+}
+
+function dedupeBinListings(listings: ProspectPulseListing[]) {
+  const seen = new Set<string>()
+  const deduped: ProspectPulseListing[] = []
+  for (const listing of listings) {
+    const key = String(listing.item_id ?? listing.id ?? listing.listing_url ?? listing.url ?? listing.title ?? '')
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    deduped.push(listing)
+  }
+  return deduped
+}
+
+function mergeBinScans(results: EbayBinScanResult[], failedErrors: Array<{ query?: string; error: string }> = []): EbayBinScanResult {
+  const fetchedAt =
+    results
+      .map((result) => Date.parse(result.fetchedAt))
+      .filter(Number.isFinite)
+      .sort((left, right) => right - left)[0] ?? Date.now()
+
+  return {
+    listings: dedupeBinListings(results.flatMap((result) => result.listings)),
+    fetchedAt: new Date(fetchedAt).toISOString(),
+    errors: [...results.flatMap((result) => result.errors), ...failedErrors],
+    stats: results.reduce(
+      (stats, result) => ({
+        queriesRun: stats.queriesRun + result.stats.queriesRun,
+        queriesSucceeded: stats.queriesSucceeded + result.stats.queriesSucceeded,
+        queriesFailed: stats.queriesFailed + result.stats.queriesFailed,
+        pagesFetched: stats.pagesFetched + result.stats.pagesFetched,
+        upstreamTotal: stats.upstreamTotal + result.stats.upstreamTotal,
+        dedupedItems: stats.dedupedItems + result.stats.dedupedItems,
+        mappedListings: stats.mappedListings + result.stats.mappedListings,
+        rejectedPlayerMismatches: stats.rejectedPlayerMismatches + result.stats.rejectedPlayerMismatches,
+      }),
+      {
+        queriesRun: 0,
+        queriesSucceeded: 0,
+        queriesFailed: 0,
+        pagesFetched: 0,
+        upstreamTotal: 0,
+        dedupedItems: 0,
+        mappedListings: 0,
+        rejectedPlayerMismatches: 0,
+      },
+    ),
+  }
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<R>) {
@@ -327,6 +400,8 @@ function WorkflowCommand({
   listingCount: number
   modelReady: boolean
 }) {
+  const modeTitle = mode === 'lookup' ? 'Modeled Price' : mode === 'deals' ? 'Deal Finder' : 'Beta Labs'
+
   return (
     <section className="workflow-command" aria-label="Bowman auto desk">
       <div className="workflow-command-copy">
@@ -334,7 +409,7 @@ function WorkflowCommand({
           <Activity size={14} />
           Bowman Auto Desk
         </span>
-        <h2>{mode === 'lookup' ? 'Modeled Price' : 'Deal Finder'}</h2>
+        <h2>{modeTitle}</h2>
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
           <span>{pricedRows.toLocaleString()} players</span>
@@ -639,7 +714,9 @@ function ProspectPulsePanel({
 }
 
 function BinRadar({
-  model,
+  models,
+  modelOptions,
+  selectedModelKey,
   opportunities,
   listingCount,
   scan,
@@ -651,13 +728,16 @@ function BinRadar({
   playerScope,
   searchMode,
   searchTerm,
+  onModelChange,
   onMinPriceChange,
   onPlayerScopeChange,
   onSearchModeChange,
   onSearchTermChange,
   onScan,
 }: {
-  model?: ChecklistModel | null
+  models: ChecklistModel[]
+  modelOptions: ChecklistModel[]
+  selectedModelKey: string
   opportunities: Opportunity[]
   listingCount: number
   scan: EbayBinScanResult | null
@@ -669,6 +749,7 @@ function BinRadar({
   playerScope: BinPlayerScope
   searchMode: BinSearchMode
   searchTerm: string
+  onModelChange: (value: string) => void
   onMinPriceChange: (value: number) => void
   onPlayerScopeChange: (value: BinPlayerScope) => void
   onSearchModeChange: (value: BinSearchMode) => void
@@ -677,15 +758,27 @@ function BinRadar({
 }) {
   const configured = Boolean(ebayStatus?.configured)
   const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
-  const playerCount = model?.players.length ?? 0
+  const model = models[0] ?? null
+  const setCount = models.length
+  const playerCount = models.reduce((total, currentModel) => total + currentModel.players.length, 0)
   const hasPlayerUniverse = playerCount > 0
+  const selectedSetLabel =
+    selectedModelKey === BIN_ALL_MODELS_KEY
+      ? setCount > 0
+        ? `${setCount.toLocaleString()} loaded checklists`
+        : 'All loaded checklists'
+      : model
+        ? checklistModelLabel(model)
+        : 'No checklist selected'
+  const selectedSetPill =
+    selectedModelKey === BIN_ALL_MODELS_KEY ? `${setCount.toLocaleString()} sets` : model ? checklistModelLabel(model) : 'No set'
   const trimmedSearchTerm = searchTerm.trim()
   const requiresFocus = searchMode !== 'checklist'
   const hasFocus = !requiresFocus || trimmedSearchTerm.length > 0
-  const canScan = configured && Boolean(model) && hasPlayerUniverse && hasFocus && !loading && !modelLoading
+  const canScan = configured && setCount > 0 && hasPlayerUniverse && hasFocus && !loading && !modelLoading
   const readinessLabel = !configured
     ? 'eBay offline'
-    : !model
+    : setCount === 0
       ? 'Model pending'
       : !hasPlayerUniverse
         ? 'Player list needed'
@@ -700,7 +793,7 @@ function BinRadar({
       ? 'Model loading'
       : !configured
         ? 'eBay offline'
-        : !model || !hasPlayerUniverse
+        : setCount === 0 || !hasPlayerUniverse
           ? 'Player list needed'
           : !hasFocus
             ? searchMode === 'player'
@@ -715,9 +808,9 @@ function BinRadar({
         : 'Type a player name to rank that player only.'
       : searchMode === 'variation'
         ? trimmedSearchTerm
-          ? `Scanning ${trimmedSearchTerm} listings across the queued players.`
+          ? `Scanning ${trimmedSearchTerm} listings across ${selectedSetLabel}.`
           : 'Type a parallel name such as packfractor, gold shimmer, or red lava.'
-        : `${playerScope === 'top-40' ? 'Top 40 players' : `${playerCount.toLocaleString()} players`} queued against the modeled 2026 Bowman ladder.`
+        : `${playerScope === 'top-40' ? 'Top 40 per checklist' : `${playerCount.toLocaleString()} players`} queued across ${selectedSetLabel}.`
 
   return (
     <section className="bin-radar">
@@ -726,7 +819,7 @@ function BinRadar({
           <Radio size={18} />
           <div>
             <h2>BIN Deal Radar</h2>
-            <span>2026 Bowman active Buy It Now vs modeled price</span>
+            <span>{selectedSetLabel} active Buy It Now vs modeled price</span>
           </div>
         </div>
         <div className="bin-radar-pills">
@@ -735,6 +828,7 @@ function BinRadar({
             {configured ? 'eBay live' : 'eBay keys needed'}
           </span>
           <span className={hasPlayerUniverse ? 'connected' : 'offline'}>{readinessLabel}</span>
+          <span>{selectedSetPill}</span>
           <span>{playerCount.toLocaleString()} players</span>
           <span>{searchMode === 'checklist' ? 'Checklist scan' : `${searchMode}: ${trimmedSearchTerm || 'focus needed'}`}</span>
           <span>{listingCount.toLocaleString()} listings</span>
@@ -744,6 +838,17 @@ function BinRadar({
       </div>
 
       <div className="bin-radar-controls">
+        <label className="bin-control wide release-control">
+          <span>Set</span>
+          <select value={selectedModelKey} onChange={(event) => onModelChange(event.target.value)} disabled={modelOptions.length === 0}>
+            <option value={BIN_ALL_MODELS_KEY}>All loaded checklists</option>
+            {modelOptions.map((option) => (
+              <option value={checklistModelKey(option)} key={checklistModelKey(option)}>
+                {checklistModelLabel(option)}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="bin-mode-control" role="group" aria-label="BIN scan mode">
           {(['checklist', 'player', 'variation'] as const).map((mode) => (
             <button
@@ -781,8 +886,8 @@ function BinRadar({
         <label className="bin-control wide">
           <span>Players</span>
           <select value={playerScope} onChange={(event) => onPlayerScopeChange(event.target.value as BinPlayerScope)}>
-            <option value="all">Full 2026 checklist</option>
-            <option value="top-40">Top 40 by base</option>
+            <option value="all">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'All checklist players' : 'Full checklist'}</option>
+            <option value="top-40">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Top 40 per checklist' : 'Top 40 by base'}</option>
           </select>
         </label>
         <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
@@ -804,11 +909,11 @@ function BinRadar({
         </div>
       ) : null}
 
-      {!model ? (
+      {setCount === 0 ? (
         <div className="bin-empty-state">
           <Database size={24} />
           <div>
-            <strong>2026 Bowman model is loading.</strong>
+            <strong>Checklist models are loading.</strong>
             <span>Pricing comes first; market scan unlocks after the model is on the board.</span>
           </div>
         </div>
@@ -825,7 +930,7 @@ function BinRadar({
           <Database size={24} />
           <div>
             <strong>ProspectPulse player list is not loaded.</strong>
-            <span>Public multiples are present, but BIN scanning needs checklist player names.</span>
+            <span>Public multiples are present, but BIN scanning needs checklist player names for the selected set scope.</span>
           </div>
         </div>
       ) : !scan ? (
@@ -1333,6 +1438,7 @@ function App() {
   const [binPlayerScope, setBinPlayerScope] = useState<BinPlayerScope>('all')
   const [binSearchMode, setBinSearchMode] = useState<BinSearchMode>('checklist')
   const [binSearchTerm, setBinSearchTerm] = useState('')
+  const [binModelKey, setBinModelKey] = useState('')
   const [binScan, setBinScan] = useState<EbayBinScanResult | null>(null)
   const [caseHitScan, setCaseHitScan] = useState<CaseHitScanResult | null>(null)
   const [caseHitLoading, setCaseHitLoading] = useState(false)
@@ -1483,28 +1589,46 @@ function App() {
     () => checklistModels.find((model) => model.releaseYear === 2026 && model.category === 'bowman') ?? null,
     [checklistModels],
   )
+  const binModelOptions = useMemo(() => sortChecklistModels(checklistModels), [checklistModels])
+  const defaultBinModelKey = useMemo(
+    () => (bowman2026Model ? checklistModelKey(bowman2026Model) : binModelOptions[0] ? checklistModelKey(binModelOptions[0]) : ''),
+    [binModelOptions, bowman2026Model],
+  )
+  const effectiveBinModelKey =
+    binModelKey === BIN_ALL_MODELS_KEY
+      ? BIN_ALL_MODELS_KEY
+      : binModelOptions.some((model) => checklistModelKey(model) === binModelKey)
+        ? binModelKey
+        : defaultBinModelKey
+  const selectedBinModels = useMemo(() => {
+    if (effectiveBinModelKey === BIN_ALL_MODELS_KEY) return binModelOptions
+    const selectedModel = binModelOptions.find((model) => checklistModelKey(model) === effectiveBinModelKey)
+    if (selectedModel) return [selectedModel]
+    return []
+  }, [effectiveBinModelKey, binModelOptions])
+  const binScoreSettings = useMemo(() => {
+    const selectedModel = selectedBinModels[0]
+    return {
+      ...DEFAULT_SETTINGS,
+      activeOnly: true,
+      checklistOnly: true,
+      maxPrice: null,
+      minCompCount: 0,
+      minDiscountPct: 0,
+      minPrice: binMinPrice,
+      releaseScope: effectiveBinModelKey === BIN_ALL_MODELS_KEY ? ('all' as const) : ('selected' as const),
+      targetCategory: selectedModel?.category ?? 'bowman',
+      targetReleaseYear: selectedModel?.releaseYear ?? 2026,
+    }
+  }, [binMinPrice, effectiveBinModelKey, selectedBinModels])
   const binOpportunities = useMemo(
     () =>
-      rankOpportunities(
-        binListings,
-        {
-          ...DEFAULT_SETTINGS,
-          activeOnly: true,
-          checklistOnly: true,
-          maxPrice: null,
-          minCompCount: 0,
-          minDiscountPct: 0,
-          minPrice: binMinPrice,
-          releaseScope: 'selected',
-          targetCategory: 'bowman',
-          targetReleaseYear: 2026,
-        },
-        bowman2026Model ? [bowman2026Model] : [],
-      )
+      rankOpportunities(binListings, binScoreSettings, selectedBinModels)
         .filter((opportunity) => opportunity.edgeDollars > 0)
         .slice(0, BIN_RENDER_LIMIT),
-    [binListings, binMinPrice, bowman2026Model],
+    [binListings, binScoreSettings, selectedBinModels],
   )
+
   const visibleRows = useMemo(() => {
     const searchedRows = filterPricingRows(matrix.rows, query)
     const filteredRows = searchedRows.filter((row) => {
@@ -1585,6 +1709,11 @@ function App() {
     resetBinScan()
   }
 
+  function updateBinModelKey(value: string) {
+    setBinModelKey(value)
+    resetBinScan()
+  }
+
   function updateBinMinPrice(value: number) {
     setBinMinPrice(value)
     resetBinScan()
@@ -1597,8 +1726,8 @@ function App() {
   }
 
   async function scanEbayBinListings() {
-    if (!bowman2026Model) {
-      setBinError('2026 Bowman is not loaded yet.')
+    if (selectedBinModels.length === 0) {
+      setBinError('No checklist model is loaded yet.')
       return
     }
 
@@ -1607,8 +1736,9 @@ function App() {
       return
     }
 
-    if (bowman2026Model.players.length === 0) {
-      setBinError('ProspectPulse player list is not loaded for 2026 Bowman.')
+    const scanModels = selectedBinModels.filter((model) => model.players.length > 0)
+    if (scanModels.length === 0) {
+      setBinError('ProspectPulse player lists are not loaded for the selected checklist scope.')
       return
     }
 
@@ -1624,14 +1754,44 @@ function App() {
     setBinError(null)
 
     try {
-      const scanResult = await fetchEbayBinListings({
-        model: bowman2026Model,
-        minPrice: binMinPrice,
-        playerLimit: binPlayerScope === 'top-40' ? 40 : null,
-        searchMode: binSearchMode,
-        searchTerm: binSearchTerm,
-        signal: controller.signal,
+      const settledScans = await mapWithConcurrency(scanModels, BIN_SCAN_CONCURRENCY, async (model) => {
+        try {
+          const value = await fetchEbayBinListings({
+            model,
+            minPrice: binMinPrice,
+            playerLimit: binPlayerScope === 'top-40' ? 40 : null,
+            searchMode: binSearchMode,
+            searchTerm: binSearchTerm,
+            signal: controller.signal,
+          })
+          return { status: 'fulfilled' as const, value }
+        } catch (reason) {
+          return {
+            status: 'rejected' as const,
+            model,
+            reason,
+          }
+        }
       })
+      if (controller.signal.aborted) return
+
+      const successfulScans = settledScans.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
+      const failedScans = settledScans.flatMap((result) =>
+        result.status === 'rejected'
+          ? [
+              {
+                query: checklistModelLabel(result.model),
+                error: result.reason instanceof Error ? result.reason.message : 'eBay BIN scan failed',
+              },
+            ]
+          : [],
+      )
+
+      if (successfulScans.length === 0) {
+        throw new Error(failedScans[0]?.error ?? 'eBay BIN scan failed')
+      }
+
+      const scanResult = mergeBinScans(successfulScans, failedScans)
       setBinListings(scanResult.listings)
       setBinScan(scanResult)
       setBinError(
@@ -1801,6 +1961,10 @@ function App() {
             <Download size={16} />
             Export
           </button>
+          <button className="ghost-button" type="button" onClick={() => setWorkMode((mode) => (mode === 'beta' ? 'lookup' : 'beta'))}>
+            <Gem size={16} />
+            {workMode === 'beta' ? 'Main Desk' : 'Beta'}
+          </button>
         </div>
       </section>
 
@@ -1930,10 +2094,12 @@ function App() {
             />
           </aside>
         </section>
-      ) : (
+      ) : workMode === 'deals' ? (
         <section className="deal-workflow" aria-label="Deal finder">
           <BinRadar
-            model={bowman2026Model}
+            models={selectedBinModels}
+            modelOptions={binModelOptions}
+            selectedModelKey={effectiveBinModelKey}
             opportunities={binOpportunities}
             listingCount={binListings.length}
             scan={binScan}
@@ -1945,13 +2111,20 @@ function App() {
             playerScope={binPlayerScope}
             searchMode={binSearchMode}
             searchTerm={binSearchTerm}
+            onModelChange={updateBinModelKey}
             onMinPriceChange={updateBinMinPrice}
             onPlayerScopeChange={updateBinPlayerScope}
             onSearchModeChange={updateBinSearchMode}
             onSearchTermChange={updateBinSearchTerm}
             onScan={() => void scanEbayBinListings()}
           />
-
+        </section>
+      ) : (
+        <section className="beta-workflow" aria-label="Beta labs">
+          <div className="beta-page-head">
+            <span>Beta Lab</span>
+            <strong>Crystallized case hits</strong>
+          </div>
           <CaseHitLab
             scan={caseHitScan}
             loading={caseHitLoading}

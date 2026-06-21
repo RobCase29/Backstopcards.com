@@ -38,7 +38,7 @@ describe('fetchEbayBinListings', () => {
         minPrice: number
       }
       expect(body.queries).toHaveLength(1)
-      expect(body.queries[0]?.q).toBe('Eli Willits 1st bowman chrome auto')
+      expect(body.queries[0]?.q).toBe('Eli Willits 2026 bowman chrome 1st auto')
       expect(body.sort).toBe('price')
       expect(body.minPrice).toBe(25)
 
@@ -87,7 +87,9 @@ describe('fetchEbayBinListings', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_url: string, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string }> }
+        const body = JSON.parse(String(init?.body)) as {
+          queries: Array<{ q: string; playerName: string; release: string; releaseYear: number; category: ChecklistModel['category'] }>
+        }
         return new Response(
           JSON.stringify({
             items: [
@@ -122,10 +124,12 @@ describe('fetchEbayBinListings', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_url: string, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string }> }
+        const body = JSON.parse(String(init?.body)) as {
+          queries: Array<{ q: string; playerName: string; release: string; releaseYear: number; category: ChecklistModel['category'] }>
+        }
         expect(body.queries).toHaveLength(1)
         expect(body.queries[0]?.playerName).toBe('Value Prospect')
-        expect(body.queries[0]?.q).toBe('Value Prospect 1st bowman chrome auto')
+        expect(body.queries[0]?.q).toBe('Value Prospect 2026 bowman chrome 1st auto')
 
         return new Response(
           JSON.stringify({
@@ -147,13 +151,53 @@ describe('fetchEbayBinListings', () => {
     await fetchEbayBinListings({ model, searchMode: 'player', searchTerm: 'value' })
   })
 
+  it('builds release-aware queries for Bowman Draft checklists', async () => {
+    const draftModel: ChecklistModel = {
+      ...model,
+      category: 'draft',
+      release: '2025-Bowman-Draft',
+      releaseYear: 2025,
+    }
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          queries: Array<{ q: string; playerName: string; release: string; releaseYear: number; category: ChecklistModel['category'] }>
+        }
+        expect(body.queries).toHaveLength(1)
+        expect(body.queries[0]?.q).toBe('Eli Willits 2025 bowman draft chrome 1st auto')
+        expect(body.queries[0]?.release).toBe('2025-Bowman-Draft')
+        expect(body.queries[0]?.releaseYear).toBe(2025)
+        expect(body.queries[0]?.category).toBe('draft')
+
+        return new Response(
+          JSON.stringify({
+            items: [],
+            stats: {
+              queriesRun: 1,
+              queriesSucceeded: 1,
+              queriesFailed: 0,
+              pagesFetched: 1,
+              upstreamTotal: 0,
+              dedupedItems: 0,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    await fetchEbayBinListings({ model: draftModel, playerLimit: 1 })
+  })
+
   it('adds the variation term to every queued player query and preserves it on listings', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string; variationTerm?: string }> }
         expect(body.queries).toHaveLength(1)
-        expect(body.queries[0]?.q).toBe('Eli Willits packfractor bowman chrome auto')
+        expect(body.queries[0]?.q).toBe('Eli Willits packfractor 2026 bowman chrome 1st auto')
         expect(body.queries[0]?.variationTerm).toBe('packfractor')
 
         return new Response(

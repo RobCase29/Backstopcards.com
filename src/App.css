@@ -2229,7 +2229,8 @@ thead .matrix-player-col span,
 
 .workflow-command,
 .model-support-dock,
-.deal-workflow {
+.deal-workflow,
+.beta-workflow {
   width: min(var(--stage-max), 100%);
   margin: 14px auto 0;
 }
@@ -2403,8 +2404,34 @@ thead .matrix-player-col span,
   gap: 14px;
 }
 
-.deal-workflow .bin-radar {
+.deal-workflow .bin-radar,
+.beta-workflow .bin-radar {
   margin-top: 0;
+}
+
+.beta-workflow {
+  display: grid;
+  gap: 10px;
+}
+
+.beta-page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+}
+
+.beta-page-head span {
+  color: rgba(9, 47, 49, 0.62);
+  font-size: 0.68rem;
+  font-weight: 920;
+  text-transform: uppercase;
+}
+
+.beta-page-head strong {
+  color: var(--text-strong);
+  font-size: 0.98rem;
 }
 
 .support-dock-head {
