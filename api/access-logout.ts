@@ -1,4 +1,4 @@
-import { expiredAccessCookie } from '../server/access'
+import { expiredAccessCookie } from '../server/access.js'
 
 export default {
   fetch() {

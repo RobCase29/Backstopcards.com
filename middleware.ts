@@ -5,7 +5,11 @@ import {
   readCookie,
   safeNextPath,
   verifyAccessSession,
-} from './server/access'
+} from './server/access.js'
+
+declare const process: {
+  env: Record<string, string | undefined>
+}
 
 const PUBLIC_PATHS = new Set(['/access.html', '/backstop-logo.jpeg', '/favicon.svg'])
 const PUBLIC_PREFIXES = ['/api/access-login', '/api/access-logout']

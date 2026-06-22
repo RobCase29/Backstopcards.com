@@ -11,7 +11,7 @@ npm run dev
 
 The app opens directly into the checklist price atlas. If a ProspectPulse session or token is available, it loads player-level base data; otherwise it can still show public set multiplier curves where available.
 
-Use Node 20.19+, 22.13+, or 24+. This repo includes `.nvmrc` set to Node 24.
+Use Node 22.13+ locally. This repo includes `.nvmrc` set to Node 22 to match Vercel.
 
 Run the full local guardrail pass with:
 
@@ -31,7 +31,14 @@ Option B: create `.env.local` from `.env.example` and set:
 PROSPECTPULSE_ACCESS_TOKEN=your_supabase_access_token
 ```
 
-The token stays server-side in the Vite dev proxy. When this value is present, the app treats ProspectPulse as a managed connection: the UI shows `ProspectPulse managed`, every approved browser uses the same server-side token, and the local disconnect button is hidden because users do not own that session.
+The token stays server-side in the Vite dev proxy. For a longer-lived private deployment, set the server-managed login variables instead:
+
+```bash
+PROSPECTPULSE_EMAIL=your_account_email
+PROSPECTPULSE_PASSWORD=your_account_password
+```
+
+When either server-managed option is present, the app treats ProspectPulse as a managed connection: the UI shows `ProspectPulse managed`, every approved browser uses the same server-side connection, and the local disconnect button is hidden because users do not own that session.
 
 For a private deployment, set `PROSPECTPULSE_ACCESS_TOKEN` in the host's server environment and protect the site with an invite-only gate such as Cloudflare Access, Vercel password protection/auth middleware, or Google Workspace sign-in. Do not commit `.env.local`, ProspectPulse passwords, or live tokens.
 
@@ -45,6 +52,7 @@ Set these Vercel environment variables before sharing a deployment:
 APP_ACCESS_CODE=long_random_code_you_give_to_friends
 APP_SESSION_SECRET=separate_long_random_cookie_signing_secret
 PROSPECTPULSE_ACCESS_TOKEN=your_server_side_prospectpulse_token
+# Or use PROSPECTPULSE_EMAIL and PROSPECTPULSE_PASSWORD for server-managed login
 EBAY_CLIENT_ID=your_ebay_client_id
 EBAY_CLIENT_SECRET=your_ebay_client_secret
 EBAY_ENV=production

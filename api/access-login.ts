@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import {
   accessCodeMatches,
   accessConfigMessage,
@@ -5,7 +7,7 @@ import {
   accessGateReady,
   createAccessSession,
   safeNextPath,
-} from '../server/access'
+} from '../server/access.js'
 
 async function readLoginBody(request: Request) {
   const contentType = request.headers.get('content-type')?.toLowerCase() ?? ''

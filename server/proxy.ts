@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const DEFAULT_SUPABASE_URL = 'https://rhlontbdiezpefgbbkql.supabase.co'
@@ -49,7 +51,15 @@ type EbayTokenCache = {
   expiresAt: number
 }
 
+type PulseTokenCache = {
+  cacheKey: string
+  accessToken: string
+  refreshToken?: string
+  expiresAt: number
+}
+
 let ebayTokenCache: EbayTokenCache | null = null
+let pulseTokenCache: PulseTokenCache | null = null
 
 function jsonResponse(statusCode: number, payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -124,6 +134,58 @@ function ebayRouteErrorMessage(route: string, message: string) {
     return 'Marketplace Insights access denied for eBay sold listings. Enable item-sales search permissions for this keyset, then retry.'
   }
   return message
+}
+
+function hasManagedPulseCredentials(env: ServerEnv) {
+  return Boolean(env.PROSPECTPULSE_ACCESS_TOKEN || (env.PROSPECTPULSE_EMAIL && env.PROSPECTPULSE_PASSWORD))
+}
+
+async function getManagedPulseAccessToken(env: ServerEnv, supabaseUrl: string, anonKey: string) {
+  if (env.PROSPECTPULSE_ACCESS_TOKEN) return env.PROSPECTPULSE_ACCESS_TOKEN
+
+  const email = env.PROSPECTPULSE_EMAIL
+  const password = env.PROSPECTPULSE_PASSWORD
+  if (!email || !password) return null
+
+  const cacheKey = `${supabaseUrl}:${email}:${password}`
+  if (pulseTokenCache?.cacheKey === cacheKey && pulseTokenCache.expiresAt > Date.now() + 60_000) {
+    return pulseTokenCache.accessToken
+  }
+
+  const upstream = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: anonKey,
+      Authorization: `Bearer ${anonKey}`,
+    },
+    body: JSON.stringify({
+      email,
+      password,
+    }),
+  })
+
+  const text = await upstream.text()
+  if (!upstream.ok) throw new Error(`ProspectPulse managed login failed (${upstream.status})`)
+
+  const session = JSON.parse(text) as {
+    access_token?: string
+    refresh_token?: string
+    expires_at?: number
+    expires_in?: number
+  }
+  if (!session.access_token) throw new Error('ProspectPulse managed login did not include an access token')
+
+  pulseTokenCache = {
+    cacheKey,
+    accessToken: session.access_token,
+    refreshToken: session.refresh_token,
+    expiresAt: session.expires_at
+      ? session.expires_at * 1_000
+      : Date.now() + Math.max(60, session.expires_in ?? 3_600) * 1_000,
+  }
+
+  return session.access_token
 }
 
 async function getEbayAccessToken(env: ServerEnv, sandbox: boolean, scope = EBAY_OAUTH_SCOPE) {
@@ -351,16 +413,16 @@ function safeEbayQueries(payload: EbaySearchPayload) {
 
 export async function handleProspectPulseRoute(route: string, request: Request, env: ServerEnv) {
   const supabaseUrl = env.PROSPECTPULSE_SUPABASE_URL || DEFAULT_SUPABASE_URL
-  const envAccessToken = env.PROSPECTPULSE_ACCESS_TOKEN
   const anonKey = env.PROSPECTPULSE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY
+  const managedConnection = hasManagedPulseCredentials(env)
 
   if (request.method === 'GET' && route === 'status') {
     return jsonResponse(200, {
-      connected: Boolean(envAccessToken),
-      serverConnected: Boolean(envAccessToken),
-      authMode: envAccessToken ? 'server' : 'public',
+      connected: managedConnection,
+      serverConnected: managedConnection,
+      authMode: managedConnection ? 'server' : 'public',
       hasAnonKey: Boolean(anonKey),
-      message: envAccessToken ? 'ProspectPulse managed token loaded' : 'No server access token configured',
+      message: managedConnection ? 'ProspectPulse managed connection loaded' : 'No server access token configured',
     })
   }
 
@@ -418,11 +480,23 @@ export async function handleProspectPulseRoute(route: string, request: Request, 
     return jsonResponse(routeErrorStatus(error), { error: routeErrorMessage(error, 'Invalid ProspectPulse request') })
   }
 
-  const accessToken =
-    envAccessToken || (route === 'api-checklists' && canUsePublicChecklist(body) ? anonKey : undefined)
+  const headerToken = request.headers.get('x-prospectpulse-access-token')?.trim()
+  let accessToken = headerToken || undefined
+
+  if (!accessToken && managedConnection) {
+    try {
+      accessToken = (await getManagedPulseAccessToken(env, supabaseUrl, anonKey)) || undefined
+    } catch (error) {
+      return jsonResponse(routeErrorStatus(error), {
+        error: routeErrorMessage(error, 'ProspectPulse managed login failed'),
+      })
+    }
+  }
+
+  accessToken ||= route === 'api-checklists' && canUsePublicChecklist(body) ? anonKey : undefined
 
   if (!accessToken) {
-    return jsonResponse(401, { error: 'Connect ProspectPulse or set PROSPECTPULSE_ACCESS_TOKEN in Vercel environment variables' })
+    return jsonResponse(401, { error: 'Connect ProspectPulse or set server-managed ProspectPulse credentials' })
   }
 
   try {
