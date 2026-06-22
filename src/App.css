@@ -1655,12 +1655,13 @@ thead .matrix-player-col span,
 }
 
 .valuation-toolbar {
-  grid-template-columns: minmax(260px, 1fr) repeat(5, minmax(118px, auto)) auto auto;
+  grid-template-columns: minmax(220px, 1.25fr) repeat(5, minmax(104px, 0.62fr)) minmax(122px, auto);
+  min-width: 0;
 }
 
 .filter-select {
   height: 42px;
-  min-width: 118px;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1673,6 +1674,7 @@ thead .matrix-player-col span,
 }
 
 .filter-select span {
+  flex: 0 0 auto;
   color: var(--muted);
   font-size: 0.68rem;
   font-weight: 900;
@@ -1680,13 +1682,26 @@ thead .matrix-player-col span,
 }
 
 .filter-select select {
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 158px;
+  width: 100%;
+  max-width: 100%;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text-strong);
+  font-size: 0.86rem;
   font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-counts {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .leaderboard-shell {
@@ -2084,6 +2099,8 @@ thead .matrix-player-col span,
   color: var(--text-strong);
   font-size: 0.9rem;
   font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .quick-price-controls input {

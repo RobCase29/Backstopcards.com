@@ -2991,16 +2991,18 @@ function App() {
                   ))}
                 </select>
               </label>
-              <div className="deal-count">
-                <strong>{visibleRows.length.toLocaleString()}</strong>
-                <span>rows</span>
-              </div>
-              {visibleRows.length > renderedRows.length ? (
+              <div className="row-counts">
                 <div className="deal-count">
-                  <strong>{renderedRows.length.toLocaleString()}</strong>
-                  <span>shown</span>
+                  <strong>{visibleRows.length.toLocaleString()}</strong>
+                  <span>rows</span>
                 </div>
-              ) : null}
+                {visibleRows.length > renderedRows.length ? (
+                  <div className="deal-count">
+                    <strong>{renderedRows.length.toLocaleString()}</strong>
+                    <span>shown</span>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             <Leaderboard
