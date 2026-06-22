@@ -35,6 +35,24 @@ The token stays server-side in the Vite dev proxy. When this value is present, t
 
 For a private deployment, set `PROSPECTPULSE_ACCESS_TOKEN` in the host's server environment and protect the site with an invite-only gate such as Cloudflare Access, Vercel password protection/auth middleware, or Google Workspace sign-in. Do not commit `.env.local`, ProspectPulse passwords, or live tokens.
 
+## Private Web Access
+
+The repo now includes a Vercel access gate for the hosted app. Every route, static asset, and API endpoint is blocked until the visitor enters the shared invite code. Successful access sets a signed, HttpOnly, Secure, SameSite=Lax cookie for seven days.
+
+Set these Vercel environment variables before sharing a deployment:
+
+```bash
+APP_ACCESS_CODE=long_random_code_you_give_to_friends
+APP_SESSION_SECRET=separate_long_random_cookie_signing_secret
+PROSPECTPULSE_ACCESS_TOKEN=your_server_side_prospectpulse_token
+EBAY_CLIENT_ID=your_ebay_client_id
+EBAY_CLIENT_SECRET=your_ebay_client_secret
+EBAY_ENV=production
+EBAY_MARKETPLACE_ID=EBAY_US
+```
+
+If `APP_ACCESS_CODE` or `APP_SESSION_SECRET` is missing, the middleware returns a locked configuration message instead of serving the app. For a tighter friend-by-friend model later, replace the shared code with Vercel Deployment Protection, Cloudflare Access, or a small user table with per-user codes and revocation.
+
 ## Security Notes
 
 Treat the API proxy as private infrastructure. It holds the ProspectPulse and eBay credentials server-side, so the site should not be reachable without an access gate.
@@ -42,12 +60,12 @@ Treat the API proxy as private infrastructure. It holds the ProspectPulse and eB
 Minimum safe setup before sharing:
 
 1. Keep `.env.local` local only. It is ignored by git via `*.local`.
-2. Put any hosted version behind Cloudflare Access, Tailscale, Vercel auth middleware, or another invite-only gate before sharing the URL.
+2. Put any hosted version behind the included Vercel access gate, Cloudflare Access, Tailscale, Vercel Deployment Protection, or another invite-only gate before sharing the URL.
 3. Do not expose `npm run dev` directly to the public internet. Use a private tunnel/access layer for local sharing, or deploy with an equivalent server-side API/proxy layer.
 4. Keep ProspectPulse and eBay tokens in server environment variables only. Never place them in `VITE_` variables or client code.
 5. Rotate any credential that was pasted into chat, screenshots, logs, or a public issue tracker.
 
-The local proxy rejects cross-origin POSTs, oversized JSON bodies, unknown ProspectPulse function routes, and non-Bowman eBay queries to reduce accidental token/API-quota exposure.
+The local and hosted API proxies reject cross-origin POSTs, oversized JSON bodies, unknown ProspectPulse function routes, and non-Bowman eBay queries to reduce accidental token/API-quota exposure.
 
 ## eBay BIN Radar
 
