@@ -43,6 +43,7 @@ import {
   type EbayBinSearchMode,
   type EbayStatus,
 } from './lib/ebay'
+import { impliedDynastyBasePrice, scoreDynastyValueOpportunity } from './lib/dynastyValue'
 import { fetchEbaySoldVariationModel, type EbaySoldModelResult } from './lib/ebaySold'
 import { MARKET_MOVERS_CAPTURE_BOOKMARKLET, buildMarketMoversSoldModel } from './lib/marketMovers'
 import { findStsRanking, scoreStsMomentum } from './lib/stsRankings'
@@ -79,7 +80,7 @@ type SortMode =
   | 'bin-target'
   | 'player-asc'
   | 'release-desc'
-type BinPlayerScope = 'all' | 'top-40' | 'target-50'
+type BinPlayerScope = 'all' | 'top-40' | 'target-50' | 'value-25'
 type BinSearchMode = EbayBinSearchMode
 type BinResultSort =
   | 'conviction-desc'
@@ -173,15 +174,7 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
-function scoreDynastyBaseValue(row: PricingRow) {
-  if (row.stsDynastyScore === null && row.stsRank === null) return -1
-  const dynastyScore = row.stsDynastyScore ?? 0
-  const basePrice = Math.max(1, row.baseTwmaPrice)
-  const priceDrag = Math.log10(Math.max(10, basePrice)) * 15
-  const prospectBonus = row.stsProspectRank ? 4 : 0
-  const confidenceBonus = row.baseConfidence * 4
-  return Number(Math.max(0, dynastyScore + prospectBonus + confidenceBonus - priceDrag).toFixed(1))
-}
+const scoreDynastyBaseValue = scoreDynastyValueOpportunity
 
 function sortRows(rows: PricingRow[], sortMode: SortMode) {
   const sorted = [...rows]
@@ -426,6 +419,10 @@ function checklistModelKey(model: ChecklistModel) {
   return `${model.category}:${model.releaseYear}:${model.release}`
 }
 
+function pricingRowModelKey(row: PricingRow) {
+  return `${row.category}:${row.releaseYear}:${row.release}`
+}
+
 function checklistModelLabel(model: ChecklistModel) {
   const label = model.release.replace(/-/g, ' ').replace(/\s+/g, ' ').trim()
   return label || `${model.releaseYear} ${CATEGORY_LABELS[model.category]}`
@@ -457,6 +454,31 @@ function targetRowsForModel(rows: PricingRow[], model: ChecklistModel, limit = 5
         right.baseTwmaPrice - left.baseTwmaPrice,
     )
     .slice(0, limit)
+}
+
+function valueRowsForModels(rows: PricingRow[], models: ChecklistModel[], limit = 25) {
+  const modelKeys = new Set(models.map(checklistModelKey))
+  const selectedRows = rows
+    .filter((row) => modelKeys.has(pricingRowModelKey(row)))
+    .map((row) => ({ row, score: scoreDynastyValueOpportunity(row) }))
+    .filter(({ score }) => score > 0)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        (right.row.stsMomentumScore ?? -1) - (left.row.stsMomentumScore ?? -1) ||
+        rankOrInfinity(left.row.stsProspectRank) - rankOrInfinity(right.row.stsProspectRank) ||
+        left.row.baseTwmaPrice - right.row.baseTwmaPrice,
+    )
+    .slice(0, limit)
+    .map(({ row }) => row)
+
+  return selectedRows.reduce((groups, row) => {
+    const key = pricingRowModelKey(row)
+    const modelRows = groups.get(key) ?? []
+    modelRows.push(row)
+    groups.set(key, modelRows)
+    return groups
+  }, new Map<string, PricingRow[]>())
 }
 
 function opportunityStsContext(opportunity: Opportunity) {
@@ -611,6 +633,8 @@ function downloadMatrixCsv(rows: PricingRow[]) {
     'Dynasty Rank',
     'Prospect Rank',
     'Dynasty Score',
+    'Dynasty Value Score',
+    'Implied Signal Base',
     'Momentum Score',
     'Riser Value Score',
     'BIN Target Score',
@@ -638,14 +662,17 @@ function downloadMatrixCsv(rows: PricingRow[]) {
     'Multiplier',
     'Modeled Price',
   ]
-  const csvRows = rows.flatMap((row) =>
-    row.ladder.map((quote) => [
+  const csvRows = rows.flatMap((row) => {
+    const hasDynastySignal = row.stsDynastyScore !== null || row.stsRank !== null
+    return row.ladder.map((quote) => [
       row.rank,
       row.playerName,
       row.release,
       row.stsRank ?? '',
       row.stsProspectRank ?? '',
       row.stsDynastyScore?.toFixed(1) ?? '',
+      hasDynastySignal ? scoreDynastyValueOpportunity(row).toFixed(1) : '',
+      hasDynastySignal ? impliedDynastyBasePrice(row).toFixed(2) : '',
       row.stsMomentumScore?.toFixed(1) ?? '',
       row.stsRiserValueScore?.toFixed(1) ?? '',
       row.stsBinTargetScore?.toFixed(1) ?? '',
@@ -672,8 +699,8 @@ function downloadMatrixCsv(rows: PricingRow[]) {
       quote.label,
       quote.multiplier.toFixed(4),
       quote.price.toFixed(2),
-    ]),
-  )
+    ])
+  })
   const csv = [headers, ...csvRows]
     .map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(','))
     .join('\n')
@@ -962,6 +989,12 @@ function LadderDetail({ row }: { row?: PricingRow }) {
           <span>30D / 90D</span>
           <strong>{row.baseSales30} / {row.baseSales90}</strong>
         </div>
+        {row.stsName ? (
+          <div>
+            <span>Value Signal</span>
+            <strong>{money(impliedDynastyBasePrice(row))}</strong>
+          </div>
+        ) : null}
       </div>
 
       {row.stsName ? (
@@ -1334,6 +1367,7 @@ function BinRadar({
   minPrice,
   playerScope,
   targetPlayerCount,
+  valuePlayerCount,
   resultSort,
   searchMode,
   searchTerm,
@@ -1344,6 +1378,7 @@ function BinRadar({
   onSearchModeChange,
   onSearchTermChange,
   onScan,
+  onScanValueTargets,
 }: {
   models: ChecklistModel[]
   modelOptions: ChecklistModel[]
@@ -1358,6 +1393,7 @@ function BinRadar({
   minPrice: number
   playerScope: BinPlayerScope
   targetPlayerCount: number
+  valuePlayerCount: number
   resultSort: BinResultSort
   searchMode: BinSearchMode
   searchTerm: string
@@ -1368,6 +1404,7 @@ function BinRadar({
   onSearchModeChange: (value: BinSearchMode) => void
   onSearchTermChange: (value: string) => void
   onScan: () => void
+  onScanValueTargets: () => void
 }) {
   const configured = Boolean(ebayStatus?.configured)
   const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
@@ -1388,42 +1425,35 @@ function BinRadar({
   const trimmedSearchTerm = searchTerm.trim()
   const requiresFocus = searchMode !== 'checklist'
   const hasFocus = !requiresFocus || trimmedSearchTerm.length > 0
-  const hasTargetQueue = playerScope !== 'target-50' || searchMode === 'player' || targetPlayerCount > 0
+  const scopedPlayerCount = playerScope === 'target-50' ? targetPlayerCount : playerScope === 'value-25' ? valuePlayerCount : playerCount
+  const hasTargetQueue =
+    (playerScope !== 'target-50' && playerScope !== 'value-25') || searchMode === 'player' || scopedPlayerCount > 0
   const rateLimited = ebayRateLimitMessage(error)
   const canScan = configured && setCount > 0 && hasPlayerUniverse && hasFocus && hasTargetQueue && !loading && !modelLoading
-  const readinessLabel = !configured
-    ? 'eBay offline'
-    : setCount === 0
-      ? 'Model pending'
-      : !hasPlayerUniverse
-        ? 'Player list needed'
-        : !hasTargetQueue
-          ? 'Target 50 waiting'
-        : !hasFocus
-          ? searchMode === 'player'
-            ? 'Enter player'
-            : 'Enter variation'
-        : 'Ready'
-  const scanButtonLabel = loading
-    ? 'Scanning'
-    : modelLoading
-      ? 'Model loading'
-      : rateLimited && !scan
-        ? 'Retry Scan'
-      : !configured
-        ? 'eBay offline'
-        : setCount === 0 || !hasPlayerUniverse
-          ? 'Player list needed'
-          : !hasTargetQueue
-            ? 'Target 50 waiting'
-          : !hasFocus
-            ? searchMode === 'player'
-              ? 'Enter player'
-              : 'Enter variation'
-          : 'Scan BINs'
+  const canScanValueTargets = configured && setCount > 0 && hasPlayerUniverse && valuePlayerCount > 0 && !loading && !modelLoading
+  const queueWaitingLabel = playerScope === 'value-25' ? 'Value 25 waiting' : 'Target 50 waiting'
+  let readinessLabel = 'Ready'
+  if (!configured) readinessLabel = 'eBay offline'
+  else if (setCount === 0) readinessLabel = 'Model pending'
+  else if (!hasPlayerUniverse) readinessLabel = 'Player list needed'
+  else if (!hasTargetQueue) readinessLabel = queueWaitingLabel
+  else if (!hasFocus) readinessLabel = searchMode === 'player' ? 'Enter player' : 'Enter variation'
+
+  let scanButtonLabel = 'Scan BINs'
+  if (loading) scanButtonLabel = 'Scanning'
+  else if (modelLoading) scanButtonLabel = 'Model loading'
+  else if (rateLimited && !scan) scanButtonLabel = 'Retry Scan'
+  else if (!configured) scanButtonLabel = 'eBay offline'
+  else if (setCount === 0 || !hasPlayerUniverse) scanButtonLabel = 'Player list needed'
+  else if (!hasTargetQueue) scanButtonLabel = queueWaitingLabel
+  else if (!hasFocus) scanButtonLabel = searchMode === 'player' ? 'Enter player' : 'Enter variation'
   const focusPlaceholder = searchMode === 'player' ? 'Eli Willits' : 'packfractor'
   const scopeLabel =
-    playerScope === 'target-50'
+    playerScope === 'value-25'
+      ? selectedModelKey === BIN_ALL_MODELS_KEY
+        ? `Value 25 total (${valuePlayerCount.toLocaleString()} players)`
+        : `Value 25 (${valuePlayerCount.toLocaleString()} players)`
+      : playerScope === 'target-50'
       ? selectedModelKey === BIN_ALL_MODELS_KEY
         ? `Target 50 per checklist (${targetPlayerCount.toLocaleString()} players)`
         : `Target 50 (${targetPlayerCount.toLocaleString()} players)`
@@ -1519,10 +1549,15 @@ function BinRadar({
           <span>Players</span>
           <select value={playerScope} onChange={(event) => onPlayerScopeChange(event.target.value as BinPlayerScope)}>
             <option value="all">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'All checklist players' : 'Full checklist'}</option>
+            <option value="value-25">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Value 25 total' : 'Value 25'}</option>
             <option value="top-40">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Top 40 per checklist' : 'Top 40 by base'}</option>
             <option value="target-50">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Target 50 per checklist' : 'Target 50 model'}</option>
           </select>
         </label>
+        <button className="ghost-button value-scan-button" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
+          <Brain size={16} />
+          Scan Value 25
+        </button>
         <label className="bin-control result-sort-control">
           <span>Sort</span>
           <select value={resultSort} onChange={(event) => onResultSortChange(event.target.value as BinResultSort)}>
@@ -2485,9 +2520,14 @@ function App() {
     }
     return targets
   }, [matrix.rows, selectedBinModels])
+  const binValueRowsByModel = useMemo(() => valueRowsForModels(matrix.rows, selectedBinModels, 25), [matrix.rows, selectedBinModels])
   const binTargetPlayerCount = useMemo(
     () => selectedBinModels.reduce((total, model) => total + (binTargetRowsByModel.get(checklistModelKey(model))?.length ?? 0), 0),
     [binTargetRowsByModel, selectedBinModels],
+  )
+  const binValuePlayerCount = useMemo(
+    () => selectedBinModels.reduce((total, model) => total + (binValueRowsByModel.get(checklistModelKey(model))?.length ?? 0), 0),
+    [binValueRowsByModel, selectedBinModels],
   )
   const binScoreSettings = useMemo(() => {
     const selectedModel = selectedBinModels[0]
@@ -2647,6 +2687,22 @@ function App() {
     })
   }
 
+  function scanValue25Targets() {
+    setWorkMode('deals')
+    setBinSearchMode('checklist')
+    setBinSearchTerm('')
+    setBinPlayerScope('value-25')
+    setBinListings([])
+    setBinScan(null)
+    setBinError(null)
+
+    void scanEbayBinListings({
+      playerScope: 'value-25',
+      searchMode: 'checklist',
+      searchTerm: '',
+    })
+  }
+
   function updateCaseHitMinPrice(value: number) {
     setCaseHitMinPrice(value)
     setCaseHitScan(null)
@@ -2689,17 +2745,33 @@ function App() {
       return
     }
 
+    const valueRowsByScanModel =
+      activePlayerScope === 'value-25' && activeSearchMode !== 'player'
+        ? valueRowsForModels(matrix.rows, playerLoadedModels, 25)
+        : new Map<string, PricingRow[]>()
+
     if (
-      activePlayerScope === 'target-50' &&
+      (activePlayerScope === 'target-50' || activePlayerScope === 'value-25') &&
       activeSearchMode !== 'player' &&
-      playerLoadedModels.every((model) => targetRowsForModel(matrix.rows, model, 50).length === 0)
+      playerLoadedModels.every((model) => {
+        if (activePlayerScope === 'value-25') return (valueRowsByScanModel.get(checklistModelKey(model))?.length ?? 0) === 0
+        return targetRowsForModel(matrix.rows, model, 50).length === 0
+      })
     ) {
-      setBinError('Target 50 needs priced checklist rows matched to ranking signals before scanning.')
+      setBinError(
+        activePlayerScope === 'value-25'
+          ? 'Value 25 needs priced checklist rows matched to ranking signals before scanning.'
+          : 'Target 50 needs priced checklist rows matched to ranking signals before scanning.',
+      )
       return
     }
     const scanModels =
-      activePlayerScope === 'target-50' && activeSearchMode !== 'player'
-        ? playerLoadedModels.filter((model) => targetRowsForModel(matrix.rows, model, 50).length > 0)
+      (activePlayerScope === 'target-50' || activePlayerScope === 'value-25') && activeSearchMode !== 'player'
+        ? playerLoadedModels.filter((model) =>
+            activePlayerScope === 'value-25'
+              ? (valueRowsByScanModel.get(checklistModelKey(model))?.length ?? 0) > 0
+              : targetRowsForModel(matrix.rows, model, 50).length > 0,
+          )
         : playerLoadedModels
 
     binRequestRef.current?.abort()
@@ -2710,13 +2782,21 @@ function App() {
 
     try {
       const settledScans = await mapWithConcurrency(scanModels, BIN_SCAN_CONCURRENCY, async (model) => {
-        const targetRows = activePlayerScope === 'target-50' ? targetRowsForModel(matrix.rows, model, 50) : []
+        const targetRows =
+          activePlayerScope === 'target-50'
+            ? targetRowsForModel(matrix.rows, model, 50)
+            : activePlayerScope === 'value-25'
+              ? (valueRowsByScanModel.get(checklistModelKey(model)) ?? [])
+              : []
         try {
           const value = await fetchEbayBinListings({
             model,
             minPrice: activeMinPrice,
             playerLimit: activePlayerScope === 'top-40' ? 40 : null,
-            playerNames: activePlayerScope === 'target-50' ? targetRows.map((row) => row.playerName) : undefined,
+            playerNames:
+              activePlayerScope === 'target-50' || activePlayerScope === 'value-25'
+                ? targetRows.map((row) => row.playerName)
+                : undefined,
             searchMode: activeSearchMode,
             searchTerm: activeSearchTerm,
             signal: controller.signal,
@@ -3081,6 +3161,7 @@ function App() {
             minPrice={binMinPrice}
             playerScope={binPlayerScope}
             targetPlayerCount={binTargetPlayerCount}
+            valuePlayerCount={binValuePlayerCount}
             resultSort={binResultSort}
             searchMode={binSearchMode}
             searchTerm={binSearchTerm}
@@ -3091,6 +3172,7 @@ function App() {
             onSearchModeChange={updateBinSearchMode}
             onSearchTermChange={updateBinSearchTerm}
             onScan={() => void scanEbayBinListings()}
+            onScanValueTargets={scanValue25Targets}
           />
         </section>
       ) : (
