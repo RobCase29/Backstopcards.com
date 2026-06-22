@@ -233,7 +233,7 @@ button {
 
 .market-tape {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin-top: 14px;
   overflow: hidden;
   border: 1px solid #243330;
@@ -1716,7 +1716,7 @@ thead .matrix-player-col span,
 .leaderboard-head,
 .leaderboard-row {
   display: grid;
-  grid-template-columns: 58px minmax(180px, 1.05fr) minmax(96px, 0.42fr) minmax(112px, 0.45fr) minmax(360px, 1.8fr);
+  grid-template-columns: 58px minmax(190px, 1.05fr) minmax(110px, 0.45fr) minmax(420px, 1.9fr);
   gap: 10px;
   align-items: center;
 }
@@ -2815,7 +2815,7 @@ thead .matrix-player-col span,
 
 .valuation-app .metric-grid {
   gap: 12px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 @media (max-width: 1180px) {
@@ -4209,8 +4209,8 @@ thead .matrix-player-col span,
   .leaderboard-head,
   .leaderboard-row {
     grid-template-columns:
-      72px minmax(260px, 0.82fr) minmax(132px, 0.34fr)
-      minmax(150px, 0.38fr) minmax(640px, 1.65fr);
+      72px minmax(300px, 0.88fr) minmax(140px, 0.34fr)
+      minmax(720px, 1.72fr);
     gap: 14px;
   }
 
@@ -4256,7 +4256,7 @@ thead .matrix-player-col span,
   }
 
   .valuation-app .metric-grid {
-    grid-template-columns: repeat(5, minmax(190px, 1fr));
+    grid-template-columns: repeat(4, minmax(190px, 1fr));
   }
 
   .valuation-app .variation-grid {

@@ -8,7 +8,6 @@ import {
   Database,
   Download,
   ExternalLink,
-  Gauge,
   Gem,
   KeyRound,
   Layers,
@@ -70,8 +69,6 @@ type BaseSourceFilter = 'all' | BasePriceSource
 type StsFilter = 'all' | 'ranked' | 'prospects' | 'mlb' | 'unmatched'
 type SortMode =
   | 'base-desc'
-  | 'top-desc'
-  | 'confidence-desc'
   | 'sts-rank'
   | 'prospect-rank'
   | 'dynasty-score'
@@ -117,14 +114,12 @@ const SOURCE_LABELS: Record<BasePriceSource, string> = {
   'weighted-sales': 'Weighted',
   'blended-sales': 'Blended',
   'variation-implied': 'Implied',
-  'twma-fallback': 'Fallback',
+  'twma-fallback': 'Baseline',
 }
 
 const SORT_LABELS: Record<SortMode, string> = {
   'base-desc': 'Model Base',
-  'top-desc': 'Top Model',
-  'confidence-desc': 'Confidence',
-  'sts-rank': 'STS Rank',
+  'sts-rank': 'Dynasty Rank',
   'prospect-rank': 'Prospect Rank',
   'dynasty-score': 'Dynasty Score',
   'dynasty-value': 'Dynasty Value',
@@ -137,7 +132,7 @@ const SORT_LABELS: Record<SortMode, string> = {
 
 const STS_FILTER_LABELS: Record<StsFilter, string> = {
   all: 'All players',
-  ranked: 'STS ranked',
+  ranked: 'Ranked',
   prospects: 'Prospects',
   mlb: 'MLB level',
   unmatched: 'Unmatched',
@@ -147,9 +142,9 @@ const BIN_RESULT_SORT_LABELS: Record<BinResultSort, string> = {
   'conviction-desc': 'Conviction',
   'edge-desc': 'Spread',
   'score-desc': 'Model score',
-  'sts-rank': 'STS rank',
+  'sts-rank': 'Dynasty rank',
   'prospect-rank': 'Prospect rank',
-  'trend-desc': 'STS trend',
+  'trend-desc': 'Trend',
   'price-asc': 'Price low',
   'price-desc': 'Price high',
   'roi-desc': 'ROI',
@@ -189,12 +184,6 @@ function scoreDynastyBaseValue(row: PricingRow) {
 
 function sortRows(rows: PricingRow[], sortMode: SortMode) {
   const sorted = [...rows]
-  if (sortMode === 'top-desc') {
-    return sorted.sort((left, right) => right.topVariationPrice - left.topVariationPrice || right.baseTwmaPrice - left.baseTwmaPrice)
-  }
-  if (sortMode === 'confidence-desc') {
-    return sorted.sort((left, right) => right.baseConfidence - left.baseConfidence || right.baseTwmaPrice - left.baseTwmaPrice)
-  }
   if (sortMode === 'sts-rank') {
     return sorted.sort((left, right) => rankOrInfinity(left.stsRank) - rankOrInfinity(right.stsRank) || right.baseTwmaPrice - left.baseTwmaPrice)
   }
@@ -354,9 +343,38 @@ function compactVariation(label: string) {
     .trim()
 }
 
+function cleanModelLanguage(value: string) {
+  return value
+    .replace(/ProspectPulse/gi, 'Market')
+    .replace(/\bPulse\b/g, 'Market')
+    .replace(/\bTWMA\b/g, 'weighted avg')
+    .replace(/\bfallback\b/gi, 'baseline')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function formatBaseMethod(method: string) {
+  return cleanModelLanguage(method)
+}
+
+function formatBaseSource(source: BasePriceSource) {
+  return SOURCE_LABELS[source]
+}
+
+function formatModelSource(source: string) {
+  const labels: Record<string, string> = {
+    'listing-comps': 'comp-led model',
+    'base-twma-blend': 'base blend',
+    'player-variation': 'player comp',
+    'player-base-curve': 'base ladder',
+    'release-curve': 'set curve',
+  }
+  return labels[source] ?? cleanModelLanguage(source.replaceAll('-', ' '))
+}
+
 function formatStsLine(row: PricingRow) {
   const parts = []
-  if (row.stsRank) parts.push(`STS #${row.stsRank.toLocaleString()}`)
+  if (row.stsRank) parts.push(`Rank #${row.stsRank.toLocaleString()}`)
   if (row.stsProspectRank) parts.push(`Prospect #${row.stsProspectRank.toLocaleString()}`)
   if (row.stsDynastyScore !== null || row.stsRank !== null) parts.push(`${scoreDynastyBaseValue(row).toFixed(1)} value`)
   if (row.stsBinTargetScore !== null) parts.push(`${row.stsBinTargetScore.toFixed(1)} target`)
@@ -570,25 +588,24 @@ function downloadMatrixCsv(rows: PricingRow[]) {
     'Rank',
     'Player',
     'Release',
-    'STS Rank',
-    'STS Prospect Rank',
-    'STS Dynasty Score',
-    'STS Momentum Score',
-    'STS Riser Value Score',
-    'STS BIN Target Score',
-    'STS Team',
-    'STS Pos',
-    'STS Age',
-    'STS Level',
-    'STS WAR',
-    'STS 3D Change',
-    'STS 7D Change',
-    'STS 14D Change',
-    'STS 30D Change',
+    'Dynasty Rank',
+    'Prospect Rank',
+    'Dynasty Score',
+    'Momentum Score',
+    'Riser Value Score',
+    'BIN Target Score',
+    'Team',
+    'Pos',
+    'Age',
+    'Level',
+    'WAR',
+    '3D Change',
+    '7D Change',
+    '14D Change',
+    '30D Change',
     'Modeled Base',
-    'Pulse Base',
+    'Market Base',
     'Base Source',
-    'Base Confidence',
     '30D Base Sales',
     '90D Base Sales',
     'Raw Base Sales',
@@ -623,8 +640,7 @@ function downloadMatrixCsv(rows: PricingRow[]) {
       row.stsChange30d ?? '',
       row.baseTwmaPrice.toFixed(2),
       row.pulseBasePrice.toFixed(2),
-      row.basePriceSource,
-      row.baseConfidence.toFixed(2),
+      formatBaseSource(row.basePriceSource),
       row.baseSales30,
       row.baseSales90,
       row.rawBaseSales,
@@ -679,7 +695,6 @@ function MarketTape({
   variationCount,
   solvedCells,
   topBase,
-  topVariation,
   loadedSets,
   liveConnected,
   sourceLabel,
@@ -688,7 +703,6 @@ function MarketTape({
   variationCount: number
   solvedCells: number
   topBase: number
-  topVariation: number
   loadedSets: number
   liveConnected: boolean
   sourceLabel: string
@@ -699,8 +713,7 @@ function MarketTape({
     ['VARIATIONS', variationCount.toLocaleString(), variationCount > 0 ? 'up' : 'flat'],
     ['SOLVED', solvedCells.toLocaleString(), solvedCells > 0 ? 'up' : 'flat'],
     ['TOP BASE', money(topBase), topBase > 0 ? 'up' : 'flat'],
-    ['TOP MODEL', money(topVariation), topVariation > 0 ? 'up' : 'flat'],
-    ['SOURCE', sourceLabel, liveConnected ? 'up' : 'flat'],
+    ['DATA', sourceLabel, liveConnected ? 'up' : 'flat'],
   ] as const
 
   return (
@@ -720,7 +733,6 @@ function WorkflowCommand({
   onModeChange,
   pricedRows,
   topBase,
-  topVariation,
   dealCount,
   listingCount,
   modelReady,
@@ -729,7 +741,6 @@ function WorkflowCommand({
   onModeChange: (mode: WorkMode) => void
   pricedRows: number
   topBase: number
-  topVariation: number
   dealCount: number
   listingCount: number
   modelReady: boolean
@@ -764,7 +775,7 @@ function WorkflowCommand({
           <span className="workflow-card-copy">
             <span>Modeled Price</span>
             <strong>Lookup Board</strong>
-            <small>{money(topVariation)} top modeled card</small>
+            <small>{pricedRows.toLocaleString()} modeled players</small>
           </span>
           <span className="workflow-value">{money(topBase)}</span>
         </button>
@@ -817,7 +828,7 @@ function Leaderboard({
       <div className="empty-state board-empty">
         <BarChart3 size={28} />
         <strong>No priced players loaded.</strong>
-        <span>Connect ProspectPulse to load player base data.</span>
+        <span>Connect market data to load player base prices.</span>
       </div>
     )
   }
@@ -828,7 +839,6 @@ function Leaderboard({
         <span>#</span>
         <span>Player</span>
         <span>Model Base</span>
-        <span>Top Model</span>
         <span>{totalRows > rows.length ? `Curve: top ${rows.length} of ${totalRows}` : 'Curve'}</span>
       </div>
       <div className="leaderboard-list">
@@ -864,18 +874,12 @@ function Leaderboard({
                   <span className={`change-pill ${changeClassName(row.stsChange30d)}`}>30D {formatSigned(row.stsChange30d)}</span>
                 </span>
               ) : (
-                <span className="sts-inline muted">STS unmatched</span>
+                <span className="sts-inline muted">Unranked</span>
               )}
             </span>
             <span className="money-chip">
               <strong>{money(row.baseTwmaPrice)}</strong>
-              <small>{row.baseMethod}</small>
-            </span>
-            <span className="money-chip top">
-              <strong>{money(row.topVariationPrice)}</strong>
-              <small>
-                {Math.round(row.baseConfidence * 100)}% base / {row.stsBinTargetScore !== null ? `${row.stsBinTargetScore.toFixed(1)} target` : `${row.variationCount} solved`}
-              </small>
+              <small>{formatBaseMethod(row.baseMethod)}</small>
             </span>
             <span className="curve-strip">
               {pickPreviewQuotes(row.ladder).map((quote) => (
@@ -927,12 +931,12 @@ function LadderDetail({ row }: { row?: PricingRow }) {
           <strong>{money(row.baseTwmaPrice)}</strong>
         </div>
         <div>
-          <span>Source</span>
-          <strong>{row.basePriceSource.replace('-', ' ')}</strong>
+          <span>Base</span>
+          <strong>{formatBaseSource(row.basePriceSource)}</strong>
         </div>
         <div>
-          <span>Highest</span>
-          <strong>{money(row.topVariationPrice)}</strong>
+          <span>Ladder</span>
+          <strong>{row.variationCount.toLocaleString()}</strong>
         </div>
         <div>
           <span>30D / 90D</span>
@@ -944,7 +948,7 @@ function LadderDetail({ row }: { row?: PricingRow }) {
         <div className="sts-context-panel">
           <div className="sts-context-head">
             <div>
-              <span>Scout the Statline</span>
+              <span>Dynasty Signal</span>
               <strong>{formatStsLine(row)}</strong>
               <small>
                 {[row.stsTeam, row.stsPosition, row.stsLevel, row.stsAge ? `Age ${row.stsAge}` : null].filter(Boolean).join(' / ')}
@@ -958,7 +962,7 @@ function LadderDetail({ row }: { row?: PricingRow }) {
               </small>
             </div>
           </div>
-          <div className="sts-change-grid" aria-label="STS rank changes">
+          <div className="sts-change-grid" aria-label="Rank changes">
             {stsChangeItems.map(([label, value]) => (
               <span className={`change-pill ${changeClassName(value)}`} key={label}>
                 {label} {formatSigned(value)}
@@ -969,21 +973,20 @@ function LadderDetail({ row }: { row?: PricingRow }) {
         </div>
       ) : (
         <div className="sts-context-panel muted">
-          <span>Scout the Statline</span>
-          <strong>No STS match for this checklist name.</strong>
+          <span>Dynasty Signal</span>
+          <strong>No ranking match for this checklist name.</strong>
         </div>
       )}
 
       <div className="base-source-note">
-        <span>Pulse base {money(row.pulseBasePrice)}</span>
-        <span>{row.baseMethod}</span>
+        <span>Market base {money(row.pulseBasePrice)}</span>
+        <span>{formatBaseMethod(row.baseMethod)}</span>
         {row.baseAuctionSales + row.baseBinSales > 0 ? (
           <span>
             Auction/BIN {row.baseAuctionSales}/{row.baseBinSales}
           </span>
         ) : null}
         {row.baseEffectiveSales > 0 ? <span>{row.baseEffectiveSales.toFixed(1)} effective sales</span> : null}
-        <span>{Math.round(row.baseConfidence * 100)}% confidence</span>
       </div>
 
       <div className="variation-grid">
@@ -1072,7 +1075,6 @@ function QuickPriceModule({
   const roi = askPrice && spread !== null ? spread / askPrice : null
   const buyZone = modelValue * (1 - DEFAULT_SETTINGS.targetMarginPct / 100)
   const watchCeiling = modelValue * (1 + BIN_MODEL_WINDOW_PCT)
-  const confidence = clampNumber(activeRow.baseConfidence * gradeModel.confidence, 0, 1)
   const verdict = pricingVerdict(spread, modelValue, askPrice)
   const gradeLabel = gradeModel.option.label
 
@@ -1157,9 +1159,8 @@ function QuickPriceModule({
       ) : null}
 
       <div className="quick-source-strip">
-        <span>{Math.round(confidence * 100)}% confidence</span>
-        <span>{activeRow.basePriceSource.replace('-', ' ')}</span>
-        {activeRow.stsRank ? <span>STS #{activeRow.stsRank.toLocaleString()}</span> : null}
+        <span>{formatBaseSource(activeRow.basePriceSource)}</span>
+        {activeRow.stsRank ? <span>Rank #{activeRow.stsRank.toLocaleString()}</span> : null}
         {gradeModel.serialDenominator ? <span>/{gradeModel.serialDenominator}</span> : null}
       </div>
 
@@ -1195,8 +1196,8 @@ function ModelStatus({
     ? error
     : models.some((model) => model.source === 'authenticated-player-model')
       ? `Player base data loaded: ${loadedPlayers.toLocaleString()}`
-      : totalPlayers
-        ? `Public multiples only; ${totalPlayers.toLocaleString()} players require connection`
+    : totalPlayers
+        ? `Set curves only; ${totalPlayers.toLocaleString()} players need base prices`
         : 'Waiting for checklist model'
 
   return (
@@ -1252,20 +1253,20 @@ function ProspectPulsePanel({
   onDisconnect: () => void
 }) {
   const isServerManaged = liveConnected && authMode === 'server'
-  const connectedLabel = isServerManaged ? 'Managed server session' : 'Connected'
-  const connectedIdentity = isServerManaged ? 'Private deployment token' : authEmail || 'Local browser session'
+  const connectedLabel = isServerManaged ? 'Managed data session' : 'Connected'
+  const connectedIdentity = isServerManaged ? 'Private market feed' : authEmail || 'Local browser session'
 
   return (
     <section className="detail-card connection-card source-card">
       <div className="section-title">
         <KeyRound size={18} />
-        <h2>ProspectPulse</h2>
+        <h2>Market Data</h2>
       </div>
       {liveConnected ? (
         <div className={`connected-box ${isServerManaged ? 'managed' : ''}`}>
           <span>{connectedLabel}</span>
           <strong>{connectedIdentity}</strong>
-          <p>{isServerManaged ? 'Credential stays on the server; every approved user gets live checklist data.' : 'Stored only in this browser.'}</p>
+          <p>{isServerManaged ? 'Credentials stay on the server; every approved user gets live checklist data.' : 'Stored only in this browser.'}</p>
           {!isServerManaged && (
             <button className="ghost-button" type="button" onClick={onDisconnect}>
               <LogOut size={16} />
@@ -1548,7 +1549,7 @@ function BinRadar({
         <div className="bin-empty-state">
           <Database size={24} />
           <div>
-            <strong>ProspectPulse player list is not loaded.</strong>
+            <strong>Checklist player list is not loaded.</strong>
             <span>Public multiples are present, but BIN scanning needs checklist player names for the selected set scope.</span>
           </div>
         </div>
@@ -1606,10 +1607,10 @@ function BinRadar({
                       </>
                     ) : null}
                     {searchMode === 'variation' && trimmedSearchTerm ? <small>Title hit: {trimmedSearchTerm}</small> : null}
-                    <small>{opportunity.valuationSource.replaceAll('-', ' ')}</small>
+                    <small>{formatModelSource(opportunity.valuationSource)}</small>
                     {sts.ranking ? (
                       <>
-                        {sts.rank ? <small className="sts-chip">STS #{sts.rank.toLocaleString()}</small> : null}
+                        {sts.rank ? <small className="sts-chip">Rank #{sts.rank.toLocaleString()}</small> : null}
                         {sts.prospectRank ? <small className="sts-chip">Prospect #{sts.prospectRank.toLocaleString()}</small> : null}
                         {sts.momentumScore !== null ? <small className="sts-chip">Trend {sts.momentumScore.toFixed(1)}</small> : null}
                         {sts.change30d !== null ? (
@@ -1617,7 +1618,7 @@ function BinRadar({
                         ) : null}
                       </>
                     ) : (
-                      <small className="warning">STS unmatched</small>
+                      <small className="warning">Unranked</small>
                     )}
                     {opportunity.warnings[0] ? <small className="warning">{opportunity.warnings[0]}</small> : null}
                   </div>
@@ -1629,7 +1630,7 @@ function BinRadar({
                 <div className="bin-money-cell">
                   <strong>{money(opportunity.fairValue)}</strong>
                   <span>
-                    {Math.round(opportunity.modelConfidence * 100)}% model
+                    {formatModelSource(opportunity.valuationSource)}
                     {opportunity.gradingNote ? ` / ${opportunity.gradingNote}` : ''}
                   </span>
                 </div>
@@ -1656,11 +1657,23 @@ function BinRadar({
 }
 
 function caseHitSourceLabel(source: CaseHitOpportunity['source']) {
-  return source.replaceAll('-', ' ')
+  const labels: Record<CaseHitOpportunity['source'], string> = {
+    'same-player': 'same player',
+    'player-rarity': 'player rarity',
+    'variation-ask': 'variation asks',
+    'global-rarity': 'market rarity',
+    'thin-ask': 'thin market',
+  }
+  return labels[source] ?? cleanModelLanguage(source.replaceAll('-', ' '))
 }
 
 function caseHitModelSourceLabel(source: CaseHitScanResult['valuationRows'][number]['source']) {
-  return source.replaceAll('-', ' ')
+  const labels: Record<CaseHitScanResult['valuationRows'][number]['source'], string> = {
+    'player-ask': 'player asks',
+    'global-ask': 'market asks',
+    unpriced: 'unpriced',
+  }
+  return labels[source] ?? cleanModelLanguage(source.replaceAll('-', ' '))
 }
 
 type CaseHitAutoLens = NonNullable<ReturnType<typeof buildCaseHitAutoEquivalent>>
@@ -1826,7 +1839,7 @@ function CaseHitLab({
           <KeyRound size={24} />
           <div>
             <strong>eBay production keys are required.</strong>
-            <span>This lab does not use ProspectPulse; it builds from active eBay Crystallized BINs only.</span>
+            <span>This lab builds from active eBay Crystallized BINs only.</span>
           </div>
         </div>
       ) : !scan ? (
@@ -1950,7 +1963,7 @@ function CaseHitLab({
                           </div>
                           <div className="bin-money-cell">
                             <strong>{money(opportunity.modelPrice)}</strong>
-                            <span>{Math.round(opportunity.confidence * 100)}% ask model</span>
+                            <span>{opportunity.compCount.toLocaleString()} active comps</span>
                           </div>
                           <div className={`bin-money-cell ${opportunity.edgeDollars > 0 ? 'edge' : ''}`}>
                             <strong>
@@ -1990,7 +2003,7 @@ function CaseHitLab({
             <summary>
               <span>
                 <strong>Checklist valuation table</strong>
-                <small>{valuationRows.length.toLocaleString()} players / active ask model / pack-odds rarity</small>
+                <small>{valuationRows.length.toLocaleString()} players / active ask pricing / pack-odds rarity</small>
               </span>
             </summary>
             <div className="case-hit-model-board">
@@ -2012,7 +2025,7 @@ function CaseHitLab({
                       <span>Base ask</span>
                       <strong>{money(row.baseAsk)}</strong>
                       <small>
-                        {Math.round(row.confidence * 100)}% / {row.activeListings} listings / {caseHitModelSourceLabel(row.source)}
+                        {row.activeListings.toLocaleString()} listings / {caseHitModelSourceLabel(row.source)}
                       </small>
                     </div>
                     <div className="case-hit-variation-strip">
@@ -2177,7 +2190,7 @@ function SoldModelLab({
           <Database size={24} />
           <div>
             <strong>Waiting on checklist players.</strong>
-            <span>Connect ProspectPulse or reload the checklist before building sold-comp variation math.</span>
+            <span>Connect market data or reload the checklist before building sold-comp variation math.</span>
           </div>
         </div>
       ) : !scan ? (
@@ -2186,7 +2199,7 @@ function SoldModelLab({
           <div>
             <strong>Ready for sold comps.</strong>
             <span>
-              Paste Market Movers rows or run eBay sold search when access is live; both routes anchor variation math to base TWMA.
+              Paste Market Movers rows or run eBay sold search when access is live; both routes anchor variation math to base weighted averages.
             </span>
           </div>
         </div>
@@ -2204,7 +2217,7 @@ function SoldModelLab({
               <div className="case-hit-player-cell">
                 <span>MODEL</span>
                 <strong>{scan.model.source === 'market-movers-sold-model' ? 'Market Movers' : scan.model.release}</strong>
-                <small>{scan.stats.fallbackMultipliers.toLocaleString()} fallback multipliers retained</small>
+                <small>{scan.stats.fallbackMultipliers.toLocaleString()} baseline multipliers retained</small>
               </div>
               <div className="case-hit-base-cell">
                 <span>Sold signal</span>
@@ -2286,11 +2299,11 @@ function App() {
       })
       const nextReleaseOptions = catalog.length > 0 ? catalog : FALLBACK_RELEASE_OPTIONS
       setReleaseOptions(nextReleaseOptions)
-      setCatalogError(catalog.length > 0 ? null : 'Using fallback checklist catalog')
+      setCatalogError(catalog.length > 0 ? null : 'Using baseline checklist catalog')
       return nextReleaseOptions
     } catch (catalogLoadError) {
       if (signal?.aborted) return FALLBACK_RELEASE_OPTIONS
-      setCatalogError(catalogLoadError instanceof Error ? catalogLoadError.message : 'Checklist catalog load failed')
+      setCatalogError(catalogLoadError instanceof Error ? cleanModelLanguage(catalogLoadError.message) : 'Checklist catalog load failed')
       setReleaseOptions(FALLBACK_RELEASE_OPTIONS)
       return FALLBACK_RELEASE_OPTIONS
     } finally {
@@ -2343,7 +2356,7 @@ function App() {
       setChecklistError(models.length < releases.length ? `Loaded ${models.length} / ${releases.length} checklist models` : null)
     } catch (modelError) {
       if (checklistRequestIdRef.current !== requestId || controller.signal.aborted) return
-      setChecklistError(modelError instanceof Error ? modelError.message : 'Model load failed')
+      setChecklistError(modelError instanceof Error ? cleanModelLanguage(modelError.message) : 'Model load failed')
     } finally {
       if (checklistRequestIdRef.current === requestId) {
         setChecklistLoading(false)
@@ -2482,7 +2495,6 @@ function App() {
   const renderedRows = useMemo(() => visibleRows.slice(0, LEADERBOARD_RENDER_LIMIT), [visibleRows])
   const selectedRow = renderedRows.find((row) => row.id === selectedRowId) ?? renderedRows[0]
   const topBase = matrix.rows[0]?.baseTwmaPrice ?? 0
-  const topVariation = matrix.rows.reduce((max, row) => Math.max(max, row.topVariationPrice), 0)
   const modelUpdatedAt = latestFetchedAt(checklistModels)
   const openMathItems = matrix.missingBaseRows + matrix.unresolvedMultipliers
   const mathHealth = matrix.totalResolvedCells === 0 ? 'waiting' : openMathItems > 0 ? 'warning' : 'healthy'
@@ -2494,11 +2506,11 @@ function App() {
         : 'Math clean'
   const pulseSourceLabel =
     pulseAuthMode === 'server'
-      ? 'ProspectPulse managed'
+      ? 'Market data managed'
       : liveConnected
-        ? 'ProspectPulse connected'
-        : 'Public multiples only'
-  const pulseTapeLabel = pulseAuthMode === 'server' ? 'MANAGED' : liveConnected ? 'CONNECTED' : 'PUBLIC'
+        ? 'Market data connected'
+        : 'Set curves only'
+  const pulseTapeLabel = pulseAuthMode === 'server' ? 'MANAGED' : liveConnected ? 'CONNECTED' : 'CURVES'
 
   async function refreshChecklistUniverse() {
     const catalog = await loadChecklistCatalog()
@@ -2523,7 +2535,7 @@ function App() {
     } catch (connectError) {
       setLiveConnected(sessionSaved && !isPulseAuthError(connectError))
       setPulseAuthMode(sessionSaved && !isPulseAuthError(connectError) ? 'local' : 'public')
-      setChecklistError(connectError instanceof Error ? connectError.message : 'Could not connect ProspectPulse')
+      setChecklistError(connectError instanceof Error ? cleanModelLanguage(connectError.message) : 'Could not connect market data')
     } finally {
       setAuthBusy(false)
     }
@@ -2633,7 +2645,7 @@ function App() {
 
     const playerLoadedModels = activeModels.filter((model) => model.players.length > 0)
     if (playerLoadedModels.length === 0) {
-      setBinError('ProspectPulse player lists are not loaded for the selected checklist scope.')
+      setBinError('Checklist player lists are not loaded for the selected scope.')
       return
     }
 
@@ -2647,7 +2659,7 @@ function App() {
       activeSearchMode !== 'player' &&
       playerLoadedModels.every((model) => targetRowsForModel(matrix.rows, model, 50).length === 0)
     ) {
-      setBinError('Target 50 needs priced checklist rows matched to STS rankings before scanning.')
+      setBinError('Target 50 needs priced checklist rows matched to ranking signals before scanning.')
       return
     }
     const scanModels =
@@ -2766,7 +2778,7 @@ function App() {
     }
 
     if (bowman2026Model.players.length === 0) {
-      setSoldModelError('ProspectPulse player list is not loaded for 2026 Bowman.')
+      setSoldModelError('Checklist player list is not loaded for 2026 Bowman.')
       return
     }
 
@@ -2817,7 +2829,7 @@ function App() {
     }
 
     if (bowman2026Model.players.length === 0) {
-      setMarketMoversImportError('ProspectPulse player list is not loaded for 2026 Bowman.')
+      setMarketMoversImportError('Checklist player list is not loaded for 2026 Bowman.')
       return
     }
 
@@ -2888,7 +2900,7 @@ function App() {
         <span>{matrix.totalResolvedCells.toLocaleString()} solved valuations</span>
         <span>
           {matrix.weightedBaseRows.toLocaleString()} weighted / {matrix.blendedBaseRows.toLocaleString()} blended /{' '}
-          {matrix.impliedBaseRows.toLocaleString()} implied / {matrix.fallbackBaseRows.toLocaleString()} fallback
+          {matrix.impliedBaseRows.toLocaleString()} implied / {matrix.fallbackBaseRows.toLocaleString()} baseline
         </span>
         <span className={`model-health-chip ${mathHealth}`}>
           <Sigma size={14} />
@@ -2905,7 +2917,6 @@ function App() {
         variationCount={matrix.totalVariations}
         solvedCells={matrix.totalResolvedCells}
         topBase={topBase}
-        topVariation={topVariation}
         loadedSets={checklistModels.length}
         liveConnected={liveConnected}
         sourceLabel={pulseTapeLabel}
@@ -2916,7 +2927,6 @@ function App() {
         onModeChange={setWorkMode}
         pricedRows={matrix.totalPricedPlayers}
         topBase={topBase}
-        topVariation={topVariation}
         dealCount={binOpportunities.length}
         listingCount={binListings.length}
         modelReady={matrix.totalResolvedCells > 0}
@@ -2927,10 +2937,9 @@ function App() {
           <div className="valuation-workspace">
             <div className="metric-grid">
               <StatTile icon={Database} label="Players" value={matrix.totalPricedPlayers.toLocaleString()} tone="info" />
-              <StatTile icon={Brain} label="STS Matches" value={`${matrix.stsMatchedRows.toLocaleString()} / ${matrix.stsProspectRows.toLocaleString()}`} tone="neutral" />
+              <StatTile icon={Brain} label="Ranked" value={`${matrix.stsMatchedRows.toLocaleString()} / ${matrix.stsProspectRows.toLocaleString()}`} tone="neutral" />
               <StatTile icon={Layers} label="Variations" value={matrix.totalVariations.toLocaleString()} tone="neutral" />
               <StatTile icon={BadgeDollarSign} label="Top Base" value={money(topBase)} tone="good" />
-              <StatTile icon={Gauge} label="Top Model" value={money(topVariation)} tone="warn" />
             </div>
 
             <div className="toolbar valuation-toolbar">
@@ -2972,7 +2981,7 @@ function App() {
                 </select>
               </label>
               <label className="filter-select">
-                <span>STS</span>
+                <span>Rank</span>
                 <select value={stsFilter} onChange={(event) => setStsFilter(event.target.value as StsFilter)}>
                   {Object.entries(STS_FILTER_LABELS).map(([filter, label]) => (
                     <option value={filter} key={filter}>
