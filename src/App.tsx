@@ -48,6 +48,7 @@ import { MARKET_MOVERS_CAPTURE_BOOKMARKLET, buildMarketMoversSoldModel } from '.
 import { findStsRanking, scoreStsMomentum } from './lib/stsRankings'
 import {
   CRYSTALLIZED_CHECKLIST,
+  buildCaseHitAutoEquivalent,
   fetchCrystallizedCaseHits,
   type CaseHitOpportunity,
   type CaseHitScanResult,
@@ -115,6 +116,7 @@ const CATEGORY_LABELS: Record<ChecklistModel['category'], string> = {
 const SOURCE_LABELS: Record<BasePriceSource, string> = {
   'weighted-sales': 'Weighted',
   'blended-sales': 'Blended',
+  'variation-implied': 'Implied',
   'twma-fallback': 'Fallback',
 }
 
@@ -1661,8 +1663,41 @@ function caseHitModelSourceLabel(source: CaseHitScanResult['valuationRows'][numb
   return source.replaceAll('-', ' ')
 }
 
+type CaseHitAutoLens = NonNullable<ReturnType<typeof buildCaseHitAutoEquivalent>>
+type CaseHitReviewEntry = {
+  opportunity: CaseHitOpportunity
+  autoEquivalent: CaseHitAutoLens | null
+}
+
+function caseHitAutoSignalLabel(signal: CaseHitAutoLens['signal']) {
+  if (signal === 'value') return 'value tier'
+  if (signal === 'fair') return 'fair tier'
+  if (signal === 'premium') return 'premium ask'
+  if (signal === 'danger') return 'low-number price'
+  return 'auto ladder missing'
+}
+
+function caseHitAutoBandLabel(autoEquivalent: CaseHitAutoLens) {
+  const floor = autoEquivalent.floorLabel ? compactVariation(autoEquivalent.floorLabel) : null
+  const ceiling = autoEquivalent.ceilingLabel ? compactVariation(autoEquivalent.ceilingLabel) : null
+  if (!floor && ceiling) return `Below ${ceiling}`
+  if (floor && !ceiling) return `Above ${floor}`
+  if (floor && ceiling && floor !== ceiling) return `${floor} to ${ceiling}`
+  return floor ? `At ${floor}` : 'No auto band'
+}
+
+function caseHitEntrySort(left: CaseHitReviewEntry, right: CaseHitReviewEntry) {
+  return (
+    (right.autoEquivalent?.valueScore ?? Number.NEGATIVE_INFINITY) -
+      (left.autoEquivalent?.valueScore ?? Number.NEGATIVE_INFINITY) ||
+    right.opportunity.edgeDollars - left.opportunity.edgeDollars ||
+    right.opportunity.confidence - left.opportunity.confidence
+  )
+}
+
 function CaseHitLab({
   scan,
+  pricingRows,
   loading,
   error,
   ebayStatus,
@@ -1671,6 +1706,7 @@ function CaseHitLab({
   onScan,
 }: {
   scan: CaseHitScanResult | null
+  pricingRows: PricingRow[]
   loading: boolean
   error: string | null
   ebayStatus: EbayStatus | null
@@ -1680,9 +1716,35 @@ function CaseHitLab({
 }) {
   const configured = Boolean(ebayStatus?.configured)
   const opportunities = scan?.opportunities ?? []
-  const rendered = opportunities.slice(0, CASE_HIT_RENDER_LIMIT)
+  const opportunitiesWithAutoLens = opportunities.map((opportunity) => ({
+    opportunity,
+    autoEquivalent: buildCaseHitAutoEquivalent(opportunity.listing, pricingRows),
+  }))
+  const rendered = [...opportunitiesWithAutoLens].sort(caseHitEntrySort).slice(0, CASE_HIT_RENDER_LIMIT)
+  const ranking = new Map(rendered.map((entry, index) => [entry.opportunity.listing.itemId, index + 1]))
   const valuationRows = scan?.valuationRows ?? []
+  const valuationByPlayer = new Map(valuationRows.map((row) => [row.playerName, row]))
+  const playerGroups = Array.from(
+    rendered.reduce((groups, entry) => {
+      const playerName = entry.opportunity.listing.playerName
+      const playerEntries = groups.get(playerName) ?? []
+      playerEntries.push(entry)
+      groups.set(playerName, playerEntries)
+      return groups
+    }, new Map<string, CaseHitReviewEntry[]>()),
+  ).map(([playerName, entries]) => {
+    const sortedEntries = [...entries].sort(caseHitEntrySort)
+    const best = sortedEntries[0]
+    const valuation = valuationByPlayer.get(playerName)
+    const bestAllIn = Math.min(...sortedEntries.map((entry) => entry.opportunity.listing.allIn))
+    const bestModelEdge = Math.max(...sortedEntries.map((entry) => entry.opportunity.edgeDollars))
+    return { playerName, entries: sortedEntries, best, valuation, bestAllIn, bestModelEdge }
+  })
   const positiveEdges = opportunities.filter((opportunity) => opportunity.edgeDollars > 0).length
+  const autoLensCount = opportunitiesWithAutoLens.filter((entry) => entry.autoEquivalent).length
+  const relativeEdges = opportunitiesWithAutoLens.filter((entry) =>
+    entry.autoEquivalent ? ['value', 'fair'].includes(entry.autoEquivalent.signal) : false,
+  ).length
   const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
   const canScan = configured && !loading
   const scanButtonLabel = loading ? 'Scanning' : configured ? 'Scan Crystallized' : 'eBay offline'
@@ -1694,7 +1756,7 @@ function CaseHitLab({
           <Gem size={18} />
           <div>
             <h2>Case Hit Lab</h2>
-            <span>2026 Bowman Crystallized active BINs, modeled from eBay asks only</span>
+            <span>2026 Bowman Crystallized active BINs, mapped to the Bowman auto ladder</span>
           </div>
         </div>
         <div className="bin-radar-pills">
@@ -1705,6 +1767,8 @@ function CaseHitLab({
           <span>{CRYSTALLIZED_CHECKLIST.length} cards</span>
           <span>{scan ? `${scan.listings.length.toLocaleString()} mapped` : 'No scan yet'}</span>
           <span>{scan ? `${positiveEdges.toLocaleString()} ask edges` : 'Ask model pending'}</span>
+          <span>{scan ? `${relativeEdges.toLocaleString()} value tiers` : 'Relative value pending'}</span>
+          <span>{scan ? `${autoLensCount.toLocaleString()} auto lenses` : 'Auto ruler pending'}</span>
           {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
         </div>
       </div>
@@ -1742,6 +1806,21 @@ function CaseHitLab({
         </div>
       ) : null}
 
+      <div className="case-hit-lens-board">
+        <div>
+          <span>Price-to-Tier Map</span>
+          <strong>List price maps to the player's Bowman auto ladder</strong>
+        </div>
+        <div>
+          <span>Serial Ignored</span>
+          <strong>Gold, red, and base Crystallized all map by price, not insert numbering</strong>
+        </div>
+        <div>
+          <span>Decision Signal</span>
+          <strong>Best reads are case hits priced like base or common refractor autos</strong>
+        </div>
+      </div>
+
       {!configured ? (
         <div className="bin-empty-state">
           <KeyRound size={24} />
@@ -1757,7 +1836,7 @@ function CaseHitLab({
             <strong>Ready to trial eBay-only case-hit modeling.</strong>
             <span>
               The model scans the 20-card Crystallized checklist, rejects adjacent inserts/autos, and estimates value from active ask comps
-              plus pack-odds rarity.
+              plus pack-odds rarity. It also compares each ask to the same player's Bowman auto variation ladder.
             </span>
           </div>
         </div>
@@ -1771,96 +1850,185 @@ function CaseHitLab({
         </div>
       ) : (
         <>
-          <div className="case-hit-model-board">
-            <div className="case-hit-model-title">
-              <strong>Crystallized Variation Model</strong>
-              <span>Modeled prices across every checklist player and parallel, using active eBay asks plus pack-odds rarity.</span>
-            </div>
-            <div className="case-hit-model-list">
-              {valuationRows.map((row, index) => (
-                <article className="case-hit-model-row" key={row.cardNo}>
-                  <div className="case-hit-player-cell">
-                    <span>#{index + 1}</span>
-                    <strong>{row.playerName}</strong>
-                    <small>
-                      {row.cardNo} / {row.team}
-                    </small>
-                  </div>
-                  <div className="case-hit-base-cell">
-                    <span>Base ask</span>
-                    <strong>{money(row.baseAsk)}</strong>
-                    <small>
-                      {Math.round(row.confidence * 100)}% / {row.activeListings} listings / {caseHitModelSourceLabel(row.source)}
-                    </small>
-                  </div>
-                  <div className="case-hit-variation-strip">
-                    {row.variations.map((variation) => (
-                      <span className="case-hit-variation-cell" key={`${row.cardNo}:${variation.key}`}>
-                        <small>{variation.label}</small>
-                        <strong>{money(variation.price)}</strong>
-                        <em>{variation.rarityMultiplier}x</em>
-                      </span>
-                    ))}
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-
           <div className="bin-opportunity-list">
+            <div className="case-hit-review-kicker">
+              <div>
+                <span>Review Queue</span>
+                <strong>{playerGroups.length.toLocaleString()} players with mapped BINs</strong>
+              </div>
+              <small>Grouped by player, ordered by the strongest price-to-auto-tier read.</small>
+            </div>
             <div className="bin-opportunity-head">
               <span>Rank</span>
               <span>Listing</span>
               <span>All In</span>
               <span>Variation Model</span>
-              <span>Spread</span>
+              <span>Auto Map</span>
               <span>Signal</span>
             </div>
-            {rendered.map((opportunity, index) => (
-              <article
-                className={`bin-opportunity-row case-hit-row ${
-                  opportunity.edgeDollars > 0 ? 'lane-buy' : opportunity.confidence < 0.38 ? 'lane-risk' : 'lane-watch'
-                }`}
-                key={opportunity.listing.itemId}
-              >
-                <div className="bin-rank-cell">
-                  <strong>#{index + 1}</strong>
-                  <span>{opportunity.grade}</span>
-                </div>
-                <div className="bin-listing-cell">
-                  <strong>{opportunity.listing.playerName}</strong>
-                  <span>{opportunity.listing.title}</span>
-                  <div className="bin-evidence-strip">
-                    <small>{opportunity.listing.variationLabel}</small>
-                    <small>{opportunity.listing.cardNo}</small>
-                    <small>{opportunity.compCount} active comps</small>
-                    <small>{caseHitSourceLabel(opportunity.source)}</small>
+            {playerGroups.map((group) => {
+              const bestAutoLens = group.best.autoEquivalent
+              return (
+                <section className="case-hit-player-group" key={group.playerName}>
+                  <div className="case-hit-player-group-header">
+                    <div>
+                      <span>
+                        {group.valuation?.team ?? group.best.opportunity.listing.team} / {group.entries.length} BIN
+                        {group.entries.length === 1 ? '' : 's'}
+                      </span>
+                      <strong>{group.playerName}</strong>
+                      <small>
+                        {bestAutoLens
+                          ? `Best ask trades like ${compactVariation(bestAutoLens.equivalentLabel)} at ${formatMultiplier(bestAutoLens.autoMultiple)} base auto`
+                          : 'No Bowman auto ladder match yet'}
+                      </small>
+                    </div>
+                    <div className="case-hit-player-group-metrics">
+                      <span>
+                        <small>Best all-in</small>
+                        <strong>{money(group.bestAllIn)}</strong>
+                      </span>
+                      <span>
+                        <small>Ask edge</small>
+                        <strong>{money(group.bestModelEdge)}</strong>
+                      </span>
+                      <span>
+                        <small>Base ask</small>
+                        <strong>{money(group.valuation?.baseAsk ?? 0)}</strong>
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <div className="bin-money-cell">
-                  <strong>{money(opportunity.listing.allIn)}</strong>
-                  <span>BIN + ship</span>
-                </div>
-                <div className="bin-money-cell">
-                  <strong>{money(opportunity.modelPrice)}</strong>
-                  <span>{Math.round(opportunity.confidence * 100)}% model</span>
-                </div>
-                <div className={`bin-money-cell ${opportunity.edgeDollars > 0 ? 'edge' : ''}`}>
-                  <strong>{money(opportunity.edgeDollars)}</strong>
-                  <span>{percent(opportunity.discountPct)} spread</span>
-                </div>
-                <div className="bin-signal-cell">
-                  <span>{opportunity.edgeDollars > 0 ? 'Inspect BIN' : 'Market check'}</span>
-                  {opportunity.listing.listingUrl ? (
-                    <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
-                      <ExternalLink size={14} />
-                      eBay
-                    </a>
-                  ) : null}
-                </div>
-              </article>
-            ))}
+                  <div className="case-hit-player-group-list">
+                    {group.entries.map(({ opportunity, autoEquivalent }) => {
+                      const rank = ranking.get(opportunity.listing.itemId) ?? 0
+                      return (
+                        <article
+                          className={`bin-opportunity-row case-hit-row ${
+                            opportunity.edgeDollars > 0
+                              ? 'lane-buy'
+                              : opportunity.confidence < 0.38
+                                ? 'lane-risk'
+                                : 'lane-watch'
+                          }`}
+                          key={opportunity.listing.itemId}
+                        >
+                          <div className="bin-rank-cell">
+                            <strong>#{rank}</strong>
+                            <span>{opportunity.grade}</span>
+                          </div>
+                          <div className="bin-listing-cell">
+                            <strong>{opportunity.listing.playerName}</strong>
+                            <span>{opportunity.listing.title}</span>
+                            <div className="bin-evidence-strip">
+                              <small>{opportunity.listing.variationLabel}</small>
+                              <small>{opportunity.listing.cardNo}</small>
+                              <small>{opportunity.compCount} active comps</small>
+                              <small>{caseHitSourceLabel(opportunity.source)}</small>
+                              {autoEquivalent ? (
+                                <>
+                                  <small className={`auto-lens-chip ${autoEquivalent.signal}`}>
+                                    Trades like {compactVariation(autoEquivalent.equivalentLabel)}
+                                  </small>
+                                  <small className={`auto-lens-chip ${autoEquivalent.signal}`}>
+                                    {formatMultiplier(autoEquivalent.autoMultiple)} base auto
+                                  </small>
+                                  <small className={`auto-lens-chip ${autoEquivalent.signal}`}>
+                                    {caseHitAutoBandLabel(autoEquivalent)}
+                                  </small>
+                                  <small className={`auto-lens-chip ${autoEquivalent.signal}`}>
+                                    {caseHitAutoSignalLabel(autoEquivalent.signal)}
+                                  </small>
+                                </>
+                              ) : (
+                                <small className="auto-lens-chip missing">No auto ruler</small>
+                              )}
+                            </div>
+                          </div>
+                          <div className="bin-money-cell">
+                            <strong>{money(opportunity.listing.allIn)}</strong>
+                            <span>BIN + ship</span>
+                          </div>
+                          <div className="bin-money-cell">
+                            <strong>{money(opportunity.modelPrice)}</strong>
+                            <span>{Math.round(opportunity.confidence * 100)}% ask model</span>
+                          </div>
+                          <div className={`bin-money-cell ${opportunity.edgeDollars > 0 ? 'edge' : ''}`}>
+                            <strong>
+                              {autoEquivalent ? compactVariation(autoEquivalent.equivalentLabel) : money(opportunity.edgeDollars)}
+                            </strong>
+                            <span>
+                              {autoEquivalent
+                                ? `${money(autoEquivalent.equivalentPrice)} tier`
+                                : `${percent(opportunity.discountPct)} spread`}
+                            </span>
+                          </div>
+                          <div className="bin-signal-cell">
+                            <span>
+                              {autoEquivalent
+                                ? caseHitAutoSignalLabel(autoEquivalent.signal)
+                                : opportunity.edgeDollars > 0
+                                  ? 'Inspect BIN'
+                                  : 'Market check'}
+                            </span>
+                            {opportunity.listing.listingUrl ? (
+                              <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
+                                <ExternalLink size={14} />
+                                eBay
+                              </a>
+                            ) : null}
+                          </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+                </section>
+              )
+            })}
           </div>
+
+          <details className="case-hit-model-drawer">
+            <summary>
+              <span>
+                <strong>Checklist valuation table</strong>
+                <small>{valuationRows.length.toLocaleString()} players / active ask model / pack-odds rarity</small>
+              </span>
+            </summary>
+            <div className="case-hit-model-board">
+              <div className="case-hit-model-title">
+                <strong>Crystallized Variation Model</strong>
+                <span>Reference layer only. The review queue above is the primary workflow.</span>
+              </div>
+              <div className="case-hit-model-list">
+                {valuationRows.map((row, index) => (
+                  <article className="case-hit-model-row" key={row.cardNo}>
+                    <div className="case-hit-player-cell">
+                      <span>#{index + 1}</span>
+                      <strong>{row.playerName}</strong>
+                      <small>
+                        {row.cardNo} / {row.team}
+                      </small>
+                    </div>
+                    <div className="case-hit-base-cell">
+                      <span>Base ask</span>
+                      <strong>{money(row.baseAsk)}</strong>
+                      <small>
+                        {Math.round(row.confidence * 100)}% / {row.activeListings} listings / {caseHitModelSourceLabel(row.source)}
+                      </small>
+                    </div>
+                    <div className="case-hit-variation-strip">
+                      {row.variations.map((variation) => (
+                        <span className="case-hit-variation-cell" key={`${row.cardNo}:${variation.key}`}>
+                          <small>{variation.label}</small>
+                          <strong>{money(variation.price)}</strong>
+                          <em>{variation.rarityMultiplier}x</em>
+                        </span>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </details>
         </>
       )}
     </section>
@@ -2720,7 +2888,7 @@ function App() {
         <span>{matrix.totalResolvedCells.toLocaleString()} solved valuations</span>
         <span>
           {matrix.weightedBaseRows.toLocaleString()} weighted / {matrix.blendedBaseRows.toLocaleString()} blended /{' '}
-          {matrix.fallbackBaseRows.toLocaleString()} fallback
+          {matrix.impliedBaseRows.toLocaleString()} implied / {matrix.fallbackBaseRows.toLocaleString()} fallback
         </span>
         <span className={`model-health-chip ${mathHealth}`}>
           <Sigma size={14} />
@@ -2891,6 +3059,7 @@ function App() {
           </div>
           <CaseHitLab
             scan={caseHitScan}
+            pricingRows={matrix.rows}
             loading={caseHitLoading}
             error={caseHitError}
             ebayStatus={ebayStatus}

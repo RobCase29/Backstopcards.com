@@ -1,6 +1,9 @@
+import type { PricingRow, VariationQuote } from './matrix'
+
 export type CaseHitVariationKey = 'base' | 'gold' | 'orange' | 'red' | 'superfractor'
 
 export type CaseHitModelSource = 'same-player' | 'player-rarity' | 'variation-ask' | 'global-rarity' | 'thin-ask'
+export type CaseHitAutoEquivalentSignal = 'value' | 'fair' | 'premium' | 'danger' | 'missing'
 
 export interface CaseHitChecklistCard {
   cardNo: string
@@ -70,6 +73,31 @@ export interface CaseHitOpportunity {
   playerBaseAsk: number
   variationAsk: number
   rarityMultiplier: number
+}
+
+export interface CaseHitAutoEquivalent {
+  playerName: string
+  release: string
+  releaseYear: number
+  baseAutoPrice: number
+  autoMultiple: number
+  equivalentLabel: string
+  equivalentPrice: number
+  equivalentMultiplier: number
+  equivalentSerial: number | null
+  floorLabel: string | null
+  floorPrice: number | null
+  floorMultiplier: number | null
+  floorSerial: number | null
+  ceilingLabel: string | null
+  ceilingPrice: number | null
+  ceilingMultiplier: number | null
+  ceilingSerial: number | null
+  priceBandLabel: string
+  bracketPosition: number | null
+  tierScore: number
+  valueScore: number
+  signal: CaseHitAutoEquivalentSignal
 }
 
 export interface CaseHitValuationCell {
@@ -226,6 +254,155 @@ function firstString(values: unknown[], fallback = '') {
     if (trimmed) return trimmed
   }
   return fallback
+}
+
+function playerKey(value: string) {
+  return normalizeText(value)
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function serialDenominatorFromLabel(label: string) {
+  const match = label.match(/\/\s*(\d{1,4})\b/)
+  return match ? Number(match[1]) : null
+}
+
+function quoteSerial(quote: VariationQuote) {
+  return serialDenominatorFromLabel(quote.label)
+}
+
+function logDistance(left: number, right: number) {
+  if (left <= 0 || right <= 0) return Number.POSITIVE_INFINITY
+  return Math.abs(Math.log(left / right))
+}
+
+function nearestQuoteByPrice(quotes: VariationQuote[], price: number) {
+  return [...quotes]
+    .filter((quote) => quote.price > 0)
+    .sort((left, right) => logDistance(left.price, price) - logDistance(right.price, price))[0]
+}
+
+function sortedQuotesByPrice(quotes: VariationQuote[]) {
+  return [...quotes]
+    .filter((quote) => quote.price > 0)
+    .sort(
+      (left, right) =>
+        left.price - right.price ||
+        (left.sortOrder ?? Number.MAX_SAFE_INTEGER) - (right.sortOrder ?? Number.MAX_SAFE_INTEGER) ||
+        left.label.localeCompare(right.label),
+    )
+}
+
+function priceBracket(quotes: VariationQuote[], price: number) {
+  const sorted = sortedQuotesByPrice(quotes)
+  let floor: VariationQuote | null = null
+  let ceiling: VariationQuote | null = null
+
+  for (const quote of sorted) {
+    if (quote.price <= price) floor = quote
+    if (!ceiling && quote.price >= price) ceiling = quote
+  }
+
+  if (!floor) ceiling = sorted[0] ?? null
+  if (!ceiling) floor = sorted[sorted.length - 1] ?? floor
+
+  const bracketPosition =
+    floor && ceiling && ceiling.price !== floor.price
+      ? Math.max(0, Math.min(1, (price - floor.price) / (ceiling.price - floor.price)))
+      : null
+  const priceBandLabel = (() => {
+    if (!floor && ceiling) return `Below ${ceiling.label}`
+    if (floor && !ceiling) return `Above ${floor.label}`
+    if (floor && ceiling && floor.key !== ceiling.key) return `${floor.label} to ${ceiling.label}`
+    if (floor) return `At ${floor.label}`
+    return 'No auto band'
+  })()
+
+  return { floor, ceiling, bracketPosition, priceBandLabel }
+}
+
+function autoEquivalentSignal(quote: VariationQuote | undefined, autoMultiple: number): CaseHitAutoEquivalentSignal {
+  if (!quote || !Number.isFinite(autoMultiple) || autoMultiple <= 0) return 'missing'
+  const serial = quoteSerial(quote)
+  if (autoMultiple <= 1.6 || serial === null || serial >= 250) return 'value'
+  if (autoMultiple <= 3.25 || serial >= 99) return 'fair'
+  if (autoMultiple <= 8.5 || serial >= 25) return 'premium'
+  return 'danger'
+}
+
+function tierScoreForQuote(quote: VariationQuote, autoMultiple: number) {
+  const serial = quoteSerial(quote)
+  if (serial === null) return 95
+  if (serial >= 250) return 90
+  if (serial >= 99) return 74
+  if (serial >= 50) return 58
+  if (serial >= 25) return 42
+  if (serial >= 5) return 24
+  return Math.max(6, 18 - autoMultiple)
+}
+
+function autoEquivalentValueScore(signal: CaseHitAutoEquivalentSignal, quote: VariationQuote, allIn: number) {
+  const signalScore: Record<CaseHitAutoEquivalentSignal, number> = {
+    value: 100,
+    fair: 76,
+    premium: 45,
+    danger: 16,
+    missing: 0,
+  }
+  const nearestTierDiscount = quote.price > 0 ? Math.max(-0.35, Math.min(0.35, (quote.price - allIn) / quote.price)) : 0
+  return signalScore[signal] + nearestTierDiscount * 18
+}
+
+export function buildCaseHitAutoEquivalent(
+  listing: CaseHitListing,
+  pricingRows: PricingRow[],
+): CaseHitAutoEquivalent | null {
+  const listingPlayerKey = playerKey(listing.playerName)
+  const row =
+    pricingRows.find(
+      (candidate) =>
+        candidate.releaseYear === 2026 &&
+        candidate.category === 'bowman' &&
+        playerKey(candidate.playerName) === listingPlayerKey,
+    ) ?? pricingRows.find((candidate) => playerKey(candidate.playerName) === listingPlayerKey)
+
+  if (!row || row.baseTwmaPrice <= 0 || row.ladder.length === 0) return null
+
+  const quotes = row.ladder.filter((quote) => quote.price > 0)
+  const equivalentQuote = nearestQuoteByPrice(quotes, listing.allIn)
+  if (!equivalentQuote) return null
+
+  const autoMultiple = listing.allIn / row.baseTwmaPrice
+  const { floor, ceiling, bracketPosition, priceBandLabel } = priceBracket(quotes, listing.allIn)
+  const signal = autoEquivalentSignal(equivalentQuote, autoMultiple)
+  const tierScore = tierScoreForQuote(equivalentQuote, autoMultiple)
+  const valueScore = tierScore + autoEquivalentValueScore(signal, equivalentQuote, listing.allIn)
+
+  return {
+    playerName: row.playerName,
+    release: row.release,
+    releaseYear: row.releaseYear,
+    baseAutoPrice: Number(row.baseTwmaPrice.toFixed(2)),
+    autoMultiple: Number(autoMultiple.toFixed(2)),
+    equivalentLabel: equivalentQuote.label,
+    equivalentPrice: Number(equivalentQuote.price.toFixed(2)),
+    equivalentMultiplier: Number(equivalentQuote.multiplier.toFixed(2)),
+    equivalentSerial: quoteSerial(equivalentQuote),
+    floorLabel: floor?.label ?? null,
+    floorPrice: floor ? Number(floor.price.toFixed(2)) : null,
+    floorMultiplier: floor ? Number(floor.multiplier.toFixed(2)) : null,
+    floorSerial: floor ? quoteSerial(floor) : null,
+    ceilingLabel: ceiling?.label ?? null,
+    ceilingPrice: ceiling ? Number(ceiling.price.toFixed(2)) : null,
+    ceilingMultiplier: ceiling ? Number(ceiling.multiplier.toFixed(2)) : null,
+    ceilingSerial: ceiling ? quoteSerial(ceiling) : null,
+    priceBandLabel,
+    bracketPosition: bracketPosition === null ? null : Number(bracketPosition.toFixed(2)),
+    tierScore: Number(tierScore.toFixed(2)),
+    valueScore: Number(valueScore.toFixed(2)),
+    signal,
+  }
 }
 
 function minShippingCost(item: RawEbayCaseHitItem) {

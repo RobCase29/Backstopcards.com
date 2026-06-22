@@ -208,4 +208,35 @@ describe('pricing matrix', () => {
       rawSales: 0,
     })
   })
+
+  it('backs into base auto value from player variation sales when base auto is missing', () => {
+    const matrix = buildPricingMatrix([
+      {
+        ...bowmanModel,
+        players: [
+          ...bowmanModel.players,
+          {
+            playerName: 'No Base Prospect',
+            baseAvgPrice: 0,
+            baseSalesCount: 0,
+            variations: [
+              { variation: 'Blue /150 Auto', avgPrice: 90, multiplier: 0, salesCount: 2 },
+              { variation: 'Gold /50 Auto', avgPrice: 210, multiplier: 0, salesCount: 1 },
+            ],
+          },
+        ],
+      },
+    ])
+
+    const implied = matrix.rows.find((row) => row.playerName === 'No Base Prospect')
+
+    expect(implied).toBeDefined()
+    expect(implied?.basePriceSource).toBe('variation-implied')
+    expect(implied?.baseTwmaPrice).toBeGreaterThan(28)
+    expect(implied?.baseTwmaPrice).toBeLessThan(32)
+    expect(implied?.baseMethod).toContain('implied from 2 variation anchors')
+    expect(implied?.ladder.find((quote) => quote.label === 'Blue /150 Auto')?.price).toBeCloseTo((implied?.baseTwmaPrice ?? 0) * 3, 0)
+    expect(matrix.impliedBaseRows).toBe(1)
+    expect(matrix.missingBaseRows).toBe(0)
+  })
 })

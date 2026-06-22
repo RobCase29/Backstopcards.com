@@ -1,11 +1,67 @@
 import { describe, expect, it } from 'vitest'
+import type { PricingRow } from './matrix'
 import {
+  buildCaseHitAutoEquivalent,
   buildCaseHitValuationRows,
   mapEbayItemToCaseHitListing,
   rankCaseHitListings,
   rarityMultiplier,
   type RawEbayCaseHitItem,
 } from './caseHits'
+
+function pricingRow(overrides: Partial<PricingRow> = {}): PricingRow {
+  return {
+    id: '2026-bowman-aiva',
+    rank: 1,
+    playerName: 'Aiva Arquette',
+    stsName: null,
+    stsTeam: 'MIA',
+    stsPosition: 'SS',
+    stsAge: 22,
+    stsLevel: 'A+',
+    stsRank: null,
+    stsProspectRank: null,
+    stsDynastyScore: null,
+    stsMomentumScore: null,
+    stsRiserValueScore: null,
+    stsBinTargetScore: null,
+    stsWar: null,
+    stsChange3d: null,
+    stsChange7d: null,
+    stsChange14d: null,
+    stsChange30d: null,
+    stsSummary: null,
+    release: '2026-Bowman',
+    releaseYear: 2026,
+    category: 'bowman',
+    baseTwmaPrice: 100,
+    pulseBasePrice: 100,
+    baseSales: 12,
+    rawBaseSales: 12,
+    baseSales30: 8,
+    baseSales90: 12,
+    baseAuctionSales: 7,
+    baseBinSales: 4,
+    baseUnknownSales: 1,
+    baseEffectiveSales: 9,
+    baseVolatility: 0.12,
+    basePriceSource: 'weighted-sales',
+    baseConfidence: 0.82,
+    latestBaseSaleAt: null,
+    baseMethod: 'test',
+    topVariationPrice: 4_000,
+    variationCount: 5,
+    ladder: [
+      { key: 'base', label: 'Base Auto', multiplier: 1, price: 100, sortOrder: -1, synthesizedBase: true },
+      { key: 'refractor-499', label: 'Refractor /499', multiplier: 1.25, price: 125, sortOrder: 1, synthesizedBase: false },
+      { key: 'blue-150', label: 'Blue Refractor /150', multiplier: 1.85, price: 185, sortOrder: 2, synthesizedBase: false },
+      { key: 'green-99', label: 'Green Refractor /99', multiplier: 2.5, price: 250, sortOrder: 3, synthesizedBase: false },
+      { key: 'superfractor-1', label: 'Superfractor /1', multiplier: 40, price: 4_000, sortOrder: 99, synthesizedBase: false },
+    ],
+    searchText: 'aiva arquette 2026 bowman',
+    ...overrides,
+  }
+}
 
 function item(overrides: Partial<RawEbayCaseHitItem> = {}): RawEbayCaseHitItem {
   return {
@@ -137,5 +193,50 @@ describe('case hit eBay modeling', () => {
     const aiva = modelRows.find((row) => row.playerName === 'Aiva Arquette')
     expect(aiva?.variations.find((variation) => variation.key === 'gold')?.price).toBeGreaterThan(aiva?.baseAsk ?? 0)
     expect(aiva?.source).toBe('player-ask')
+  })
+
+  it('maps Crystallized prices to the nearest Bowman auto price tier without using insert serial', () => {
+    const listing = mapEbayItemToCaseHitListing(
+      item({
+        itemId: 'fair-crystal',
+        price: { value: '250' },
+        shippingOptions: [],
+      }),
+    )
+    expect(listing).not.toBeNull()
+
+    const equivalent = buildCaseHitAutoEquivalent(listing!, [pricingRow()])
+
+    expect(equivalent?.autoMultiple).toBe(2.5)
+    expect(equivalent?.equivalentLabel).toBe('Green Refractor /99')
+    expect(equivalent?.priceBandLabel).toBe('At Green Refractor /99')
+    expect(equivalent?.signal).toBe('fair')
+
+    const numberedListing = mapEbayItemToCaseHitListing(
+      item({
+        itemId: 'gold-crystal',
+        title: '2026 Bowman Crystallized Aiva Arquette Gold Refractor /50 BWC-1',
+        price: { value: '250' },
+        shippingOptions: [],
+      }),
+    )
+    const numberedEquivalent = buildCaseHitAutoEquivalent(numberedListing!, [pricingRow()])
+
+    expect(numberedListing?.serial).toBe(50)
+    expect(numberedEquivalent?.equivalentLabel).toBe('Green Refractor /99')
+    expect(numberedEquivalent?.priceBandLabel).toBe('At Green Refractor /99')
+
+    const cheapListing = mapEbayItemToCaseHitListing(
+      item({
+        itemId: 'cheap-crystal',
+        price: { value: '75' },
+        shippingOptions: [],
+      }),
+    )
+    const cheapEquivalent = buildCaseHitAutoEquivalent(cheapListing!, [pricingRow()])
+    expect(cheapEquivalent?.equivalentLabel).toBe('Base Auto')
+    expect(cheapEquivalent?.priceBandLabel).toBe('Below Base Auto')
+    expect(cheapEquivalent?.signal).toBe('value')
+    expect(cheapEquivalent?.valueScore).toBeGreaterThan(equivalent?.valueScore ?? 0)
   })
 })

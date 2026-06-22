@@ -1,7 +1,7 @@
 import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
 import { findStsRanking, scoreStsBinTarget, scoreStsMomentum, scoreStsRanking, scoreStsRiserValue } from './stsRankings'
 
-export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'twma-fallback'
+export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'variation-implied' | 'twma-fallback'
 export type SaleChannel = 'auction' | 'bin' | 'unknown'
 
 interface RobustEstimate {
@@ -102,6 +102,7 @@ export interface ReleaseMathSummary {
   maxMultiplier: number
   weightedBaseRows: number
   blendedBaseRows: number
+  impliedBaseRows: number
   fallbackBaseRows: number
 }
 
@@ -117,6 +118,7 @@ export interface PricingMatrix {
   maxVariationCount: number
   weightedBaseRows: number
   blendedBaseRows: number
+  impliedBaseRows: number
   fallbackBaseRows: number
   stsMatchedRows: number
   stsProspectRows: number
@@ -181,7 +183,7 @@ function saleTimestamp(sale: ChecklistSale) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function isFinitePositive(value: number | null | undefined) {
+function isFinitePositive(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
@@ -427,6 +429,79 @@ export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): B
   }
 }
 
+function estimateVariationImpliedBasePrice(player: ChecklistPlayer, variations: ChecklistVariation[]): BasePriceEstimate | null {
+  const variationByKey = new Map(variations.map((variation) => [variationKey(variation.variation), variation]))
+  const points = player.variations
+    .map((variation) => {
+      if (isBaseVariation(variation.variation)) return null
+      const avgPrice = numberValue(variation.avgPrice)
+      if (!isFinitePositive(avgPrice)) return null
+
+      const key = variationKey(variation.variation)
+      const releaseVariation = variationByKey.get(key)
+      const releaseMultiplier = releaseVariation && !isBaseVariation(releaseVariation.variation) ? releaseVariation.avgMultiplier : null
+      const playerMultiplier = !isBaseVariation(variation.variation) ? variation.multiplier : null
+      const multiplier = isFinitePositive(releaseMultiplier) ? releaseMultiplier : isFinitePositive(playerMultiplier) ? playerMultiplier : null
+      if (!isFinitePositive(multiplier) || multiplier <= 1) return null
+      const numericAvgPrice = avgPrice
+      const numericMultiplier = multiplier
+
+      const salesCount = Math.max(1, Math.min(12, variation.salesCount ?? releaseVariation?.totalSales ?? 1))
+      const highMultiplierPenalty = clamp(2.4 / Math.sqrt(numericMultiplier), 0.35, 1.15)
+      const releaseCurveWeight = releaseVariation ? 1 : 0.62
+      const weight = Math.sqrt(salesCount) * highMultiplierPenalty * releaseCurveWeight
+      const impliedBase = numericAvgPrice / numericMultiplier
+      if (!isFinitePositive(impliedBase)) return null
+
+      return {
+        value: impliedBase,
+        label: releaseVariation?.variation ?? variation.variation,
+        weight,
+        salesCount,
+      }
+    })
+    .filter((point): point is { value: number; label: string; weight: number; salesCount: number } => Boolean(point))
+
+  if (points.length === 0) return null
+
+  const logs = points.map((point) => Math.log(point.value))
+  const center = median(logs)
+  const deviations = logs.map((value) => Math.abs(value - center))
+  const mad = median(deviations)
+  const sigma = mad > 0 ? mad * 1.4826 : standardDeviation(logs)
+  const clipWidth = sigma > 0 ? Math.max(0.22, sigma * 2.15) : Number.POSITIVE_INFINITY
+  const totalWeight = points.reduce((total, point) => total + point.weight, 0)
+  if (totalWeight <= 0) return null
+
+  const blendedLog =
+    points.reduce((total, point) => {
+      const logValue = Math.log(point.value)
+      const clipped = Math.min(center + clipWidth, Math.max(center - clipWidth, logValue))
+      return total + clipped * point.weight
+    }, 0) / totalWeight
+  const price = Math.exp(blendedLog)
+  const totalSales = points.reduce((total, point) => total + point.salesCount, 0)
+  const confidence = clamp(0.28 + Math.min(totalWeight, 7) / 22 + Math.min(points.length, 4) * 0.035, 0.3, 0.58)
+  const labels = [...new Set(points.map((point) => point.label))].slice(0, 3).join(', ')
+
+  return {
+    price: Number(price.toFixed(2)),
+    source: 'variation-implied',
+    confidence,
+    rawSales: 0,
+    sales30: 0,
+    sales90: 0,
+    auctionSales: 0,
+    binSales: 0,
+    unknownSales: 0,
+    effectiveSales: Number(totalWeight.toFixed(2)),
+    volatility: Number((sigma || 0).toFixed(3)),
+    latestSaleAt: null,
+    fallbackPrice: 0,
+    methodLabel: `implied from ${points.length} variation ${points.length === 1 ? 'anchor' : 'anchors'}${totalSales ? ` / ${totalSales} sales` : ''}: ${labels}`,
+  }
+}
+
 function compareVariations(left: ChecklistVariation, right: ChecklistVariation) {
   const leftBase = isBaseVariation(left.variation)
   const rightBase = isBaseVariation(right.variation)
@@ -503,13 +578,18 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
     unresolvedMultipliers += modelUnresolvedMultipliers
 
     const pricedEntries = model.players
-      .map((player) => ({ player, estimate: estimateBasePrice(player, asOf) }))
+      .map((player) => {
+        const baseEstimate = estimateBasePrice(player, asOf)
+        const estimate = isFinitePositive(baseEstimate.price) ? baseEstimate : estimateVariationImpliedBasePrice(player, variations) ?? baseEstimate
+        return { player, estimate }
+      })
       .filter(({ estimate }) => isFinitePositive(estimate.price))
     const pricedPlayers = pricedEntries.map(({ player }) => player)
     const missingBaseRows = Math.max(0, model.players.length - pricedEntries.length)
     const multipliers = variations.map((variation) => variation.avgMultiplier).filter(isFinitePositive)
     const weightedBaseRows = pricedEntries.filter(({ estimate }) => estimate.source === 'weighted-sales').length
     const blendedBaseRows = pricedEntries.filter(({ estimate }) => estimate.source === 'blended-sales').length
+    const impliedBaseRows = pricedEntries.filter(({ estimate }) => estimate.source === 'variation-implied').length
     const fallbackBaseRows = pricedEntries.filter(({ estimate }) => estimate.source === 'twma-fallback').length
 
     summaries.push({
@@ -526,6 +606,7 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
       maxMultiplier: multipliers.length ? Math.max(...multipliers) : 0,
       weightedBaseRows,
       blendedBaseRows,
+      impliedBaseRows,
       fallbackBaseRows,
     })
 
@@ -619,6 +700,7 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
     maxVariationCount: summaries.reduce((max, summary) => Math.max(max, summary.variations), 0),
     weightedBaseRows: summaries.reduce((total, summary) => total + summary.weightedBaseRows, 0),
     blendedBaseRows: summaries.reduce((total, summary) => total + summary.blendedBaseRows, 0),
+    impliedBaseRows: summaries.reduce((total, summary) => total + summary.impliedBaseRows, 0),
     fallbackBaseRows: summaries.reduce((total, summary) => total + summary.fallbackBaseRows, 0),
     stsMatchedRows,
     stsProspectRows,
