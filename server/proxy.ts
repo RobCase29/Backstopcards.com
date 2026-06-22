@@ -6,8 +6,12 @@ const DEFAULT_SUPABASE_URL = 'https://rhlontbdiezpefgbbkql.supabase.co'
 const DEFAULT_SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJobG9udGJkaWV6cGVmZ2Jia3FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU2MzIwNjcsImV4cCI6MjA4MTIwODA2N30.H12G7ZC2yUzpXZ0sCrqvhdlIiniGGP6uUgrmEqdOkpk'
 const EBAY_OAUTH_SCOPE = 'https://api.ebay.com/oauth/api_scope'
-const EBAY_SEARCH_CONCURRENCY = 5
+const EBAY_SEARCH_CONCURRENCY = 3
 const EBAY_SOLD_SEARCH_CONCURRENCY = 2
+const EBAY_RATE_LIMIT_MESSAGE =
+  'eBay is rate-limiting Browse API requests right now. Wait a minute, then retry with a smaller player scope or single-player scan.'
+const EBAY_RATE_LIMIT_DEFAULT_MS = 60_000
+const EBAY_RATE_LIMIT_RETRY_CAP_MS = 4_000
 const MAX_JSON_BODY_BYTES = 1_000_000
 const MAX_EBAY_BODY_BYTES = 256_000
 const MAX_LOGIN_BODY_BYTES = 16_000
@@ -24,6 +28,17 @@ class ProxyRequestError extends Error {
   constructor(statusCode: number, message: string) {
     super(message)
     this.statusCode = statusCode
+  }
+}
+
+class EbayUpstreamError extends Error {
+  upstreamStatus: number
+  retryAfterMs: number | null
+
+  constructor(message: string, upstreamStatus: number, retryAfterMs: number | null = null) {
+    super(message)
+    this.upstreamStatus = upstreamStatus
+    this.retryAfterMs = retryAfterMs
   }
 }
 
@@ -60,6 +75,7 @@ type PulseTokenCache = {
 
 let ebayTokenCache: EbayTokenCache | null = null
 let pulseTokenCache: PulseTokenCache | null = null
+let ebayRateLimitedUntil = 0
 
 function jsonResponse(statusCode: number, payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -130,10 +146,35 @@ function ebayHost(sandbox: boolean) {
 }
 
 function ebayRouteErrorMessage(route: string, message: string) {
+  if (isEbayRateLimitMessage(message)) return EBAY_RATE_LIMIT_MESSAGE
   if (route === 'sold' && /403|access denied|insufficient permissions|marketplace.?insights/i.test(message)) {
     return 'Marketplace Insights access denied for eBay sold listings. Enable item-sales search permissions for this keyset, then retry.'
   }
   return message
+}
+
+function isEbayRateLimitMessage(message: string) {
+  return /(?:^|\D)429(?:\D|$)|rate.?limit|too many requests/i.test(message)
+}
+
+function ebayResponseStatusForErrors(errors: Array<{ error: string }>) {
+  if (errors.some((error) => isEbayRateLimitMessage(error.error))) return 429
+  return 502
+}
+
+function retryAfterMs(headers: Headers) {
+  const value = headers.get('retry-after')
+  if (!value) return null
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1_000)
+  const dateMs = Date.parse(value)
+  return Number.isFinite(dateMs) ? Math.max(0, dateMs - Date.now()) : null
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 }
 
 function hasManagedPulseCredentials(env: ServerEnv) {
@@ -290,6 +331,10 @@ async function searchEbayJob(options: {
   let pagesFetched = 0
 
   for (let page = 0; page < maxPages; page += 1) {
+    if (ebayRateLimitedUntil > Date.now()) {
+      throw new EbayUpstreamError(EBAY_RATE_LIMIT_MESSAGE, 429, ebayRateLimitedUntil - Date.now())
+    }
+
     const offset = page * limit
     const url = new URL(`${ebayHost(sandbox)}/buy/browse/v1/item_summary/search`)
     url.searchParams.set('q', query)
@@ -308,9 +353,24 @@ async function searchEbayJob(options: {
       headers['X-EBAY-C-ENDUSERCTX'] = `contextualLocation=country%3DUS%2Czip%3D${encodeURIComponent(defaultZipCode)}`
     }
 
-    const upstream = await fetch(url, { headers })
-    const text = await upstream.text()
-    if (!upstream.ok) throw new Error(`eBay search failed for "${query}" (${upstream.status})`)
+    let upstream: Response | null = null
+    let text = ''
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      upstream = await fetch(url, { headers })
+      text = await upstream.text()
+      if (upstream.ok) break
+      if (upstream.status === 429) {
+        const retryMs = Math.min(retryAfterMs(upstream.headers) ?? 1_500, EBAY_RATE_LIMIT_RETRY_CAP_MS)
+        ebayRateLimitedUntil = Date.now() + Math.max(retryAfterMs(upstream.headers) ?? EBAY_RATE_LIMIT_DEFAULT_MS, EBAY_RATE_LIMIT_DEFAULT_MS)
+        if (attempt === 0) {
+          await wait(retryMs)
+          continue
+        }
+      }
+      throw new EbayUpstreamError(`eBay search failed for "${query}" (${upstream.status})`, upstream.status, retryAfterMs(upstream.headers))
+    }
+
+    if (!upstream?.ok) throw new EbayUpstreamError(`eBay search failed for "${query}"`, 502)
 
     const data = JSON.parse(text) as { itemSummaries?: Array<Record<string, unknown>>; total?: number }
     const items = data.itemSummaries ?? []
@@ -350,6 +410,10 @@ async function searchEbaySoldJob(options: {
   let pagesFetched = 0
 
   for (let page = 0; page < maxPages; page += 1) {
+    if (ebayRateLimitedUntil > Date.now()) {
+      throw new EbayUpstreamError(EBAY_RATE_LIMIT_MESSAGE, 429, ebayRateLimitedUntil - Date.now())
+    }
+
     const offset = page * limit
     const url = new URL(`${ebayHost(sandbox)}/buy/marketplace_insights/v1_beta/item_sales/search`)
     url.searchParams.set('q', query)
@@ -358,15 +422,29 @@ async function searchEbaySoldJob(options: {
     if (payload.sort) url.searchParams.set('sort', String(payload.sort))
     if (categoryId) url.searchParams.set('category_ids', categoryId)
 
-    const upstream = await fetch(url, {
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-        'X-EBAY-C-MARKETPLACE-ID': marketplaceId,
-      },
-    })
-    const text = await upstream.text()
-    if (!upstream.ok) throw new Error(`eBay sold search failed for "${query}" (${upstream.status})`)
+    const headers = {
+      Accept: 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      'X-EBAY-C-MARKETPLACE-ID': marketplaceId,
+    }
+    let upstream: Response | null = null
+    let text = ''
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      upstream = await fetch(url, { headers })
+      text = await upstream.text()
+      if (upstream.ok) break
+      if (upstream.status === 429) {
+        const retryMs = Math.min(retryAfterMs(upstream.headers) ?? 1_500, EBAY_RATE_LIMIT_RETRY_CAP_MS)
+        ebayRateLimitedUntil = Date.now() + Math.max(retryAfterMs(upstream.headers) ?? EBAY_RATE_LIMIT_DEFAULT_MS, EBAY_RATE_LIMIT_DEFAULT_MS)
+        if (attempt === 0) {
+          await wait(retryMs)
+          continue
+        }
+      }
+      throw new EbayUpstreamError(`eBay sold search failed for "${query}" (${upstream.status})`, upstream.status, retryAfterMs(upstream.headers))
+    }
+
+    if (!upstream?.ok) throw new EbayUpstreamError(`eBay sold search failed for "${query}"`, 502)
 
     const data = JSON.parse(text) as {
       itemSales?: Array<Record<string, unknown>>
@@ -598,7 +676,7 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
     const items = dedupeEbayItems(fulfilled.flatMap((result) => result.value.items))
 
     if (items.length === 0 && errors.length > 0) {
-      return jsonResponse(502, { error: errors[0]?.error ?? 'eBay search failed', errors })
+      return jsonResponse(ebayResponseStatusForErrors(errors), { error: errors[0]?.error ?? 'eBay search failed', errors })
     }
 
     return jsonResponse(200, {
@@ -615,8 +693,9 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
       },
     })
   } catch (error) {
-    return jsonResponse(routeErrorStatus(error), {
-      error: ebayRouteErrorMessage(route, error instanceof Error ? error.message : 'eBay proxy request failed'),
+    const message = ebayRouteErrorMessage(route, error instanceof Error ? error.message : 'eBay proxy request failed')
+    return jsonResponse(error instanceof EbayUpstreamError && error.upstreamStatus === 429 ? 429 : routeErrorStatus(error), {
+      error: message,
     })
   }
 }

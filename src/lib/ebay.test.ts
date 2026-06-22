@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChecklistModel } from '../types'
-import { fetchEbayBinListings } from './ebay'
+import { fetchEbayBinListings, isEbayRateLimitError } from './ebay'
 
 const model: ChecklistModel = {
   category: 'bowman',
@@ -205,6 +205,22 @@ describe('fetchEbayBinListings', () => {
     )
 
     await fetchEbayBinListings({ model, searchMode: 'player', searchTerm: 'value' })
+  })
+
+  it('classifies eBay 429 responses as rate-limit errors', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: 'eBay is rate-limiting Browse API requests right now. Wait a minute, then retry with a smaller player scope.',
+          }),
+          { status: 429, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+
+    await expect(fetchEbayBinListings({ model, searchMode: 'player', searchTerm: 'Eli' })).rejects.toSatisfy(isEbayRateLimitError)
   })
 
   it('queues an explicit scored player-name bucket before falling back to base price ordering', async () => {

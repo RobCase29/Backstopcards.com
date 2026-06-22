@@ -38,6 +38,7 @@ import {
 import {
   fetchEbayBinListings,
   fetchEbayStatus,
+  isEbayRateLimitError,
   type EbayBinScanResult,
   type EbayBinSearchMode,
   type EbayStatus,
@@ -334,6 +335,25 @@ function friendlySoldModelError(error: unknown) {
 
 function soldModelAccessBlocked(message: string | null) {
   return Boolean(message && /access denied|insufficient permissions|marketplace.?insights|sold-comps endpoint/i.test(message))
+}
+
+function ebayRateLimitMessage(message: string | null) {
+  return Boolean(message && /(?:^|\D)429(?:\D|$)|rate.?limit|too many requests|cooling/i.test(message))
+}
+
+function friendlyBinError(error: unknown) {
+  if (isEbayRateLimitError(error)) {
+    return 'eBay is cooling down our search access. Wait a minute, then retry this player or use a smaller scan scope.'
+  }
+  return error instanceof Error ? error.message : 'eBay BIN scan failed'
+}
+
+function binScanErrorSummary(scan: EbayBinScanResult) {
+  if (scan.errors.length === 0) return null
+  if (scan.errors.some((error) => ebayRateLimitMessage(error.error))) {
+    return 'eBay throttled some queries; showing successful results. Wait a minute before another broad scan.'
+  }
+  return `${scan.errors.length.toLocaleString()} eBay quer${scan.errors.length === 1 ? 'y' : 'ies'} failed; ranked successful results.`
 }
 
 function compactVariation(label: string) {
@@ -1369,6 +1389,7 @@ function BinRadar({
   const requiresFocus = searchMode !== 'checklist'
   const hasFocus = !requiresFocus || trimmedSearchTerm.length > 0
   const hasTargetQueue = playerScope !== 'target-50' || searchMode === 'player' || targetPlayerCount > 0
+  const rateLimited = ebayRateLimitMessage(error)
   const canScan = configured && setCount > 0 && hasPlayerUniverse && hasFocus && hasTargetQueue && !loading && !modelLoading
   const readinessLabel = !configured
     ? 'eBay offline'
@@ -1387,6 +1408,8 @@ function BinRadar({
     ? 'Scanning'
     : modelLoading
       ? 'Model loading'
+      : rateLimited && !scan
+        ? 'Retry Scan'
       : !configured
         ? 'eBay offline'
         : setCount === 0 || !hasPlayerUniverse
@@ -1551,6 +1574,18 @@ function BinRadar({
           <div>
             <strong>Checklist player list is not loaded.</strong>
             <span>Public multiples are present, but BIN scanning needs checklist player names for the selected set scope.</span>
+          </div>
+        </div>
+      ) : error && !scan ? (
+        <div className={`bin-empty-state ${rateLimited ? 'muted' : 'blocked'}`}>
+          <ShieldCheck size={24} />
+          <div>
+            <strong>{rateLimited ? 'eBay asked us to cool down.' : 'Scan did not complete.'}</strong>
+            <span>
+              {rateLimited
+                ? 'Wait about a minute, then retry this player or switch to a smaller scan scope.'
+                : 'Adjust the scan and retry when ready.'}
+            </span>
           </div>
         </div>
       ) : !scan ? (
@@ -2716,14 +2751,10 @@ function App() {
       const scanResult = mergeBinScans(successfulScans, failedScans)
       setBinListings(scanResult.listings)
       setBinScan(scanResult)
-      setBinError(
-        scanResult.errors.length > 0
-          ? `${scanResult.errors.length.toLocaleString()} eBay quer${scanResult.errors.length === 1 ? 'y' : 'ies'} failed; ranked successful results.`
-          : null,
-      )
+      setBinError(binScanErrorSummary(scanResult))
     } catch (scanError) {
       if (controller.signal.aborted) return
-      setBinError(scanError instanceof Error ? scanError.message : 'eBay BIN scan failed')
+      setBinError(friendlyBinError(scanError))
     } finally {
       if (binRequestRef.current === controller) {
         setBinLoading(false)

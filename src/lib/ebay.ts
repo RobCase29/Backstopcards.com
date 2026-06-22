@@ -75,12 +75,27 @@ export type EbayBinScanResult = {
 
 export type EbayBinSearchMode = 'checklist' | 'player' | 'variation'
 
+export class EbayRateLimitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'EbayRateLimitError'
+  }
+}
+
 type EbaySearchResponse = {
   items?: EbayItemSummary[]
   errors?: Array<{ query?: string; error: string }>
   fetchedAt?: string
   stats?: Omit<EbayScanStats, 'mappedListings' | 'rejectedPlayerMismatches'>
   error?: string
+}
+
+function isEbayRateLimitMessage(message: string) {
+  return /(?:^|\D)429(?:\D|$)|rate.?limit|too many requests/i.test(message)
+}
+
+export function isEbayRateLimitError(error: unknown) {
+  return error instanceof EbayRateLimitError || (error instanceof Error && isEbayRateLimitMessage(error.message))
 }
 
 function numberValue(value: unknown, fallback = 0) {
@@ -329,7 +344,11 @@ export async function fetchEbayBinListings(options: {
   })
 
   const payload = (await response.json()) as EbaySearchResponse
-  if (!response.ok) throw new Error(payload.error ?? 'eBay search failed')
+  if (!response.ok) {
+    const message = payload.error ?? 'eBay search failed'
+    if (response.status === 429 || isEbayRateLimitMessage(message)) throw new EbayRateLimitError(message)
+    throw new Error(message)
+  }
 
   const fallbackReleaseLabel = releaseProductLabel(options.model)
   let rejectedPlayerMismatches = 0
