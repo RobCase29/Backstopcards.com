@@ -1060,9 +1060,15 @@ function LadderDetail({ row }: { row?: PricingRow }) {
 function QuickPriceModule({
   row,
   onScanPlayer,
+  pickerRows,
+  onPickRow,
+  className,
 }: {
   row?: PricingRow
   onScanPlayer: (row: PricingRow) => void
+  pickerRows?: PricingRow[]
+  onPickRow?: (rowId: string) => void
+  className?: string
 }) {
   const [cardInput, setCardInput] = useState<{
     rowId: string
@@ -1078,7 +1084,7 @@ function QuickPriceModule({
 
   if (!row) {
     return (
-      <section className="detail-card quick-price-card">
+      <section className={`detail-card quick-price-card ${className ?? ''}`.trim()}>
         <div className="empty-state compact">
           <Calculator size={24} />
           <strong>No player selected.</strong>
@@ -1130,18 +1136,32 @@ function QuickPriceModule({
   const watchCeiling = modelValue * (1 + BIN_MODEL_WINDOW_PCT)
   const verdict = pricingVerdict(spread, modelValue, askPrice)
   const gradeLabel = gradeModel.option.label
+  const canPickPlayer = Boolean(pickerRows?.length && onPickRow)
 
   return (
-    <section className="detail-card quick-price-card">
+    <section className={`detail-card quick-price-card ${className ?? ''}`.trim()}>
       <div className="detail-title quick-price-title">
         <Calculator size={18} />
         <div>
-          <span>Quick Price</span>
+          <span>Card Price Calculator</span>
           <h2>{money(modelValue)}</h2>
           <small>{activeRow.playerName}</small>
         </div>
         <span className={`quick-verdict ${verdict.tone}`}>{verdict.label}</span>
       </div>
+
+      {canPickPlayer ? (
+        <label className="quick-player-picker">
+          <span>Player</span>
+          <select value={activeRow.id} onChange={(event) => onPickRow?.(event.target.value)} aria-label="Calculator player">
+            {pickerRows?.map((candidate) => (
+              <option value={candidate.id} key={`quick-picker:${candidate.id}`}>
+                {candidate.playerName} / {candidate.release}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
 
       <div className="quick-price-controls">
         <label>
@@ -3053,6 +3073,16 @@ function App() {
               <StatTile icon={BadgeDollarSign} label="Top Base" value={money(topBase)} tone="good" />
             </div>
 
+            <div className="calculator-workbench-slot">
+              <QuickPriceModule
+                row={selectedRow}
+                onScanPlayer={scanBinsForLookupRow}
+                pickerRows={visibleRows}
+                onPickRow={setSelectedRowId}
+                className="workbench-quick-price-card"
+              />
+            </div>
+
             <div className="toolbar valuation-toolbar">
               <label className="search-box">
                 <Search size={16} />
@@ -3135,7 +3165,6 @@ function App() {
           </div>
 
           <aside className="detail-rail">
-            <QuickPriceModule row={selectedRow} onScanPlayer={scanBinsForLookupRow} />
             <LadderDetail row={selectedRow} />
             <ModelStatus
               models={checklistModels}
