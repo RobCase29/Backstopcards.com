@@ -1508,85 +1508,141 @@ function BinRadar({
         </div>
       </div>
 
-      <div className="bin-radar-controls">
-        <label className="bin-control wide release-control">
-          <span>Set</span>
-          <select value={selectedModelKey} onChange={(event) => onModelChange(event.target.value)} disabled={modelOptions.length === 0}>
-            <option value={BIN_ALL_MODELS_KEY}>All loaded checklists</option>
-            {modelOptions.map((option) => (
-              <option value={checklistModelKey(option)} key={checklistModelKey(option)}>
-                {checklistModelLabel(option)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="bin-mode-control" role="group" aria-label="BIN scan mode">
-          {(['checklist', 'player', 'variation'] as const).map((mode) => (
-            <button
-              className={searchMode === mode ? 'active' : ''}
-              key={mode}
-              type="button"
-              onClick={() => onSearchModeChange(mode)}
-            >
-              {mode === 'checklist' ? 'Checklist' : mode === 'player' ? 'Player' : 'Variation'}
-            </button>
-          ))}
-        </div>
-        {searchMode !== 'checklist' ? (
-          <label className="bin-control focus">
-            <Search size={15} />
-            <input
-              aria-label={searchMode === 'player' ? 'Player search' : 'Variation search'}
-              placeholder={focusPlaceholder}
-              value={searchTerm}
-              onChange={(event) => onSearchTermChange(event.target.value)}
-            />
-          </label>
-        ) : null}
-        <label className="bin-control">
-          <span>Min BIN</span>
-          <input
-            aria-label="Minimum BIN price"
-            min="0"
-            step="5"
-            type="number"
-            value={minPrice}
-            onChange={(event) => onMinPriceChange(Math.max(0, Number(event.target.value) || 0))}
-          />
-        </label>
-        <label className="bin-control wide">
-          <span>Players</span>
-          <select value={playerScope} onChange={(event) => onPlayerScopeChange(event.target.value as BinPlayerScope)}>
-            <option value="all">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'All checklist players' : 'Full checklist'}</option>
-            <option value="value-25">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Value 25 total' : 'Value 25'}</option>
-            <option value="top-40">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Top 40 per checklist' : 'Top 40 by base'}</option>
-            <option value="target-50">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Target 50 per checklist' : 'Target 50 model'}</option>
-          </select>
-        </label>
-        <button className="ghost-button value-scan-button" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
-          <Brain size={16} />
-          Scan Value 25
-        </button>
-        <label className="bin-control result-sort-control">
-          <span>Sort</span>
-          <select value={resultSort} onChange={(event) => onResultSortChange(event.target.value as BinResultSort)}>
-            {Object.entries(BIN_RESULT_SORT_LABELS).map(([sort, label]) => (
-              <option value={sort} key={sort}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
-          <RefreshCw size={16} className={loading ? 'spin' : undefined} />
-          {scanButtonLabel}
-        </button>
-        {scan ? (
-          <div className="bin-scan-stats">
-            <strong>{scan.stats.queriesSucceeded.toLocaleString()}</strong>
-            <span>queries / {scan.stats.pagesFetched.toLocaleString()} pages / {scan.stats.rejectedPlayerMismatches.toLocaleString()} rejects</span>
+      <div className="bin-control-board" aria-label="BIN scan setup">
+        <div className="bin-control-group">
+          <div className="bin-control-group-head">
+            <span>1 / Market</span>
+            <strong>Choose the board</strong>
           </div>
-        ) : null}
+          <div className="bin-control-row">
+            <label className="bin-control stacked release-control">
+              <span>Set</span>
+              <select value={selectedModelKey} onChange={(event) => onModelChange(event.target.value)} disabled={modelOptions.length === 0}>
+                <option value={BIN_ALL_MODELS_KEY}>All loaded checklists</option>
+                {modelOptions.map((option) => (
+                  <option value={checklistModelKey(option)} key={checklistModelKey(option)}>
+                    {checklistModelLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="bin-control stacked">
+              <span>Players</span>
+              <select value={playerScope} onChange={(event) => onPlayerScopeChange(event.target.value as BinPlayerScope)}>
+                <option value="all">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'All checklist players' : 'Full checklist'}</option>
+                <option value="value-25">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Value 25 total' : 'Value 25'}</option>
+                <option value="top-40">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Top 40 per checklist' : 'Top 40 by base'}</option>
+                <option value="target-50">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Target 50 per checklist' : 'Target 50 model'}</option>
+              </select>
+            </label>
+          </div>
+          <div className="bin-control-note">
+            <span>{selectedSetPill}</span>
+            <span>{scopeLabel}</span>
+          </div>
+        </div>
+
+        <div className="bin-control-group">
+          <div className="bin-control-group-head">
+            <span>2 / Focus</span>
+            <strong>Pick scan type</strong>
+          </div>
+          <div className="bin-control-row">
+            <label className="bin-control stacked">
+              <span>Mode</span>
+              <select value={searchMode} onChange={(event) => onSearchModeChange(event.target.value as BinSearchMode)}>
+                <option value="checklist">Full checklist</option>
+                <option value="player">Single player</option>
+                <option value="variation">Variation</option>
+              </select>
+            </label>
+            {searchMode !== 'checklist' ? (
+              <label className="bin-control stacked focus">
+                <span>{searchMode === 'player' ? 'Player' : 'Variation'}</span>
+                <div className="bin-field-line">
+                  <Search size={15} />
+                  <input
+                    aria-label={searchMode === 'player' ? 'Player search' : 'Variation search'}
+                    placeholder={focusPlaceholder}
+                    value={searchTerm}
+                    onChange={(event) => onSearchTermChange(event.target.value)}
+                  />
+                </div>
+              </label>
+            ) : (
+              <div className="bin-control stacked bin-focus-placeholder">
+                <span>Focus</span>
+                <strong>Whole board</strong>
+              </div>
+            )}
+          </div>
+          <div className="bin-control-note">
+            <span>{scanCopy}</span>
+          </div>
+        </div>
+
+        <div className="bin-control-group compact">
+          <div className="bin-control-group-head">
+            <span>3 / Rules</span>
+            <strong>Price filters</strong>
+          </div>
+          <div className="bin-control-row">
+            <label className="bin-control stacked">
+              <span>Min BIN</span>
+              <input
+                aria-label="Minimum BIN price"
+                min="0"
+                step="5"
+                type="number"
+                value={minPrice}
+                onChange={(event) => onMinPriceChange(Math.max(0, Number(event.target.value) || 0))}
+              />
+            </label>
+            <label className="bin-control stacked result-sort-control">
+              <span>Sort</span>
+              <select value={resultSort} onChange={(event) => onResultSortChange(event.target.value as BinResultSort)}>
+                {Object.entries(BIN_RESULT_SORT_LABELS).map(([sort, label]) => (
+                  <option value={sort} key={sort}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="bin-control-note">
+            <span>Includes raw and graded 9+ when the ask clears the model window.</span>
+          </div>
+        </div>
+
+        <div className="bin-control-group action">
+          <div className="bin-control-group-head">
+            <span>4 / Run</span>
+            <strong>{readinessLabel}</strong>
+          </div>
+          <div className="bin-action-stack">
+            <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
+              <RefreshCw size={16} className={loading ? 'spin' : undefined} />
+              {scanButtonLabel}
+            </button>
+            <button className="ghost-button value-scan-button" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
+              <Brain size={16} />
+              Scan Value 25
+            </button>
+          </div>
+          {scan ? (
+            <div className="bin-scan-stats">
+              <strong>{scan.stats.queriesSucceeded.toLocaleString()}</strong>
+              <span>
+                queries / {scan.stats.pagesFetched.toLocaleString()} pages /{' '}
+                {scan.stats.rejectedPlayerMismatches.toLocaleString()} rejects
+              </span>
+            </div>
+          ) : (
+            <div className="bin-control-note">
+              <span>{scanButtonLabel}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {error ? (
