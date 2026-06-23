@@ -863,19 +863,23 @@ function Leaderboard({
   selectedId,
   onSelect,
   onScanPlayer,
+  emptyTitle = 'No priced players loaded.',
+  emptyText = 'Connect market data to load player base prices.',
 }: {
   rows: PricingRow[]
   totalRows: number
   selectedId?: string
   onSelect: (rowId: string) => void
   onScanPlayer: (row: PricingRow) => void
+  emptyTitle?: string
+  emptyText?: string
 }) {
   if (rows.length === 0) {
     return (
       <div className="empty-state board-empty">
         <BarChart3 size={28} />
-        <strong>No priced players loaded.</strong>
-        <span>Connect market data to load player base prices.</span>
+        <strong>{emptyTitle}</strong>
+        <span>{emptyText}</span>
       </div>
     )
   }
@@ -935,6 +939,26 @@ function Leaderboard({
             </span>
           </article>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function RankingOnlyMatch({ ranking }: { ranking: NonNullable<ReturnType<typeof findStsRanking>> }) {
+  return (
+    <div className="ranking-only-card">
+      <Brain size={18} />
+      <div>
+        <span>Ranking-only match</span>
+        <strong>{ranking.name}</strong>
+        <small>
+          {[ranking.team, ranking.pos, ranking.level, ranking.age ? `Age ${ranking.age}` : null].filter(Boolean).join(' / ')}
+        </small>
+      </div>
+      <div className="ranking-only-stats">
+        <span>Rank #{ranking.rank?.toLocaleString() ?? '--'}</span>
+        <span>Prospect #{ranking.prospectRank?.toLocaleString() ?? '--'}</span>
+        <span className={changeClassName(ranking.change30d)}>30D {formatSigned(ranking.change30d)}</span>
       </div>
     </div>
   )
@@ -2589,6 +2613,11 @@ function App() {
   }, [baseSourceFilter, categoryFilter, matrix.rows, query, releaseFilter, sortMode, stsFilter])
   const renderedRows = useMemo(() => visibleRows.slice(0, LEADERBOARD_RENDER_LIMIT), [visibleRows])
   const selectedRow = renderedRows.find((row) => row.id === selectedRowId) ?? renderedRows[0]
+  const trimmedQuery = query.trim()
+  const rankingOnlyMatch = useMemo(() => {
+    if (!trimmedQuery || visibleRows.length > 0) return null
+    return findStsRanking(trimmedQuery)
+  }, [trimmedQuery, visibleRows.length])
   const topBase = matrix.rows[0]?.baseTwmaPrice ?? 0
   const modelUpdatedAt = latestFetchedAt(checklistModels)
   const openMathItems = matrix.missingBaseRows + matrix.unresolvedMultipliers
@@ -3155,12 +3184,20 @@ function App() {
               </div>
             </div>
 
+            {rankingOnlyMatch ? <RankingOnlyMatch ranking={rankingOnlyMatch} /> : null}
+
             <Leaderboard
               rows={renderedRows}
               totalRows={visibleRows.length}
               selectedId={selectedRow?.id}
               onSelect={setSelectedRowId}
               onScanPlayer={scanBinsForLookupRow}
+              emptyTitle={trimmedQuery ? 'No modeled card match.' : undefined}
+              emptyText={
+                trimmedQuery
+                  ? 'No loaded checklist row matches this search and the current filters.'
+                  : undefined
+              }
             />
           </div>
 
