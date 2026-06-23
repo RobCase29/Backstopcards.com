@@ -56,6 +56,8 @@ type EbaySearchPayload = {
   maxPages?: number
   sort?: string
   minPrice?: number
+  buyingOption?: string
+  maxHoursToClose?: number
   categoryId?: string
   marketplaceId?: string
 }
@@ -284,11 +286,27 @@ async function mapWithLimit<T, R>(items: T[], concurrency: number, worker: (item
   return results
 }
 
+function safeBuyingOption(value: unknown) {
+  const option = String(value ?? 'FIXED_PRICE').trim().toUpperCase()
+  return option === 'AUCTION' ? 'AUCTION' : 'FIXED_PRICE'
+}
+
+function ebayDate(value: Date) {
+  return value.toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
 function ebayFilter(payload: EbaySearchPayload) {
-  const filters = ['buyingOptions:{FIXED_PRICE}']
+  const buyingOption = safeBuyingOption(payload.buyingOption)
+  const filters = [`buyingOptions:{${buyingOption}}`]
   const minPrice = Number(payload.minPrice)
   if (Number.isFinite(minPrice) && minPrice > 0) {
     filters.push(`price:[${minPrice}]`, 'priceCurrency:USD')
+  }
+  const maxHoursToClose = Number(payload.maxHoursToClose)
+  if (buyingOption === 'AUCTION' && Number.isFinite(maxHoursToClose) && maxHoursToClose > 0) {
+    const start = new Date()
+    const end = new Date(start.getTime() + Math.min(maxHoursToClose, 168) * 60 * 60 * 1_000)
+    filters.push(`itemEndDate:[${ebayDate(start)}..${ebayDate(end)}]`)
   }
   return filters.join(',')
 }

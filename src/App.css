@@ -3219,6 +3219,51 @@ thead .matrix-player-col span,
   margin-top: 13px;
 }
 
+.auction-radar {
+  border-color: rgba(223, 164, 81, 0.24);
+  background:
+    linear-gradient(100deg, rgba(223, 164, 81, 0.1), transparent 30%),
+    linear-gradient(145deg, rgba(159, 216, 207, 0.08), transparent 44%),
+    #0a0e12;
+}
+
+.auction-radar .section-title svg {
+  color: var(--amber);
+}
+
+.auction-radar-action {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 13px;
+  padding: 10px 11px;
+  border: 1px solid rgba(223, 164, 81, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(223, 164, 81, 0.09), transparent 44%),
+    rgba(255, 250, 240, 0.045);
+}
+
+.auction-radar-action div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.auction-radar-action strong {
+  color: #fffaf0;
+  font-size: 0.98rem;
+}
+
+.auction-radar-action span {
+  color: rgba(255, 250, 240, 0.6);
+  font-size: 0.82rem;
+  font-weight: 760;
+  line-height: 1.3;
+}
+
 .bin-mode-control {
   height: 46px;
   display: inline-flex;
@@ -4288,6 +4333,11 @@ thead .matrix-player-col span,
 
   .bin-radar-header {
     grid-template-columns: 1fr;
+  }
+
+  .auction-radar-action {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .bin-radar-pills {

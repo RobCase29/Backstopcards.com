@@ -74,6 +74,7 @@ export type EbayBinScanResult = {
 }
 
 export type EbayBinSearchMode = 'checklist' | 'player' | 'variation'
+export type EbayListingMode = 'bin' | 'auction'
 
 export class EbayRateLimitError extends Error {
   constructor(message: string) {
@@ -230,7 +231,7 @@ function serialDenominatorFromTitle(title: string) {
   return match ? Number(match[1]) : null
 }
 
-function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: string): ProspectPulseListing | null {
+function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: string, listingMode: EbayListingMode): ProspectPulseListing | null {
   const meta = item._bowmanTraderQuery
   const playerName = firstString([meta?.playerName], '')
   const title = firstString([item.title], '')
@@ -239,7 +240,8 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   if (!titleEligibleForBowmanChromeAutoModel(title)) return null
 
   const buyingOptions = item.buyingOptions ?? []
-  const fixedPrice = buyingOptions.includes('FIXED_PRICE') || buyingOptions.length === 0
+  const fixedPrice = listingMode === 'bin' || buyingOptions.includes('FIXED_PRICE')
+  const auction = listingMode === 'auction' || buyingOptions.includes('AUCTION')
   const itemId = firstString([item.legacyItemId, item.itemId], title)
   const price = numberValue(item.price?.value, 0)
   const stsRanking = findStsRanking(playerName)
@@ -250,7 +252,7 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
     title,
     current_price: price,
     shipping_cost: minShippingCost(item),
-    buying_format: fixedPrice ? 'Buy It Now' : buyingOptions.join(', '),
+    buying_format: auction && !fixedPrice ? 'Auction' : fixedPrice ? 'Buy It Now' : buyingOptions.join(', '),
     listing_status: 'active',
     listing_url: firstString([item.itemAffiliateWebUrl, item.itemWebUrl], ''),
     image_url: itemImage(item),
@@ -298,17 +300,20 @@ export async function fetchEbayStatus(signal?: AbortSignal): Promise<EbayStatus>
   return response.json() as Promise<EbayStatus>
 }
 
-export async function fetchEbayBinListings(options: {
+type FetchEbayListingsOptions = {
   model: ChecklistModel
   minPrice?: number
   playerLimit?: number | null
   playerNames?: string[]
   limitPerPlayer?: number
   maxPagesPerPlayer?: number
+  maxHoursToClose?: number
   searchMode?: EbayBinSearchMode
   searchTerm?: string
   signal?: AbortSignal
-}): Promise<EbayBinScanResult> {
+}
+
+async function fetchEbayListings(options: FetchEbayListingsOptions & { listingMode: EbayListingMode }): Promise<EbayBinScanResult> {
   const searchMode = options.searchMode ?? 'checklist'
   const searchTerm = options.searchTerm?.trim() ?? ''
   if ((searchMode === 'player' || searchMode === 'variation') && !searchTerm) {
@@ -339,7 +344,9 @@ export async function fetchEbayBinListings(options: {
       minPrice: options.minPrice ?? 0,
       limit: options.limitPerPlayer ?? 100,
       maxPages: options.maxPagesPerPlayer ?? 1,
-      sort: 'price',
+      sort: options.listingMode === 'auction' ? 'endingSoonest' : 'price',
+      buyingOption: options.listingMode === 'auction' ? 'AUCTION' : 'FIXED_PRICE',
+      maxHoursToClose: options.listingMode === 'auction' ? options.maxHoursToClose ?? 24 : undefined,
     }),
   })
 
@@ -352,10 +359,22 @@ export async function fetchEbayBinListings(options: {
 
   const fallbackReleaseLabel = releaseProductLabel(options.model)
   let rejectedPlayerMismatches = 0
+  const maxHoursToClose = options.listingMode === 'auction' ? options.maxHoursToClose ?? 24 : null
   const listings = dedupeListings(
     (payload.items ?? []).flatMap((item) => {
-      const listing = mapEbayItemToListing(item, fallbackReleaseLabel)
-      if (!listing) rejectedPlayerMismatches += 1
+      const listing = mapEbayItemToListing(item, fallbackReleaseLabel, options.listingMode)
+      if (!listing) {
+        rejectedPlayerMismatches += 1
+        return []
+      }
+      if (maxHoursToClose !== null) {
+        const endTime = listing.end_time ? new Date(listing.end_time).getTime() : Number.NaN
+        const hoursToClose = (endTime - Date.now()) / (1000 * 60 * 60)
+        if (!Number.isFinite(hoursToClose) || hoursToClose <= 0 || hoursToClose > maxHoursToClose) {
+          rejectedPlayerMismatches += 1
+          return []
+        }
+      }
       return listing ? [listing] : []
     }),
   )
@@ -375,4 +394,12 @@ export async function fetchEbayBinListings(options: {
       rejectedPlayerMismatches,
     },
   }
+}
+
+export async function fetchEbayBinListings(options: FetchEbayListingsOptions): Promise<EbayBinScanResult> {
+  return fetchEbayListings({ ...options, listingMode: 'bin' })
+}
+
+export async function fetchEbayAuctionListings(options: FetchEbayListingsOptions): Promise<EbayBinScanResult> {
+  return fetchEbayListings({ ...options, listingMode: 'auction', maxHoursToClose: options.maxHoursToClose ?? 24 })
 }

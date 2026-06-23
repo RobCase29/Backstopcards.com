@@ -34,6 +34,7 @@ import {
   type PulseAuthMode,
 } from './lib/prospectPulse'
 import {
+  fetchEbayAuctionListings,
   fetchEbayBinListings,
   fetchEbayStatus,
   isEbayRateLimitError,
@@ -279,7 +280,9 @@ const CHECKLIST_LOAD_CONCURRENCY = 6
 const BIN_SCAN_CONCURRENCY = 2
 const LEADERBOARD_RENDER_LIMIT = 500
 const BIN_RENDER_LIMIT = 40
+const AUCTION_RENDER_LIMIT = 30
 const BIN_MODEL_WINDOW_PCT = 0.2
+const AUCTION_MAX_HOURS_TO_CLOSE = 24
 const CASE_HIT_RENDER_LIMIT = 24
 const BIN_ALL_MODELS_KEY = 'all-checklists'
 
@@ -289,6 +292,13 @@ function money(value: number) {
 
 function percent(value: number) {
   return `${Math.round(value * 100)}%`
+}
+
+function closeTimeLabel(hoursToClose?: number | null) {
+  if (hoursToClose === null || hoursToClose === undefined) return 'No end time'
+  if (hoursToClose <= 0) return 'Ended'
+  if (hoursToClose < 1) return `${Math.max(1, Math.round(hoursToClose * 60))}m left`
+  return `${hoursToClose.toFixed(hoursToClose < 10 ? 1 : 0)}h left`
 }
 
 function parseMoneyInput(value: string) {
@@ -337,6 +347,13 @@ function friendlyBinError(error: unknown) {
     return 'eBay is cooling down our search access. Wait a minute, then retry this player or use a smaller scan scope.'
   }
   return error instanceof Error ? error.message : 'eBay BIN scan failed'
+}
+
+function friendlyAuctionError(error: unknown) {
+  if (isEbayRateLimitError(error)) {
+    return 'eBay is cooling down auction search access. Wait a minute, then retry this player or use a smaller scan scope.'
+  }
+  return error instanceof Error ? error.message : 'eBay auction scan failed'
 }
 
 function binScanErrorSummary(scan: EbayBinScanResult) {
@@ -555,6 +572,19 @@ function sortBinOpportunities(opportunities: Opportunity[], sortMode: BinResultS
 
 function isWithinBinModelWindow(opportunity: Opportunity) {
   return opportunity.fairValue > 0 && opportunity.listing.allInPrice <= opportunity.fairValue * (1 + BIN_MODEL_WINDOW_PCT)
+}
+
+function isUrgentAuctionOpportunity(opportunity: Opportunity) {
+  const hoursToClose = opportunity.listing.hoursToClose
+  return (
+    opportunity.listing.kind === 'live' &&
+    opportunity.fairValue > 0 &&
+    opportunity.listing.allInPrice < opportunity.fairValue &&
+    hoursToClose !== null &&
+    hoursToClose !== undefined &&
+    hoursToClose > 0 &&
+    hoursToClose <= AUCTION_MAX_HOURS_TO_CLOSE
+  )
 }
 
 function dedupeBinListings(listings: ProspectPulseListing[]) {
@@ -1705,6 +1735,190 @@ function BinRadar({
   )
 }
 
+function AuctionRadar({
+  opportunities,
+  listingCount,
+  scan,
+  ebayStatus,
+  loading,
+  modelLoading,
+  error,
+  selectedSetLabel,
+  searchMode,
+  searchTerm,
+  playerScope,
+  onScan,
+}: {
+  opportunities: Opportunity[]
+  listingCount: number
+  scan: EbayBinScanResult | null
+  ebayStatus: EbayStatus | null
+  loading: boolean
+  modelLoading: boolean
+  error: string | null
+  selectedSetLabel: string
+  searchMode: BinSearchMode
+  searchTerm: string
+  playerScope: BinPlayerScope
+  onScan: () => void
+}) {
+  const configured = Boolean(ebayStatus?.configured)
+  const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
+  const canScan = configured && !loading && !modelLoading
+  const scanButtonLabel = loading ? 'Scanning' : modelLoading ? 'Model loading' : configured ? 'Scan 24h Auctions' : 'eBay offline'
+  const trimmedSearchTerm = searchTerm.trim()
+  const focusLabel =
+    searchMode === 'player'
+      ? trimmedSearchTerm
+        ? `Player: ${trimmedSearchTerm}`
+        : 'Player focus needed'
+      : searchMode === 'variation'
+        ? trimmedSearchTerm
+          ? `Variation: ${trimmedSearchTerm}`
+          : 'Variation focus needed'
+        : playerScope === 'value-25'
+          ? 'Value 25 queue'
+          : playerScope === 'target-50'
+            ? 'Target 50 queue'
+            : playerScope === 'top-40'
+              ? 'Top 40 queue'
+              : 'Checklist queue'
+
+  return (
+    <section className="bin-radar auction-radar">
+      <div className="bin-radar-header">
+        <div className="section-title">
+          <Activity size={18} />
+          <div>
+            <h2>24h Auction Radar</h2>
+            <span>Live auctions ending within 24 hours and currently below modeled price</span>
+          </div>
+        </div>
+        <div className="bin-radar-pills">
+          <span className={configured ? 'connected' : 'offline'}>
+            {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
+            {configured ? 'eBay live' : 'eBay keys needed'}
+          </span>
+          <span>{selectedSetLabel}</span>
+          <span>{focusLabel}</span>
+          <span>{listingCount.toLocaleString()} auctions</span>
+          <span>{scan ? `${opportunities.length.toLocaleString()} below model` : 'No scan yet'}</span>
+          {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
+        </div>
+      </div>
+
+      <div className="auction-radar-action">
+        <div>
+          <strong>Urgent auction queue</strong>
+          <span>Uses the deal filters above, then keeps only active auctions closing inside 24h with current price under model.</span>
+        </div>
+        <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
+          <RefreshCw size={16} className={loading ? 'spin' : undefined} />
+          {scanButtonLabel}
+        </button>
+      </div>
+
+      {error ? (
+        <div className="bin-radar-alert">
+          <ShieldCheck size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {!configured ? (
+        <div className="bin-empty-state">
+          <KeyRound size={24} />
+          <div>
+            <strong>eBay production keys are required.</strong>
+            <span>Browse API access is required before live auctions can be priced.</span>
+          </div>
+        </div>
+      ) : !scan ? (
+        <div className="bin-empty-state ready">
+          <Activity size={24} />
+          <div>
+            <strong>Ready to scan ending-soon auctions.</strong>
+            <span>Best use: run this after choosing a set/player scope above, then review only auctions with current all-in below model.</span>
+          </div>
+        </div>
+      ) : opportunities.length === 0 ? (
+        <div className="bin-empty-state muted">
+          <Activity size={24} />
+          <div>
+            <strong>No urgent auctions are below model right now.</strong>
+            <span>{listingCount.toLocaleString()} auctions reviewed; none were active, inside 24h, and under modeled value.</span>
+          </div>
+        </div>
+      ) : (
+        <div className="bin-opportunity-list">
+          <div className="bin-opportunity-head auction-head">
+            <span>Rank</span>
+            <span>Auction</span>
+            <span>Current</span>
+            <span>Model</span>
+            <span>Ends</span>
+            <span>Signal</span>
+          </div>
+          {opportunities.map((opportunity, index) => {
+            const sts = opportunityStsContext(opportunity)
+            const convictionScore = binConvictionScore(opportunity, sts)
+            const gradingLabel = listingGradingLabel(opportunity.listing)
+            const hoursToClose = opportunity.listing.hoursToClose
+            return (
+              <article className={`bin-opportunity-row lane-${opportunity.lane}`} key={`auction:${opportunity.listing.id}`}>
+                <div className="bin-rank-cell">
+                  <strong>#{index + 1}</strong>
+                  <span>{opportunity.grade}</span>
+                </div>
+                <div className="bin-listing-cell">
+                  <strong>{opportunity.listing.playerName}</strong>
+                  <span>{opportunity.listing.title}</span>
+                  <div className="bin-evidence-strip">
+                    <small>{opportunity.matchedVariation ?? opportunity.listing.variationLabel}</small>
+                    <small className="conviction-chip">Conviction {convictionScore}</small>
+                    <small>{opportunity.listing.bidCount.toLocaleString()} bid{opportunity.listing.bidCount === 1 ? '' : 's'}</small>
+                    {gradingLabel ? <small className="graded-chip">{gradingLabel}</small> : null}
+                    {sts.ranking ? (
+                      <>
+                        {sts.rank ? <small className="sts-chip">Rank #{sts.rank.toLocaleString()}</small> : null}
+                        {sts.momentumScore !== null ? <small className="sts-chip">Trend {sts.momentumScore.toFixed(1)}</small> : null}
+                      </>
+                    ) : (
+                      <small className="warning">Unranked</small>
+                    )}
+                    {opportunity.warnings[0] ? <small className="warning">{opportunity.warnings[0]}</small> : null}
+                  </div>
+                </div>
+                <div className="bin-money-cell">
+                  <strong>{money(opportunity.listing.allInPrice)}</strong>
+                  <span>Bid + ship</span>
+                </div>
+                <div className="bin-money-cell">
+                  <strong>{money(opportunity.fairValue)}</strong>
+                  <span>{formatModelSource(opportunity.valuationSource)}</span>
+                </div>
+                <div className="bin-money-cell edge">
+                  <strong>{closeTimeLabel(hoursToClose)}</strong>
+                  <span>{money(opportunity.edgeDollars)} spread</span>
+                </div>
+                <div className="bin-signal-cell">
+                  <span>{opportunity.action === 'Pass' ? 'Watchlist' : opportunity.action}</span>
+                  {opportunity.listing.listingUrl ? (
+                    <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={14} />
+                      eBay
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function caseHitSourceLabel(source: CaseHitOpportunity['source']) {
   const labels: Record<CaseHitOpportunity['source'], string> = {
     'same-player': 'same player',
@@ -2322,6 +2536,10 @@ function App() {
   const [binResultSort, setBinResultSort] = useState<BinResultSort>('conviction-desc')
   const [binModelKey, setBinModelKey] = useState('')
   const [binScan, setBinScan] = useState<EbayBinScanResult | null>(null)
+  const [auctionListings, setAuctionListings] = useState<ProspectPulseListing[]>([])
+  const [auctionLoading, setAuctionLoading] = useState(false)
+  const [auctionError, setAuctionError] = useState<string | null>(null)
+  const [auctionScan, setAuctionScan] = useState<EbayBinScanResult | null>(null)
   const [caseHitScan, setCaseHitScan] = useState<CaseHitScanResult | null>(null)
   const [caseHitLoading, setCaseHitLoading] = useState(false)
   const [caseHitError, setCaseHitError] = useState<string | null>(null)
@@ -2334,6 +2552,7 @@ function App() {
   const checklistRequestRef = useRef<AbortController | null>(null)
   const checklistRequestIdRef = useRef(0)
   const binRequestRef = useRef<AbortController | null>(null)
+  const auctionRequestRef = useRef<AbortController | null>(null)
   const caseHitRequestRef = useRef<AbortController | null>(null)
   const soldModelRequestRef = useRef<AbortController | null>(null)
 
@@ -2465,6 +2684,7 @@ function App() {
       checklistRequestIdRef.current += 1
       checklistRequestRef.current?.abort()
       binRequestRef.current?.abort()
+      auctionRequestRef.current?.abort()
       caseHitRequestRef.current?.abort()
       soldModelRequestRef.current?.abort()
     }
@@ -2492,6 +2712,14 @@ function App() {
     if (selectedModel) return [selectedModel]
     return []
   }, [effectiveBinModelKey, binModelOptions])
+  const selectedDealSetLabel =
+    effectiveBinModelKey === BIN_ALL_MODELS_KEY
+      ? selectedBinModels.length > 0
+        ? `${selectedBinModels.length.toLocaleString()} loaded checklists`
+        : 'All loaded checklists'
+      : selectedBinModels[0]
+        ? checklistModelLabel(selectedBinModels[0])
+        : 'No checklist selected'
   const binTargetRowsByModel = useMemo(() => {
     const targets = new Map<string, PricingRow[]>()
     for (const model of selectedBinModels) {
@@ -2530,6 +2758,14 @@ function App() {
       binResultSort,
     ).slice(0, BIN_RENDER_LIMIT),
     [binListings, binResultSort, binScoreSettings, selectedBinModels],
+  )
+  const auctionOpportunities = useMemo(
+    () =>
+      sortBinOpportunities(
+        rankOpportunities(auctionListings, binScoreSettings, selectedBinModels).filter(isUrgentAuctionOpportunity),
+        binResultSort,
+      ).slice(0, AUCTION_RENDER_LIMIT),
+    [auctionListings, binResultSort, binScoreSettings, selectedBinModels],
   )
 
   const visibleRows = useMemo(() => {
@@ -2623,6 +2859,13 @@ function App() {
     setBinListings([])
     setBinScan(null)
     setBinError(null)
+    resetAuctionScan()
+  }
+
+  function resetAuctionScan() {
+    setAuctionListings([])
+    setAuctionScan(null)
+    setAuctionError(null)
   }
 
   function updateBinSearchMode(mode: BinSearchMode) {
@@ -2667,6 +2910,7 @@ function App() {
     setBinListings([])
     setBinScan(null)
     setBinError(null)
+    resetAuctionScan()
 
     void scanEbayBinListings({
       models: scanModels,
@@ -2684,6 +2928,7 @@ function App() {
     setBinListings([])
     setBinScan(null)
     setBinError(null)
+    resetAuctionScan()
 
     void scanEbayBinListings({
       playerScope: 'value-25',
@@ -2828,6 +3073,142 @@ function App() {
       if (binRequestRef.current === controller) {
         setBinLoading(false)
         binRequestRef.current = null
+      }
+    }
+  }
+
+  async function scanEbayAuctionListings(
+    overrides: {
+      models?: ChecklistModel[]
+      minPrice?: number
+      playerScope?: BinPlayerScope
+      searchMode?: BinSearchMode
+      searchTerm?: string
+    } = {},
+  ) {
+    const activeModels = overrides.models ?? selectedBinModels
+    const activeMinPrice = overrides.minPrice ?? binMinPrice
+    const activePlayerScope = overrides.playerScope ?? binPlayerScope
+    const activeSearchMode = overrides.searchMode ?? binSearchMode
+    const activeSearchTerm = overrides.searchTerm ?? binSearchTerm
+
+    if (activeModels.length === 0) {
+      setAuctionError('No checklist model is loaded yet.')
+      return
+    }
+
+    if (!ebayStatus?.configured) {
+      setAuctionError(ebayStatus?.message ?? 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in .env.local')
+      return
+    }
+
+    const playerLoadedModels = activeModels.filter((model) => model.players.length > 0)
+    if (playerLoadedModels.length === 0) {
+      setAuctionError('Checklist player lists are not loaded for the selected scope.')
+      return
+    }
+
+    if (activeSearchMode !== 'checklist' && !activeSearchTerm.trim()) {
+      setAuctionError(activeSearchMode === 'player' ? 'Enter a player name to scan auctions.' : 'Enter a variation to scan auctions.')
+      return
+    }
+
+    const valueRowsByScanModel =
+      activePlayerScope === 'value-25' && activeSearchMode !== 'player'
+        ? valueRowsForModels(matrix.rows, playerLoadedModels, 25)
+        : new Map<string, PricingRow[]>()
+
+    if (
+      (activePlayerScope === 'target-50' || activePlayerScope === 'value-25') &&
+      activeSearchMode !== 'player' &&
+      playerLoadedModels.every((model) => {
+        if (activePlayerScope === 'value-25') return (valueRowsByScanModel.get(checklistModelKey(model))?.length ?? 0) === 0
+        return targetRowsForModel(matrix.rows, model, 50).length === 0
+      })
+    ) {
+      setAuctionError(
+        activePlayerScope === 'value-25'
+          ? 'Value 25 needs priced checklist rows matched to ranking signals before scanning auctions.'
+          : 'Target 50 needs priced checklist rows matched to ranking signals before scanning auctions.',
+      )
+      return
+    }
+
+    const scanModels =
+      (activePlayerScope === 'target-50' || activePlayerScope === 'value-25') && activeSearchMode !== 'player'
+        ? playerLoadedModels.filter((model) =>
+            activePlayerScope === 'value-25'
+              ? (valueRowsByScanModel.get(checklistModelKey(model))?.length ?? 0) > 0
+              : targetRowsForModel(matrix.rows, model, 50).length > 0,
+          )
+        : playerLoadedModels
+
+    auctionRequestRef.current?.abort()
+    const controller = new AbortController()
+    auctionRequestRef.current = controller
+    setAuctionLoading(true)
+    setAuctionError(null)
+
+    try {
+      const settledScans = await mapWithConcurrency(scanModels, BIN_SCAN_CONCURRENCY, async (model) => {
+        const targetRows =
+          activePlayerScope === 'target-50'
+            ? targetRowsForModel(matrix.rows, model, 50)
+            : activePlayerScope === 'value-25'
+              ? (valueRowsByScanModel.get(checklistModelKey(model)) ?? [])
+              : []
+        try {
+          const value = await fetchEbayAuctionListings({
+            model,
+            minPrice: activeMinPrice,
+            maxHoursToClose: AUCTION_MAX_HOURS_TO_CLOSE,
+            playerLimit: activePlayerScope === 'top-40' ? 40 : null,
+            playerNames:
+              activePlayerScope === 'target-50' || activePlayerScope === 'value-25'
+                ? targetRows.map((row) => row.playerName)
+                : undefined,
+            searchMode: activeSearchMode,
+            searchTerm: activeSearchTerm,
+            signal: controller.signal,
+          })
+          return { status: 'fulfilled' as const, value }
+        } catch (reason) {
+          return {
+            status: 'rejected' as const,
+            model,
+            reason,
+          }
+        }
+      })
+      if (controller.signal.aborted) return
+
+      const successfulScans = settledScans.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
+      const failedScans = settledScans.flatMap((result) =>
+        result.status === 'rejected'
+          ? [
+              {
+                query: checklistModelLabel(result.model),
+                error: result.reason instanceof Error ? result.reason.message : 'eBay auction scan failed',
+              },
+            ]
+          : [],
+      )
+
+      if (successfulScans.length === 0) {
+        throw new Error(failedScans[0]?.error ?? 'eBay auction scan failed')
+      }
+
+      const scanResult = mergeBinScans(successfulScans, failedScans)
+      setAuctionListings(scanResult.listings)
+      setAuctionScan(scanResult)
+      setAuctionError(binScanErrorSummary(scanResult))
+    } catch (scanError) {
+      if (controller.signal.aborted) return
+      setAuctionError(friendlyAuctionError(scanError))
+    } finally {
+      if (auctionRequestRef.current === controller) {
+        setAuctionLoading(false)
+        auctionRequestRef.current = null
       }
     }
   }
@@ -2995,8 +3376,8 @@ function App() {
         onModeChange={setWorkMode}
         pricedRows={matrix.totalPricedPlayers}
         topBase={topBase}
-        dealCount={binOpportunities.length}
-        listingCount={binListings.length}
+        dealCount={binOpportunities.length + auctionOpportunities.length}
+        listingCount={binListings.length + auctionListings.length}
         modelReady={matrix.totalResolvedCells > 0}
       />
 
@@ -3181,6 +3562,20 @@ function App() {
             onSearchTermChange={updateBinSearchTerm}
             onScan={() => void scanEbayBinListings()}
             onScanValueTargets={scanValue25Targets}
+          />
+          <AuctionRadar
+            opportunities={auctionOpportunities}
+            listingCount={auctionListings.length}
+            scan={auctionScan}
+            ebayStatus={ebayStatus}
+            loading={auctionLoading}
+            modelLoading={checklistLoading}
+            error={auctionError}
+            selectedSetLabel={selectedDealSetLabel}
+            searchMode={binSearchMode}
+            searchTerm={binSearchTerm}
+            playerScope={binPlayerScope}
+            onScan={() => void scanEbayAuctionListings()}
           />
         </section>
       ) : (

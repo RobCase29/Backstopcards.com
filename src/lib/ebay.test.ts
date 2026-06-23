@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChecklistModel } from '../types'
-import { fetchEbayBinListings, isEbayRateLimitError } from './ebay'
+import { fetchEbayAuctionListings, fetchEbayBinListings, isEbayRateLimitError } from './ebay'
 
 const model: ChecklistModel = {
   category: 'bowman',
@@ -36,11 +36,13 @@ describe('fetchEbayBinListings', () => {
         queries: Array<{ q: string; playerName: string }>
         sort: string
         minPrice: number
+        buyingOption: string
       }
       expect(body.queries).toHaveLength(1)
       expect(body.queries[0]?.q).toBe('Eli Willits 2026 bowman chrome 1st auto')
       expect(body.sort).toBe('price')
       expect(body.minPrice).toBe(25)
+      expect(body.buyingOption).toBe('FIXED_PRICE')
 
       return new Response(
         JSON.stringify({
@@ -461,5 +463,73 @@ describe('fetchEbayBinListings', () => {
 
     expect(result.listings.map((listing) => listing.item_id)).toEqual(['real-chrome'])
     expect(result.stats.rejectedPlayerMismatches).toBe(10)
+  })
+})
+
+describe('fetchEbayAuctionListings', () => {
+  it('builds ending-soon auction queries and keeps only auctions inside the close window', async () => {
+    const soonEnd = new Date(Date.now() + 2 * 60 * 60 * 1_000).toISOString()
+    const lateEnd = new Date(Date.now() + 30 * 60 * 60 * 1_000).toISOString()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          queries: Array<{ q: string; playerName: string }>
+          sort: string
+          buyingOption: string
+          maxHoursToClose: number
+        }
+        expect(body.queries).toHaveLength(1)
+        expect(body.queries[0]?.q).toBe('Eli Willits 2026 bowman chrome 1st auto')
+        expect(body.sort).toBe('endingSoonest')
+        expect(body.buyingOption).toBe('AUCTION')
+        expect(body.maxHoursToClose).toBe(24)
+
+        return new Response(
+          JSON.stringify({
+            fetchedAt: '2026-06-20T12:00:00.000Z',
+            items: [
+              {
+                itemId: 'ending-soon',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Blue /150',
+                itemWebUrl: 'https://www.ebay.com/itm/ending-soon',
+                price: { value: '150.00', currency: 'USD' },
+                buyingOptions: ['AUCTION'],
+                itemEndDate: soonEnd,
+                bidCount: 7,
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'too-late',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Gold /50',
+                price: { value: '200.00', currency: 'USD' },
+                buyingOptions: ['AUCTION'],
+                itemEndDate: lateEnd,
+                bidCount: 2,
+                _bowmanTraderQuery: body.queries[0],
+              },
+            ],
+            stats: {
+              queriesRun: 1,
+              queriesSucceeded: 1,
+              queriesFailed: 0,
+              pagesFetched: 1,
+              upstreamTotal: 2,
+              dedupedItems: 2,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayAuctionListings({ model, playerLimit: 1 })
+
+    expect(result.listings).toHaveLength(1)
+    expect(result.listings[0]?.item_id).toBe('ending-soon')
+    expect(result.listings[0]?.buying_format).toBe('Auction')
+    expect(result.listings[0]?.end_time).toBe(soonEnd)
+    expect(result.listings[0]?.bid_count).toBe(7)
+    expect(result.stats.rejectedPlayerMismatches).toBe(1)
   })
 })
