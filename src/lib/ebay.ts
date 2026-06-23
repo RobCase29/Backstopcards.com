@@ -38,6 +38,8 @@ type EbayItemSummary = {
   image?: EbayImage
   thumbnailImages?: EbayImage[]
   price?: EbayMoney
+  currentBidPrice?: EbayMoney
+  convertedCurrentBidPrice?: EbayMoney
   buyingOptions?: string[]
   seller?: EbaySeller
   shippingOptions?: EbayShippingOption[]
@@ -216,6 +218,21 @@ function minShippingCost(item: EbayItemSummary) {
   return Math.max(0, Math.min(...costs))
 }
 
+function firstPositiveMoney(values: Array<EbayMoney | undefined>) {
+  for (const value of values) {
+    const parsed = numberValue(value?.value, Number.NaN)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+  return 0
+}
+
+function currentListingPrice(item: EbayItemSummary, listingMode: EbayListingMode) {
+  if (listingMode === 'auction') {
+    return firstPositiveMoney([item.currentBidPrice, item.convertedCurrentBidPrice, item.price])
+  }
+  return firstPositiveMoney([item.price, item.currentBidPrice, item.convertedCurrentBidPrice])
+}
+
 function itemImage(item: EbayItemSummary) {
   return firstString(
     [
@@ -243,7 +260,7 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   const fixedPrice = listingMode === 'bin' || buyingOptions.includes('FIXED_PRICE')
   const auction = listingMode === 'auction' || buyingOptions.includes('AUCTION')
   const itemId = firstString([item.legacyItemId, item.itemId], title)
-  const price = numberValue(item.price?.value, 0)
+  const price = currentListingPrice(item, listingMode)
   const stsRanking = findStsRanking(playerName)
 
   return {

@@ -532,4 +532,50 @@ describe('fetchEbayAuctionListings', () => {
     expect(result.listings[0]?.bid_count).toBe(7)
     expect(result.stats.rejectedPlayerMismatches).toBe(1)
   })
+
+  it('uses current bid price plus shipping when Browse omits auction price', async () => {
+    const soonEnd = new Date(Date.now() + 2 * 60 * 60 * 1_000).toISOString()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          queries: Array<{ q: string; playerName: string }>
+        }
+
+        return new Response(
+          JSON.stringify({
+            fetchedAt: '2026-06-20T12:00:00.000Z',
+            items: [
+              {
+                itemId: 'current-bid-only',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Orange Wave /25',
+                itemWebUrl: 'https://www.ebay.com/itm/current-bid-only',
+                currentBidPrice: { value: '710.00', currency: 'USD' },
+                buyingOptions: ['AUCTION'],
+                itemEndDate: soonEnd,
+                bidCount: 22,
+                shippingOptions: [{ shippingCost: { value: '4.99', currency: 'USD' } }],
+                _bowmanTraderQuery: body.queries[0],
+              },
+            ],
+            stats: {
+              queriesRun: 1,
+              queriesSucceeded: 1,
+              queriesFailed: 0,
+              pagesFetched: 1,
+              upstreamTotal: 1,
+              dedupedItems: 1,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayAuctionListings({ model, playerLimit: 1 })
+
+    expect(result.listings).toHaveLength(1)
+    expect(result.listings[0]?.current_price).toBe(710)
+    expect(result.listings[0]?.shipping_cost).toBe(4.99)
+  })
 })

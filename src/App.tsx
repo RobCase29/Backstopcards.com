@@ -63,7 +63,7 @@ import {
   type VariationQuote,
 } from './lib/matrix'
 import { DEFAULT_SETTINGS, estimateGradedPremium, rankOpportunities } from './lib/scoring'
-import type { ChecklistModel, GradingCompany, Opportunity, ProspectPulseListing } from './types'
+import type { ChecklistModel, GradingCompany, NormalizedListing, Opportunity, ProspectPulseListing } from './types'
 
 type CategoryFilter = 'all' | ChecklistModel['category']
 type BaseSourceFilter = 'all' | BasePriceSource
@@ -288,6 +288,11 @@ const BIN_ALL_MODELS_KEY = 'all-checklists'
 
 function money(value: number) {
   return currency.format(value)
+}
+
+function auctionBidShipLabel(listing: NormalizedListing) {
+  const shippingLabel = listing.shippingCost > 0 ? `${money(listing.shippingCost)} ship` : 'free ship'
+  return `${money(listing.currentPrice)} bid + ${shippingLabel}`
 }
 
 function percent(value: number) {
@@ -1947,7 +1952,7 @@ function AuctionRadar({
                 </div>
                 <div className="bin-money-cell">
                   <strong>{money(opportunity.listing.allInPrice)}</strong>
-                  <span>Bid + ship</span>
+                  <span>{auctionBidShipLabel(opportunity.listing)}</span>
                 </div>
                 <div className="bin-money-cell">
                   <strong>{money(opportunity.fairValue)}</strong>
