@@ -1,6 +1,5 @@
 import {
   Activity,
-  BadgeDollarSign,
   BarChart3,
   BookOpenCheck,
   Brain,
@@ -10,7 +9,6 @@ import {
   ExternalLink,
   Gem,
   KeyRound,
-  Layers,
   LogOut,
   Radio,
   RefreshCw,
@@ -713,68 +711,6 @@ function downloadMatrixCsv(rows: PricingRow[]) {
   URL.revokeObjectURL(url)
 }
 
-function StatTile({
-  icon: Icon,
-  label,
-  value,
-  tone = 'neutral',
-}: {
-  icon: typeof BadgeDollarSign
-  label: string
-  value: string
-  tone?: 'neutral' | 'good' | 'warn' | 'info'
-}) {
-  return (
-    <div className="stat-tile">
-      <div className={`stat-icon ${tone}`}>
-        <Icon size={18} />
-      </div>
-      <div>
-        <span>{label}</span>
-        <strong>{value}</strong>
-      </div>
-    </div>
-  )
-}
-
-function MarketTape({
-  rowCount,
-  variationCount,
-  solvedCells,
-  topBase,
-  loadedSets,
-  liveConnected,
-  sourceLabel,
-}: {
-  rowCount: number
-  variationCount: number
-  solvedCells: number
-  topBase: number
-  loadedSets: number
-  liveConnected: boolean
-  sourceLabel: string
-}) {
-  const cells = [
-    ['SETS', loadedSets > 0 ? loadedSets.toLocaleString() : '--', 'neutral'],
-    ['PLAYERS', rowCount.toLocaleString(), rowCount > 0 ? 'up' : 'flat'],
-    ['VARIATIONS', variationCount.toLocaleString(), variationCount > 0 ? 'up' : 'flat'],
-    ['SOLVED', solvedCells.toLocaleString(), solvedCells > 0 ? 'up' : 'flat'],
-    ['TOP BASE', money(topBase), topBase > 0 ? 'up' : 'flat'],
-    ['DATA', sourceLabel, liveConnected ? 'up' : 'flat'],
-  ] as const
-
-  return (
-    <section className="market-tape" aria-label="Market tape">
-      {cells.map(([label, value, tone]) => (
-        <div className={`tape-cell ${tone}`} key={label}>
-          <span>{label}</span>
-          <strong>{value}</strong>
-        </div>
-      ))}
-    </section>
-  )
-}
-
 function WorkflowCommand({
   mode,
   onModeChange,
@@ -792,20 +728,19 @@ function WorkflowCommand({
   listingCount: number
   modelReady: boolean
 }) {
-  const modeTitle = mode === 'lookup' ? 'Modeled Price' : mode === 'deals' ? 'Deal Finder' : 'Beta Labs'
-
+  const modeTitle = mode === 'lookup' ? 'Price a Card' : mode === 'deals' ? 'Find Deals' : 'Beta Lab'
   return (
     <section className="workflow-command" aria-label="Bowman auto desk">
       <div className="workflow-command-copy">
         <span className="workflow-kicker">
           <Activity size={14} />
-          Bowman Auto Desk
+          Command Center
         </span>
         <h2>{modeTitle}</h2>
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
           <span>{pricedRows.toLocaleString()} players</span>
-          <span>{dealCount.toLocaleString()} candidates</span>
+          <span>Top base {money(topBase)}</span>
         </div>
       </div>
 
@@ -820,11 +755,11 @@ function WorkflowCommand({
             <Search size={19} />
           </span>
           <span className="workflow-card-copy">
-            <span>Modeled Price</span>
-            <strong>Lookup Board</strong>
-            <small>{pricedRows.toLocaleString()} modeled players</small>
+            <span>Price</span>
+            <strong>Card Calculator</strong>
+            <small>Player, variation, grade, all-in</small>
           </span>
-          <span className="workflow-value">{money(topBase)}</span>
+          <span className="workflow-value">{pricedRows.toLocaleString()}</span>
         </button>
 
         <button
@@ -837,8 +772,8 @@ function WorkflowCommand({
             <Radio size={19} />
           </span>
           <span className="workflow-card-copy">
-            <span>Deal Finder</span>
-            <strong>Active BIN Radar</strong>
+            <span>Deals</span>
+            <strong>BIN Radar</strong>
             <small>{listingCount.toLocaleString()} active listings scanned</small>
           </span>
           <span className="workflow-value">{dealCount.toLocaleString()}</span>
@@ -2613,6 +2548,11 @@ function App() {
   }, [baseSourceFilter, categoryFilter, matrix.rows, query, releaseFilter, sortMode, stsFilter])
   const renderedRows = useMemo(() => visibleRows.slice(0, LEADERBOARD_RENDER_LIMIT), [visibleRows])
   const selectedRow = renderedRows.find((row) => row.id === selectedRowId) ?? renderedRows[0]
+  const quickPickerRows = useMemo(() => {
+    const rows = visibleRows.slice(0, 80)
+    if (!selectedRow || rows.some((row) => row.id === selectedRow.id)) return rows
+    return [selectedRow, ...rows]
+  }, [selectedRow, visibleRows])
   const trimmedQuery = query.trim()
   const rankingOnlyMatch = useMemo(() => {
     if (!trimmedQuery || visibleRows.length > 0) return null
@@ -2628,13 +2568,13 @@ function App() {
       : mathHealth === 'warning'
         ? `${matrix.missingBaseRows.toLocaleString()} base gaps / ${matrix.unresolvedMultipliers.toLocaleString()} multiplier gaps`
         : 'Math clean'
+  const showModelHealth = Boolean(checklistProgress || catalogError || checklistError || matrix.totalResolvedCells === 0)
   const pulseSourceLabel =
     pulseAuthMode === 'server'
       ? 'Market data managed'
       : liveConnected
         ? 'Market data connected'
         : 'Set curves only'
-  const pulseTapeLabel = pulseAuthMode === 'server' ? 'MANAGED' : liveConnected ? 'CONNECTED' : 'CURVES'
 
   async function refreshChecklistUniverse() {
     const catalog = await loadChecklistCatalog()
@@ -3050,38 +2990,6 @@ function App() {
         </div>
       </section>
 
-      <section className="status-strip valuation-status">
-        <span className={`source-chip ${liveConnected ? 'connected' : 'offline'}`}>
-          {liveConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
-          {pulseSourceLabel}
-        </span>
-        <span>{releaseOptions.length.toLocaleString()} checklist releases</span>
-        <span>{matrix.totalPricedPlayers.toLocaleString()} priced players</span>
-        <span>{matrix.totalResolvedCells.toLocaleString()} solved valuations</span>
-        <span>
-          {matrix.weightedBaseRows.toLocaleString()} weighted / {matrix.blendedBaseRows.toLocaleString()} blended /{' '}
-          {matrix.impliedBaseRows.toLocaleString()} implied / {matrix.fallbackBaseRows.toLocaleString()} baseline
-        </span>
-        <span className={`model-health-chip ${mathHealth}`}>
-          <Sigma size={14} />
-          {mathHealthLabel}
-        </span>
-        {checklistProgress ? <span>Loading {checklistProgress.loaded.toLocaleString()} / {checklistProgress.total.toLocaleString()}</span> : null}
-        <span>{modelUpdatedAt ? `Updated ${new Date(modelUpdatedAt).toLocaleTimeString()}` : 'Awaiting player bases'}</span>
-        {catalogError ? <strong>{catalogError}</strong> : null}
-        {checklistError ? <strong>{checklistError}</strong> : null}
-      </section>
-
-      <MarketTape
-        rowCount={matrix.totalPricedPlayers}
-        variationCount={matrix.totalVariations}
-        solvedCells={matrix.totalResolvedCells}
-        topBase={topBase}
-        loadedSets={checklistModels.length}
-        liveConnected={liveConnected}
-        sourceLabel={pulseTapeLabel}
-      />
-
       <WorkflowCommand
         mode={workMode}
         onModeChange={setWorkMode}
@@ -3092,31 +3000,65 @@ function App() {
         modelReady={matrix.totalResolvedCells > 0}
       />
 
+      {showModelHealth ? (
+        <section className="status-strip valuation-status" aria-label="Model health">
+          <span className={`source-chip ${liveConnected ? 'connected' : 'offline'}`}>
+            {liveConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
+            {pulseSourceLabel}
+          </span>
+          <span>{matrix.totalPricedPlayers.toLocaleString()} players priced</span>
+          <span>{matrix.totalResolvedCells.toLocaleString()} card values</span>
+          <span className={`model-health-chip ${mathHealth}`}>
+            <Sigma size={14} />
+            {mathHealth === 'warning' ? `${openMathItems.toLocaleString()} open math items` : mathHealthLabel}
+          </span>
+          {checklistProgress ? <span>Loading {checklistProgress.loaded.toLocaleString()} / {checklistProgress.total.toLocaleString()}</span> : null}
+          <span>{modelUpdatedAt ? `Updated ${new Date(modelUpdatedAt).toLocaleTimeString()}` : 'Awaiting player bases'}</span>
+          {catalogError ? <strong>{catalogError}</strong> : null}
+          {checklistError ? <strong>{checklistError}</strong> : null}
+        </section>
+      ) : null}
+
+
       {workMode === 'lookup' ? (
         <section className="workbench-layout lookup-workflow" aria-label="Modeled price lookup">
           <div className="valuation-workspace">
-            <div className="metric-grid">
-              <StatTile icon={Database} label="Players" value={matrix.totalPricedPlayers.toLocaleString()} tone="info" />
-              <StatTile icon={Brain} label="Ranked" value={`${matrix.stsMatchedRows.toLocaleString()} / ${matrix.stsProspectRows.toLocaleString()}`} tone="neutral" />
-              <StatTile icon={Layers} label="Variations" value={matrix.totalVariations.toLocaleString()} tone="neutral" />
-              <StatTile icon={BadgeDollarSign} label="Top Base" value={money(topBase)} tone="good" />
+            <div className="lookup-intent-bar">
+              <div className="lookup-intent-copy">
+                <span>Price a card</span>
+                <strong>{selectedRow ? selectedRow.playerName : trimmedQuery ? 'No modeled player selected' : 'Search a player'}</strong>
+                <small>
+                  {selectedRow
+                    ? `${selectedRow.release.replaceAll('-', ' ')} / ${money(selectedRow.baseTwmaPrice)} base`
+                    : 'Search narrows the calculator, board, and selected-player detail together.'}
+                </small>
+              </div>
+              <label className="lookup-primary-search">
+                <Search size={18} />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search player, release, or variation"
+                  aria-label="Search player, release, or variation"
+                />
+              </label>
+              <div className="lookup-intent-meta">
+                <span>{visibleRows.length.toLocaleString()} matches</span>
+                <span>{matrix.totalPricedPlayers.toLocaleString()} players</span>
+              </div>
             </div>
 
             <div className="calculator-workbench-slot">
               <QuickPriceModule
                 row={selectedRow}
                 onScanPlayer={scanBinsForLookupRow}
-                pickerRows={visibleRows}
+                pickerRows={quickPickerRows}
                 onPickRow={setSelectedRowId}
                 className="workbench-quick-price-card"
               />
             </div>
 
             <div className="toolbar valuation-toolbar">
-              <label className="search-box">
-                <Search size={16} />
-                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search player, release, variation" />
-              </label>
               <label className="filter-select">
                 <span>Set</span>
                 <select value={releaseFilter} onChange={(event) => setReleaseFilter(event.target.value)}>

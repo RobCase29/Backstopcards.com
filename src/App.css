@@ -1627,19 +1627,23 @@ thead .matrix-player-col span,
 .release-line span {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
-  padding: 0 9px;
+  min-height: 22px;
+  padding: 0 8px;
   border: 1px solid rgba(15, 103, 93, 0.22);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.68);
   color: var(--accent);
-  font-size: 0.74rem;
+  font-size: 0.66rem;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .valuation-status {
-  border-block-color: rgba(19, 32, 31, 0.22);
+  margin-top: 8px;
+  min-height: 32px;
+  gap: 8px;
+  border-block-color: transparent;
+  padding: 0;
 }
 
 .workbench-layout {
@@ -1655,8 +1659,102 @@ thead .matrix-player-col span,
 }
 
 .valuation-toolbar {
-  grid-template-columns: minmax(220px, 1.25fr) repeat(5, minmax(104px, 0.62fr)) minmax(122px, auto);
+  grid-template-columns: repeat(5, minmax(112px, 1fr)) minmax(122px, auto);
   min-width: 0;
+}
+
+.lookup-intent-bar {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.62fr) minmax(320px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid rgba(8, 127, 140, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(120deg, rgba(159, 216, 207, 0.16), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 250, 240, 0.86)),
+    var(--panel);
+  box-shadow: 0 16px 34px rgba(19, 32, 31, 0.11);
+}
+
+.lookup-intent-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.lookup-intent-copy span,
+.lookup-intent-copy small,
+.lookup-intent-meta span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.lookup-intent-copy strong {
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: clamp(1.12rem, 1.4vw, 1.45rem);
+  line-height: 1.05;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lookup-primary-search {
+  min-width: 0;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border: 1px solid rgba(8, 127, 140, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 253, 247, 0.92);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.lookup-primary-search svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.lookup-primary-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 1.04rem;
+  font-weight: 850;
+}
+
+.lookup-primary-search input::placeholder {
+  color: rgba(103, 105, 99, 0.52);
+}
+
+.lookup-intent-meta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lookup-intent-meta span {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid rgba(103, 105, 99, 0.16);
+  border-radius: 999px;
+  background: rgba(103, 105, 99, 0.07);
+  font-family: var(--mono);
+  white-space: nowrap;
 }
 
 .filter-select {
@@ -2462,6 +2560,14 @@ thead .matrix-player-col span,
     grid-template-columns: 1fr;
   }
 
+  .lookup-intent-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .lookup-intent-meta {
+    justify-content: flex-start;
+  }
+
   .valuation-toolbar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2559,9 +2665,9 @@ thead .matrix-player-col span,
 }
 
 .valuation-app .workbench-topbar {
-  min-height: 172px;
+  min-height: 92px;
   align-items: center;
-  padding: 16px 0 18px;
+  padding: 6px 0 8px;
   border-bottom: 1px solid rgba(255, 246, 229, 0.16);
 }
 
@@ -2576,18 +2682,18 @@ thead .matrix-player-col span,
 
 .valuation-app .brand-lockup {
   display: grid;
-  grid-template-columns: 116px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 11px;
   align-items: center;
   min-width: 0;
 }
 
 .valuation-app .brand-logo {
-  width: 116px;
-  height: 116px;
+  width: 64px;
+  height: 64px;
   object-fit: cover;
   border: 1px solid rgba(255, 246, 229, 0.28);
-  border-radius: 22px;
+  border-radius: 16px;
   background: #fff6e5;
   box-shadow:
     0 22px 54px rgba(0, 0, 0, 0.26),
@@ -2606,7 +2712,7 @@ thead .matrix-player-col span,
 .valuation-app .brand-block h1 {
   max-width: 930px;
   color: #fff6e5;
-  font-size: clamp(2.4rem, 5.1vw, 4.35rem);
+  font-size: clamp(1.78rem, 3.35vw, 3rem);
   font-weight: 900;
   text-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
 }
@@ -2652,11 +2758,27 @@ thead .matrix-player-col span,
 
 .valuation-status {
   color: rgba(255, 250, 240, 0.66);
-  border-block-color: rgba(255, 250, 240, 0.12);
+  border-block-color: transparent;
 }
 
 .valuation-status strong {
   color: #ff9b8d;
+}
+
+.valuation-status > span:not(.source-chip):not(.model-health-chip) {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 250, 240, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 250, 240, 0.045);
+  color: rgba(255, 250, 240, 0.6);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .valuation-status .source-chip {
@@ -2728,15 +2850,15 @@ thead .matrix-player-col span,
 .deal-workflow,
 .beta-workflow {
   width: min(var(--stage-max), 100%);
-  margin: 14px auto 0;
+  margin: 12px auto 0;
 }
 
 .workflow-command {
   display: grid;
-  grid-template-columns: minmax(260px, 0.48fr) minmax(520px, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(230px, 0.36fr) minmax(520px, 1fr);
+  gap: 10px;
   align-items: stretch;
-  padding: 14px;
+  padding: 10px;
   border: 1px solid rgba(159, 216, 207, 0.22);
   border-radius: 8px;
   background:
@@ -2752,7 +2874,7 @@ thead .matrix-player-col span,
   min-width: 0;
   display: grid;
   align-content: center;
-  gap: 10px;
+  gap: 6px;
   padding: 6px 4px;
 }
 
@@ -2768,8 +2890,17 @@ thead .matrix-player-col span,
 
 .workflow-command h2 {
   color: #fff6e5;
-  font-size: clamp(1.7rem, 2.4vw, 3rem);
+  font-size: clamp(1.34rem, 1.75vw, 2rem);
   line-height: 0.98;
+}
+
+.workflow-command p {
+  max-width: 560px;
+  margin: 0;
+  color: rgba(255, 250, 240, 0.7);
+  font-size: 0.84rem;
+  font-weight: 720;
+  line-height: 1.35;
 }
 
 .workflow-mini-tape {
@@ -2779,10 +2910,10 @@ thead .matrix-player-col span,
 }
 
 .workflow-mini-tape span {
-  min-height: 26px;
+  min-height: 23px;
   display: inline-flex;
   align-items: center;
-  padding: 0 9px;
+  padding: 0 8px;
   border: 1px solid rgba(255, 250, 240, 0.13);
   border-radius: 999px;
   color: rgba(255, 250, 240, 0.68);
@@ -2802,12 +2933,12 @@ thead .matrix-player-col span,
 
 .workflow-mode-card {
   min-width: 0;
-  min-height: 112px;
+  min-height: 76px;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 10px;
   align-items: center;
-  padding: 14px;
+  padding: 10px;
   border: 1px solid rgba(255, 250, 240, 0.12);
   border-radius: 8px;
   color: rgba(255, 250, 240, 0.74);
@@ -2842,8 +2973,8 @@ thead .matrix-player-col span,
 }
 
 .workflow-icon {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
   border: 1px solid rgba(159, 216, 207, 0.18);
@@ -2869,7 +3000,7 @@ thead .matrix-player-col span,
 .workflow-card-copy strong {
   min-width: 0;
   color: #fffaf0;
-  font-size: 1.08rem;
+  font-size: 1rem;
   line-height: 1.08;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2879,7 +3010,7 @@ thead .matrix-player-col span,
 .workflow-card-copy small {
   min-width: 0;
   color: rgba(255, 250, 240, 0.58);
-  font-size: 0.78rem;
+  font-size: 0.74rem;
   font-weight: 760;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2889,7 +3020,7 @@ thead .matrix-player-col span,
 .workflow-value {
   color: var(--pulse);
   font-family: var(--mono);
-  font-size: clamp(1.1rem, 1.2vw, 1.55rem);
+  font-size: clamp(1rem, 1vw, 1.35rem);
   font-weight: 900;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -4220,18 +4351,22 @@ thead .matrix-player-col span,
     padding-top: 18px;
   }
 
+  .valuation-app .top-actions {
+    display: none;
+  }
+
   .valuation-app .workbench-topbar {
     min-height: 0;
   }
 
   .valuation-app .brand-lockup {
-    grid-template-columns: 74px minmax(0, 1fr);
+    grid-template-columns: 64px minmax(0, 1fr);
     align-items: start;
   }
 
   .valuation-app .brand-logo {
-    width: 74px;
-    height: 74px;
+    width: 64px;
+    height: 64px;
     border-radius: 16px;
   }
 
@@ -4245,15 +4380,34 @@ thead .matrix-player-col span,
   }
 
   .workflow-command {
-    padding: 12px;
+    padding: 8px;
+  }
+
+  .workflow-command-copy {
+    display: none;
   }
 
   .workflow-mode-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .workflow-mode-card {
-    min-height: 96px;
+    min-height: 56px;
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .workflow-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .workflow-card-copy span,
+  .workflow-card-copy small,
+  .workflow-value {
+    display: none;
   }
 
   .quick-price-controls,
@@ -4325,23 +4479,23 @@ thead .matrix-player-col span,
 
 @media (min-width: 1800px) {
   .valuation-app .workbench-topbar {
-    min-height: 186px;
+    min-height: 104px;
   }
 
   .valuation-app .brand-lockup {
-    grid-template-columns: 128px minmax(0, 1fr);
-    gap: 22px;
+    grid-template-columns: 80px minmax(0, 1fr);
+    gap: 14px;
   }
 
   .valuation-app .brand-logo {
-    width: 128px;
-    height: 128px;
-    border-radius: 24px;
+    width: 80px;
+    height: 80px;
+    border-radius: 18px;
   }
 
   .valuation-app .brand-block h1 {
     max-width: none;
-    font-size: clamp(4.2rem, 3.8vw, 5.7rem);
+    font-size: clamp(2.8rem, 2.5vw, 3.8rem);
   }
 
   .valuation-app .workbench-layout {
@@ -4349,12 +4503,12 @@ thead .matrix-player-col span,
   }
 
   .workflow-command {
-    grid-template-columns: minmax(360px, 0.36fr) minmax(900px, 1fr);
-    padding: 18px;
+    grid-template-columns: minmax(320px, 0.34fr) minmax(840px, 1fr);
+    padding: 14px;
   }
 
   .workflow-mode-card {
-    min-height: 122px;
+    min-height: 94px;
   }
 
   .model-support-grid {
@@ -4518,18 +4672,30 @@ thead .matrix-player-col span,
     margin-top: 10px;
   }
 
-  .valuation-app .top-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+  .lookup-intent-bar {
+    padding: 10px;
+  }
+
+  .lookup-intent-copy small,
+  .lookup-intent-meta {
+    display: none;
+  }
+
+  .lookup-primary-search {
+    height: 46px;
+    padding-inline: 11px;
+  }
+
+  .lookup-primary-search input {
+    font-size: 0.94rem;
   }
 
   .workflow-mode-card {
-    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-columns: 32px minmax(0, 1fr);
   }
 
   .workflow-value {
-    grid-column: 2 / -1;
-    justify-self: start;
+    display: none;
   }
 
   .support-dock-head {
