@@ -1,0 +1,28 @@
+# Local/dev-only artifacts
+.git
+.vercel
+.env*
+.vercel-access-code.txt
+
+# Dependencies and build output
+node_modules
+dist
+dist-ssr
+coverage
+
+# Local databases and generated cache exports
+local-data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+tmp
+
+# Logs and OS/editor files
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.DS_Store
+.vscode
+.idea

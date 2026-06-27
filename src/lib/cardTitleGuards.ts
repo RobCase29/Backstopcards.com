@@ -1,3 +1,5 @@
+import { titleMatchesBowman2026ChromeAutoBlocker } from './bowman2026Official'
+
 export const BOWMAN_CHROME_AUTO_MODEL_BLOCKERS = [
   /\btopps\s+bunt\s+digital\b/i,
   /\btopps\s+bunt\b/i,
@@ -19,15 +21,8 @@ export const BOWMAN_CHROME_AUTO_MODEL_BLOCKERS = [
   /\bascensions?\b/i,
   /\bdraft\s+night\b/i,
   /\bdie[-\s]?cut\b/i,
-  /\belectric\s+sluggers?\b/i,
-  /\bunder\s+the\s+radar\b/i,
-  /\bpatchwork\b/i,
-  /\bcrystall?ized\b/i,
-  /\banime\b/i,
-  /\bkanji\b/i,
-  /\bspotlights?\b/i,
 ]
 
 export function titleEligibleForBowmanChromeAutoModel(title: string) {
-  return !BOWMAN_CHROME_AUTO_MODEL_BLOCKERS.some((pattern) => pattern.test(title))
+  return !titleMatchesBowman2026ChromeAutoBlocker(title) && !BOWMAN_CHROME_AUTO_MODEL_BLOCKERS.some((pattern) => pattern.test(title))
 }

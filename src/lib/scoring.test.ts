@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS, normalizeListing, rankOpportunities } from './scoring'
 import type { ChecklistModel, ProspectPulseListing } from '../types'
+import type { SalesCachePlayerModel } from './salesCache'
 
 const model: ChecklistModel = {
   category: 'bowman',
@@ -111,6 +112,261 @@ describe('normalizeListing', () => {
     expect(normalized.isEligibleGraded).toBe(true)
   })
 
+  it('infers snack-pack autos as chrome auto /5 variation lanes', () => {
+    const normalized = normalizeListing(
+      listing({
+        title: '2026 Bowman Chrome Eli Willits 1st Bowman Sunflower Snack Pack Auto',
+        variation: '',
+        serial_denominator: null,
+      }),
+    )
+
+    expect(normalized.variationLabel).toBe('Sunflower Snack Pack /5')
+    expect(normalized.serialDenominator).toBe(5)
+    expect(normalized.isTargetAuto).toBe(true)
+  })
+
+  it('infers plain refractor redemptions as the /499 auto lane', () => {
+    const normalized = normalizeListing(
+      listing({
+        title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Refractor Redemption',
+        variation: '',
+        serial_denominator: null,
+      }),
+    )
+
+    expect(normalized.variationLabel).toBe('Refractor /499')
+    expect(normalized.serialDenominator).toBe(499)
+  })
+
+  it('does not infer Red /5 from Red Sox team text on base autos', () => {
+    const normalized = normalizeListing(
+      listing({
+        title: '2026 Bowman Chrome Justin Gonzales 1st Bowman Auto Red Sox #CPA-JG Top Prospect',
+        player_name: 'Justin Gonzales',
+        variation: '',
+        serial_denominator: null,
+      }),
+    )
+
+    expect(normalized.variationLabel).toBe('Base')
+    expect(normalized.serialDenominator).toBeNull()
+  })
+
+  it('prices true base autos from the player base anchor', () => {
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'base-auto',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman Chrome Prospect Autographs Auto CPA-EW',
+          current_price: 70,
+          variation: '',
+          serial_denominator: null,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      model,
+    )
+
+    expect(opportunities[0].valuationSource).toBe('base-auto')
+    expect(opportunities[0].matchedVariation).toBe('Base Auto')
+    expect(opportunities[0].fairValue).toBe(100)
+  })
+
+  it('keeps Red Sox base autos on the base-auto model instead of the Red /5 lane', () => {
+    const redSoxModel: ChecklistModel = {
+      ...model,
+      multipliers: [
+        { variation: 'Base Auto', avgMultiplier: 1, playerCount: 76, totalSales: 220 },
+        { variation: 'Red /5', avgMultiplier: 55, playerCount: 28, totalSales: 35 },
+      ],
+      players: [
+        {
+          playerName: 'Justin Gonzales',
+          baseAvgPrice: 86,
+          baseSalesCount: 3,
+          variations: [],
+        },
+      ],
+    }
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'justin-red-sox-base-auto',
+          player_name: 'Justin Gonzales',
+          title: '2026 Bowman Chrome JUSTIN GONZALES 1st Auto Red Sox #CPA-JG Top Prospect',
+          current_price: 86,
+          shipping_cost: 0,
+          variation: '',
+          serial_denominator: null,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      redSoxModel,
+    )
+
+    expect(opportunities).toHaveLength(1)
+    expect(opportunities[0]?.matchedVariation).toBe('Base Auto')
+    expect(opportunities[0]?.valuationSource).toBe('base-auto')
+    expect(opportunities[0]?.fairValue).toBe(86)
+  })
+
+  it('routes IP and hand-signed base cards into a separate lower-value lane', () => {
+    const normalized = normalizeListing(
+      listing({
+        title: '2026 Bowman Chrome Eli Willits 1st Bowman Signed Rare Auto #BCP-95',
+        current_price: 40,
+        variation: '',
+        serial_denominator: null,
+        comps: [],
+      }),
+    )
+
+    expect(normalized.isHandSigned).toBe(true)
+    expect(normalized.variationLabel).toBe('Hand Signed Auto')
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'signed-rare',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman Signed Rare Auto #BCP-95',
+          current_price: 40,
+          variation: '',
+          serial_denominator: null,
+          comps: [],
+        }),
+        listing({
+          item_id: 'ip-auto',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman Base #BCP-95 IP AUTO',
+          current_price: 35,
+          variation: '',
+          serial_denominator: null,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      model,
+    )
+
+    expect(opportunities.map((opportunity) => opportunity.valuationSource)).toEqual([
+      'hand-signed-base',
+      'hand-signed-base',
+    ])
+    expect(opportunities.every((opportunity) => opportunity.matchedVariation === 'Hand Signed Auto')).toBe(true)
+    expect(opportunities.every((opportunity) => Math.abs(opportunity.fairValue - 55) < 0.01)).toBe(true)
+    expect(opportunities.every((opportunity) => opportunity.warnings.includes('not pack-issued certified auto'))).toBe(true)
+  })
+
+  it('does not let hand-signed listings borrow the normal base-auto sold lane', () => {
+    const soldCacheModel: SalesCachePlayerModel = {
+      available: true,
+      playerName: 'Eli Willits',
+      baseAutoPrice: 100,
+      buckets: [
+        {
+          bucketKey: 'eli:base-auto:raw',
+          playerName: 'Eli Willits',
+          releaseYear: 2026,
+          productFamily: 'Bowman Chrome',
+          cardClass: 'auto',
+          variationLabel: 'Base Auto',
+          gradeBucket: 'Raw',
+          serialDenominator: null,
+          saleCount: 12,
+          sales30: 10,
+          sales90: 12,
+          auctionCount: 6,
+          binCount: 6,
+          minPrice: 90,
+          q1Price: 95,
+          medianPrice: 100,
+          avgPrice: 102,
+          q3Price: 110,
+          maxPrice: 130,
+          modelPrice: 105,
+          baseAutoMultiple: 1,
+          latestSoldAt: '2026-06-23T00:00:00.000Z',
+          generatedAt: '2026-06-24T00:00:00.000Z',
+        },
+      ],
+      sales: [],
+    }
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'ip-auto',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman Base #BCP-95 IP AUTO',
+          current_price: 35,
+          variation: '',
+          serial_denominator: null,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      model,
+      soldCacheModel,
+    )
+
+    expect(opportunities[0].valuationSource).toBe('hand-signed-base')
+    expect(opportunities[0].fairValue).toBeCloseTo(55)
+    expect(opportunities[0].compSaleCount).toBeNull()
+  })
+
+  it('anchors thin snack-pack BIN valuations to base times release multiple instead of a one-sale player comp', () => {
+    const snackPackModel: ChecklistModel = {
+      ...model,
+      multipliers: [
+        {
+          variation: 'Sunflower Seeds /5',
+          avgMultiplier: 30.2,
+          avgPrice: 334,
+          playerCount: 20,
+          totalSales: 36,
+        },
+      ],
+      players: [
+        {
+          playerName: 'Dillon Lewis',
+          baseAvgPrice: 11.06,
+          baseSalesCount: 4,
+          variations: [
+            {
+              variation: 'Sunflower Snack Pack /5',
+              avgPrice: 650,
+              multiplier: 58.8,
+              salesCount: 1,
+            },
+          ],
+        },
+      ],
+    }
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'dillon-sunflower',
+          player_name: 'Dillon Lewis',
+          title: '2026 Bowman Chrome Dillon Lewis 1st Snack Pack Sunflower Seeds Auto /5 SSP',
+          current_price: 500,
+          shipping_cost: 0,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      snackPackModel,
+    )
+
+    expect(opportunities).toHaveLength(1)
+    expect(opportunities[0]?.valuationSource).toBe('player-base-curve')
+    expect(opportunities[0]?.matchedVariation).toBe('Sunflower Seeds /5')
+    expect(opportunities[0]?.modelPrice).toBeCloseTo(334.01, 1)
+    expect(opportunities[0]?.variationPrice).toBe(650)
+  })
+
   it('does not treat a graded card below 9 as eligible for the raw-floor slab model', () => {
     const normalized = normalizeListing(
       listing({
@@ -134,6 +390,21 @@ describe('normalizeListing', () => {
 
     expect(normalized.isFirstBowman).toBe(false)
     expect(normalized.isTargetAuto).toBe(false)
+  })
+
+  it('detects low-serial 1st Bowman non-autos as a separate gated universe', () => {
+    const normalized = normalizeListing(
+      listing({
+        title: '2026 Bowman Chrome Eli Willits 1st Bowman Green Refractor /99',
+        variation: '',
+        serial_denominator: null,
+      }),
+    )
+
+    expect(normalized.isAutograph).toBe(false)
+    expect(normalized.isTargetAuto).toBe(false)
+    expect(normalized.isLowSerialNonAuto).toBe(true)
+    expect(normalized.serialDenominator).toBe(99)
   })
 
   it('marks expired BIN listings as ended', () => {
@@ -565,6 +836,117 @@ describe('rankOpportunities', () => {
     expect(opportunities).toEqual([])
   })
 
+  it('only ranks low-serial non-autos when an exact sold-cache lane supports the model', () => {
+    const soldCacheModel: SalesCachePlayerModel = {
+      available: true,
+      playerName: 'Eli Willits',
+      baseAutoPrice: 100,
+      buckets: [
+        {
+          bucketKey: 'eli:green-99-non-auto:raw',
+          playerName: 'Eli Willits',
+          releaseYear: 2026,
+          productFamily: 'Bowman Chrome',
+          cardClass: 'chrome',
+          variationLabel: 'Green /99',
+          gradeBucket: 'Raw',
+          serialDenominator: 99,
+          saleCount: 5,
+          sales30: 5,
+          sales90: 5,
+          auctionCount: 2,
+          binCount: 3,
+          minPrice: 38,
+          q1Price: 42,
+          medianPrice: 45,
+          avgPrice: 46,
+          q3Price: 50,
+          maxPrice: 58,
+          modelPrice: 48,
+          baseAutoMultiple: null,
+          latestSoldAt: '2026-06-23T00:00:00.000Z',
+          generatedAt: '2026-06-24T00:00:00.000Z',
+        },
+      ],
+      sales: Array.from({ length: 5 }, (_, index) => ({
+        itemId: `green-99-sale-${index}`,
+        playerName: 'Eli Willits',
+        title: '2026 Bowman Chrome Eli Willits 1st Bowman Green Refractor /99',
+        salePriceText: '$48',
+        salePrice: 48 + index,
+        soldAt: new Date(Date.now() - index * 86_400_000).toISOString(),
+        saleType: 'Buy It Now',
+        channel: 'Card Hedge',
+        seller: 'seller',
+        sourcePage: null,
+        sourceOffset: index,
+        releaseYear: 2026,
+        productFamily: 'Bowman Chrome',
+        cardClass: 'chrome',
+        variationLabel: 'Green /99',
+        serialDenominator: 99,
+        gradeCompany: null,
+        gradeValue: null,
+        gradeBucket: 'Raw',
+        insertName: null,
+        bucketKey: 'eli:green-99-non-auto:raw',
+        modelEligible: true,
+        exclusionReason: null,
+        isAuto: false,
+        isBowman: true,
+        isChrome: true,
+        isPaper: false,
+        isCaseHit: false,
+        isInsert: false,
+        isRedemption: false,
+        isRedeemed: false,
+        isDigital: false,
+        isLot: false,
+        erroneous: false,
+        erroneousNote: '',
+        flagUpdatedAt: '',
+      })),
+    }
+
+    const supported = rankOpportunities(
+      [
+        listing({
+          item_id: 'green-99-live',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman Green Refractor /99',
+          current_price: 35,
+          variation: '',
+          serial_denominator: null,
+          comps: [],
+        }),
+      ],
+      { ...DEFAULT_SETTINGS, targetUniverse: 'low-serial-non-auto' },
+      model,
+      soldCacheModel,
+    )
+
+    expect(supported).toHaveLength(1)
+    expect(supported[0]?.valuationSource).toBe('sales-cache-exact')
+    expect(supported[0]?.matchedVariation).toBe('Green /99')
+
+    const unsupported = rankOpportunities(
+      [
+        listing({
+          item_id: 'orange-25-live',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman Orange Refractor /25',
+          current_price: 35,
+          variation: '',
+          serial_denominator: null,
+          comps: [],
+        }),
+      ],
+      { ...DEFAULT_SETTINGS, targetUniverse: 'low-serial-non-auto' },
+      model,
+      soldCacheModel,
+    )
+
+    expect(unsupported).toEqual([])
+  })
+
   it('includes PSA/BGS/SGC/CGC 9+ slabs in raw-plus-graded rankings with raw floor plus graded model', () => {
     const rawOpportunity = rankOpportunities([listing({ item_id: 'raw-card' })], DEFAULT_SETTINGS, model)[0]
     const opportunities = rankOpportunities(
@@ -698,5 +1080,118 @@ describe('rankOpportunities', () => {
     )
 
     expect(opportunities.map((opportunity) => opportunity.listing.id)).toEqual(['draft-card'])
+  })
+
+  it('uses a matching local sold lane as the active listing model rail', () => {
+    const soldCacheModel: SalesCachePlayerModel = {
+      available: true,
+      playerName: 'Eli Willits',
+      baseAutoPrice: 100,
+      buckets: [
+        {
+          bucketKey: 'eli:refractor-499:raw',
+          playerName: 'Eli Willits',
+          releaseYear: 2026,
+          productFamily: 'Bowman Chrome',
+          cardClass: 'auto',
+          variationLabel: 'Refractor /499',
+          gradeBucket: 'Raw',
+          serialDenominator: 499,
+          saleCount: 6,
+          sales30: 4,
+          sales90: 6,
+          auctionCount: 3,
+          binCount: 3,
+          minPrice: 135,
+          q1Price: 160,
+          medianPrice: 180,
+          avgPrice: 184,
+          q3Price: 205,
+          maxPrice: 225,
+          modelPrice: 180,
+          baseAutoMultiple: 1.8,
+          latestSoldAt: '2026-06-23T00:00:00.000Z',
+          generatedAt: '2026-06-24T00:00:00.000Z',
+        },
+      ],
+      sales: [],
+    }
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'refractor-redemption',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Refractor Redemption',
+          current_price: 90,
+          variation: '',
+          serial_denominator: null,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      model,
+      soldCacheModel,
+    )
+
+    expect(opportunities[0].valuationSource).toBe('sales-cache-exact')
+    expect(opportunities[0].fairValue).toBe(180)
+    expect(opportunities[0].matchedVariation).toBe('Refractor /499')
+    expect(opportunities[0].compSaleCount).toBe(6)
+  })
+
+  it('does not let a sold lane from another release override a selected-release listing', () => {
+    const soldCacheModel: SalesCachePlayerModel = {
+      available: true,
+      playerName: 'Eli Willits',
+      baseAutoPrice: 100,
+      buckets: [
+        {
+          bucketKey: 'eli:2026:blue-150:raw',
+          playerName: 'Eli Willits',
+          releaseYear: 2026,
+          productFamily: 'Bowman Chrome',
+          cardClass: 'auto',
+          variationLabel: 'Blue /150',
+          gradeBucket: 'Raw',
+          serialDenominator: 150,
+          saleCount: 9,
+          sales30: 6,
+          sales90: 9,
+          auctionCount: 4,
+          binCount: 5,
+          minPrice: 900,
+          q1Price: 950,
+          medianPrice: 999,
+          avgPrice: 999,
+          q3Price: 1050,
+          maxPrice: 1100,
+          modelPrice: 999,
+          baseAutoMultiple: 9.99,
+          latestSoldAt: '2026-06-23T00:00:00.000Z',
+          generatedAt: '2026-06-24T00:00:00.000Z',
+        },
+      ],
+      sales: [],
+    }
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'draft-blue',
+          title: '2025 Bowman Draft Chrome Eli Willits 1st Bowman Auto Blue /150',
+          release_year: 2025,
+          product_type: 'Bowman Draft Chrome',
+          current_price: 150,
+          variation: 'Blue',
+          serial_denominator: 150,
+          comps: [],
+        }),
+      ],
+      { ...DEFAULT_SETTINGS, targetReleaseYear: 2025, targetCategory: 'draft', releaseScope: 'selected' },
+      [model, draftModel],
+      soldCacheModel,
+    )
+
+    expect(opportunities).toHaveLength(1)
+    expect(opportunities[0].valuationSource).not.toMatch(/^sales-cache/)
+    expect(opportunities[0].fairValue).toBeLessThan(500)
   })
 })

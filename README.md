@@ -1,6 +1,6 @@
 # Backstop Card Finder
 
-Local price atlas for Bowman 1st auto cards. The app turns ProspectPulse checklist data into a player x variation model using a recency-weighted base price, set-level variation multiples, and Scout the Statline rank/trend context, then can scan active eBay Buy It Now listings and rank them against the model by raw dollar edge.
+Local price atlas for Bowman 1st auto cards. The app turns checklist data into a player x variation model using a recency-weighted base price, set-level variation multiples, and Formulated Consensus dynasty context, then can scan active eBay Buy It Now listings and rank them against the model by raw dollar edge.
 
 ## Run
 
@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-The app opens directly into the checklist price atlas. If a ProspectPulse session or token is available, it loads player-level base data; otherwise it can still show public set multiplier curves where available.
+The app opens directly into the Backstop workflow: price a card, inspect the modeled checklist ladder, and scan active BINs/auctions against the current model. The current source-of-truth path is official Bowman checklists + Wax Pack Hero 1st Bowman evidence + Card Hedge/local sold comps; legacy checklist feeds remain optional fallback data.
 
 Use Node 22.13+ locally. This repo includes `.nvmrc` set to Node 22 to match Vercel.
 
@@ -19,16 +19,33 @@ Run the full local guardrail pass with:
 npm run check
 ```
 
-## ProspectPulse Connection
+## Consensus Rankings
 
-Do not put your ProspectPulse password in this repo.
+Dynasty context is refreshed from Scout the Statline's Formulated Consensus endpoint. The app pulls hitters and pitchers separately, always includes low-coverage rows, then normalizes them into one combined ranking layer for lookup, BIN targeting, and dynasty-value sorting.
 
-Option A: use the in-app ProspectPulse form. The local dev proxy exchanges your email/password for a Supabase session and stores only the session in browser local storage.
+Refresh the local ranking snapshots with:
+
+```bash
+npm run rankings:refresh
+```
+
+The generated snapshots are:
+
+- `src/data/sts_formulated_consensus_hitters.csv`
+- `src/data/sts_formulated_consensus_pitchers.csv`
+
+GitHub Actions also runs `.github/workflows/refresh-rankings.yml` daily. It refreshes both files, validates the ranking parser, and commits only when the data changed.
+
+## Legacy Checklist Feed (Optional)
+
+The app can still use the older private checklist feed as a fallback while the local checklist ledger and Card Hedge comp cache become the scale backbone. Do not put third-party passwords in this repo.
+
+Option A: use the in-app connection form. The local dev proxy exchanges your email/password for a Supabase session and stores only the session in browser local storage.
 
 Option B: create `.env.local` from `.env.example` and set:
 
 ```bash
-PROSPECTPULSE_ACCESS_TOKEN=your_supabase_access_token
+PROSPECTPULSE_ACCESS_TOKEN=your_legacy_feed_access_token
 ```
 
 The token stays server-side in the Vite dev proxy. For a longer-lived private deployment, set the server-managed login variables instead:
@@ -38,9 +55,9 @@ PROSPECTPULSE_EMAIL=your_account_email
 PROSPECTPULSE_PASSWORD=your_account_password
 ```
 
-When either server-managed option is present, the app treats ProspectPulse as a managed connection: the UI shows `ProspectPulse managed`, every approved browser uses the same server-side connection, and the local disconnect button is hidden because users do not own that session.
+When either server-managed option is present, every approved browser uses the same server-side connection and the local disconnect button is hidden because users do not own that session.
 
-For a private deployment, set `PROSPECTPULSE_ACCESS_TOKEN` in the host's server environment and protect the site with an invite-only gate such as Cloudflare Access, Vercel password protection/auth middleware, or Google Workspace sign-in. Do not commit `.env.local`, ProspectPulse passwords, or live tokens.
+For a private deployment, set any legacy feed credential in the host's server environment and protect the site with an invite-only gate such as Cloudflare Access, Vercel password protection/auth middleware, or Google Workspace sign-in. Do not commit `.env.local`, third-party passwords, or live tokens.
 
 ## Private Web Access
 
@@ -51,29 +68,30 @@ Set these Vercel environment variables before sharing a deployment:
 ```bash
 APP_ACCESS_CODE=long_random_code_you_give_to_friends
 APP_SESSION_SECRET=separate_long_random_cookie_signing_secret
-PROSPECTPULSE_ACCESS_TOKEN=your_server_side_prospectpulse_token
-# Or use PROSPECTPULSE_EMAIL and PROSPECTPULSE_PASSWORD for server-managed login
 EBAY_CLIENT_ID=your_ebay_client_id
 EBAY_CLIENT_SECRET=your_ebay_client_secret
 EBAY_ENV=production
 EBAY_MARKETPLACE_ID=EBAY_US
+CARD_HEDGE_API_KEY=your_card_hedge_api_key
 ```
+
+Legacy checklist-feed credentials can also be set server-side when needed: `PROSPECTPULSE_ACCESS_TOKEN`, or `PROSPECTPULSE_EMAIL` plus `PROSPECTPULSE_PASSWORD`.
 
 If `APP_ACCESS_CODE` or `APP_SESSION_SECRET` is missing, the middleware returns a locked configuration message instead of serving the app. For a tighter friend-by-friend model later, replace the shared code with Vercel Deployment Protection, Cloudflare Access, or a small user table with per-user codes and revocation.
 
 ## Security Notes
 
-Treat the API proxy as private infrastructure. It holds the ProspectPulse and eBay credentials server-side, so the site should not be reachable without an access gate.
+Treat the API proxy as private infrastructure. It holds Card Hedge, eBay, and optional legacy-feed credentials server-side, so the site should not be reachable without an access gate.
 
 Minimum safe setup before sharing:
 
 1. Keep `.env.local` local only. It is ignored by git via `*.local`.
 2. Put any hosted version behind the included Vercel access gate, Cloudflare Access, Tailscale, Vercel Deployment Protection, or another invite-only gate before sharing the URL.
 3. Do not expose `npm run dev` directly to the public internet. Use a private tunnel/access layer for local sharing, or deploy with an equivalent server-side API/proxy layer.
-4. Keep ProspectPulse and eBay tokens in server environment variables only. Never place them in `VITE_` variables or client code.
+4. Keep Card Hedge, eBay, and optional legacy-feed tokens in server environment variables only. Never place them in `VITE_` variables or client code.
 5. Rotate any credential that was pasted into chat, screenshots, logs, or a public issue tracker.
 
-The local and hosted API proxies reject cross-origin POSTs, oversized JSON bodies, unknown ProspectPulse function routes, and non-Bowman eBay queries to reduce accidental token/API-quota exposure.
+The local and hosted API proxies reject cross-origin POSTs, oversized JSON bodies, unknown legacy-feed function routes, and non-Bowman eBay queries to reduce accidental token/API-quota exposure.
 
 ## eBay BIN Radar
 
@@ -83,7 +101,7 @@ The BIN Deal Radar can scan one loaded checklist or every loaded checklist. It b
 modeled variation price - all-in BIN price
 ```
 
-The radar can scan the full checklist, focus on a specific player name, focus on a variation/parallel term such as `packfractor`, `gold shimmer`, or `red lava`, or use the `Target 50` bucket. `Target 50` scores the best players to hunt using modeled base-auto price, STS overall rank, STS prospect rank, and 3/7/14/30-day STS rank movement.
+The radar can scan the full checklist, focus on a specific player name, focus on a variation/parallel term such as `packfractor`, `gold shimmer`, or `red lava`, or use the `Target 50` bucket. `Target 50` scores the best players to hunt using modeled base-auto price, consensus rank, prospect rank, source coverage, and current market quality.
 
 To enable live scans, create `.env.local` from `.env.example` and set:
 
@@ -103,9 +121,9 @@ EBAY_CATEGORY_ID=
 
 `EBAY_ZIP_CODE` improves shipping context. `EBAY_CATEGORY_ID` can narrow search once you choose the correct eBay leaf category for trading cards.
 
-## eBay Sold Model Lab
+## eBay Sold Access (Optional)
 
-The eBay Sold Model Lab is the first pass at replacing ProspectPulse valuation math with our own sold-comp infrastructure. It uses the 2026 Bowman checklist as the guardrail, requests sold items through the local `/api/ebay/sold` proxy, then:
+The app now prefers Card Hedge and the local canonical comp cache for sold-comp modeling. The eBay sold route remains as an optional future path if Marketplace Insights access is enabled. It uses the 2026 Bowman checklist as the guardrail, requests sold items through the local `/api/ebay/sold` proxy, then:
 
 1. Rejects paper, digital, redeemed, insert, and wrong-player sold rows.
 2. Classifies sold titles into base auto or a known release variation.
@@ -125,33 +143,181 @@ If eBay grants Marketplace Insights with a different OAuth scope, set this optio
 EBAY_MARKETPLACE_INSIGHTS_SCOPE=
 ```
 
-The regular Browse API still powers active BIN discovery; the sold model is intended to become the pricing core once sold-comps access is confirmed.
+The regular Browse API still powers active BIN/auction discovery. Card Hedge/local canonical comps are the intended pricing core unless eBay sold-comps access proves cleaner at scale.
 
-## Checklist Model
+## Local Sales Cache
 
-The modeled universe is discovered from ProspectPulse and capped at 2021+ for speed:
+Market Movers sold rows can be imported into a local SQLite cache so immutable comps do not need to be re-pulled every refresh. Raw scrape files, the SQLite database, and generated summaries live under `local-data/`, which is ignored by Git.
 
-- Bowman: `2021-Bowman` through current
-- Bowman Chrome: `2021-Bowman-Chrome` through current
-- Bowman Draft: `2021-Bowman-Draft` through current
+```bash
+npm run sales:import:market-movers -- local-data/market-movers/aiva-arquette-bowman-2026-06-23.raw.json
+```
 
-It calls ProspectPulse `api-checklists` for each supported set:
+For the normal scale workflow, drop any fresh `*.raw.json` Market Movers pulls into `local-data/market-movers/` and run:
 
-- `getCategoryOverview` for Bowman, Bowman Chrome, and Bowman Draft
-- `getCategoryYearMultipliers` with the set category and year
-- `getChecklistPlayers` with the set release when authenticated
+```bash
+npm run sales:sync
+npm run sales:doctor
+```
 
-Modeled-price inputs:
+`sales:sync` sweeps the folder, upserts rows by item ID, re-normalizes cached rows with the latest title parser, preserves manual sale flags and bucket merges, and rebuilds each affected player's model from the full cached history instead of only the newest pull. This is the path to importing every player over time without losing older comps.
 
-1. Raw dated base sales, when ProspectPulse provides them
-2. A recency-weighted robust base model: 30-day weighted when samples are healthy, 30/90-day blend when samples are thin
-3. ProspectPulse player base TWMA as the fallback when raw base sales are unavailable
-4. The selected release's variation multiplier
-5. Modeled value = modeled base x release multiplier
+`sales:doctor` reports cache health: raw rows, modeled players, latest sold date, reviewed/flagged rows, bucket overrides, missing base-auto anchors, and fresh live-market buy dots.
 
-When player-level checklist data is available, the board expands every checklist player across every set variation. The leaderboard is ranked by modeled base auto value, and each selected player exposes a complete multiplier valuation ladder. The lookup is model-first; live eBay/BIN discovery is a downstream comparison layer against that pricing core.
+Fresh BIN/auction scans are also cached as short-lived live-market snapshots. They hydrate the Live Market Map after reloads, but expire automatically so stale active listings do not contaminate permanent sold-comp models.
 
-Authenticated checklist coverage should show the combined player count as `loaded / total` in the Model Load panel. Public ProspectPulse overview can provide set multiplier curves before authenticated player bases are loaded.
+## Official Checklist Ledger
+
+The scale model starts from the official Bowman checklist, not from whatever a marketplace search happens to return. The checklist ledger stores the release, every official card row, player-level chase signals, reusable variation templates, and the generated player x variation universe that Card Hedge, eBay, and manual cleanup can attach to later.
+
+Import the 2026 Bowman workbook with:
+
+```bash
+npm run checklist:import:2026
+```
+
+That command reads `/Users/rc3/Downloads/2026-Bowman-Baseball-Checklist.xlsx`, upserts the official cards, seeds the 2026 variation template catalog, rebuilds the modelable universe, scans already-cached comp titles for `1st Bowman` evidence, and seeds the canonical refresh queue. It also writes a checkpoint report to:
+
+```text
+local-data/checklists/2026-bowman-checklist-ledger.json
+```
+
+Important modeling rule: the official checklist is the source of truth for what exists, while cached sales/listings are the source of truth for chase status. Because the workbook does not cleanly separate 1st Bowman players from non-1st players, the app infers `confirmed_1st`, `likely_1st`, `non_1st`, or `unknown` from Card Hedge, Market Movers, and future eBay titles. Unknown players stay in the universe, but confirmed 1st autos get queue priority.
+
+Wax Pack Hero's First Bowman release lists are wired in as a high-confidence chase-status source. Refresh 2026 1st Bowman evidence with:
+
+```bash
+npm run checklist:firsts:2026
+```
+
+That command fetches the 2026 Wax Pack Hero page, parses the `BP-*` 1st Bowman player list, records it as `wax-pack-hero-firstbowman` evidence, rebuilds the generated universe, and reseeds the comp-refresh queue so confirmed 1sts float to the top. Marketplace/Card Hedge/Market Movers title evidence remains useful as backup and for catching edge cases.
+
+Use this when taxonomy rules change or a new checklist file arrives:
+
+```bash
+npm run checklist:import:2026
+npm run checklist:firsts:2026
+npm run canonical:rebuild
+npm run sales:doctor
+```
+
+`sales:doctor` reports checklist health, including official card count, generated universe rows, first-status coverage, and queued comp-refresh players.
+
+The ledger is also inspectable through the local/private API:
+
+```text
+/api/checklist/status
+/api/checklist/universe?player=Aiva%20Arquette&cardClass=auto&limit=20
+```
+
+Universe rows are returned least scarce to most scarce within the chase category, so a player auto ladder starts at Base Auto and walks toward the rarer parallels.
+
+## Card Hedge API
+
+Card Hedge is wired as the preferred server-side data source for scalable recent comps and price refreshes. Keep the API key server-only in `.env.local` or the deployment host:
+
+```bash
+CARD_HEDGE_API_KEY=your_card_hedge_api_key
+CARD_HEDGE_PLAN=elite
+CARD_HEDGE_RATE_LIMIT_PER_MINUTE=80
+CARD_HEDGE_DAILY_LIMIT=200000
+```
+
+The local proxy exposes only app-safe routes under `/api/card-hedge/*`, tracks local usage in SQLite, and never returns the API key to the browser. Elite accounts can cache the daily price export locally:
+
+```bash
+npm run card-hedge:daily-export -- --date=2026-06-24
+```
+
+Exports stream into `local-data/card-hedge/daily/` with a sidecar metadata file. This should become the bulk backbone for scale: daily export first, `/price-updates` for deltas, `/comps` and `/card-search` for targeted player/variation debugging, then `npm run canonical:rebuild` to fold clean comps into the stable card model.
+
+For targeted player work, use Card Hedge search plus comps. This writes native Card Hedge source tables and still mirrors the same comp rows into the older sales/model cache for compatibility:
+
+```bash
+npm run card-hedge:sync-player -- --player "Aiva Arquette" --year 2026 --grades Raw --count 100
+```
+
+When native Card Hedge rows exist, `npm run canonical:rebuild` reads those rows directly and suppresses the mirrored `card-hedge-comps` rows so the same sale is not counted twice. This is the preferred scale path: Card Hedge native comps -> Bowman taxonomy parser -> canonical card ledger -> pricing/deal model.
+
+Run the controlled 2026 pilot before widening the pull:
+
+```bash
+npm run card-hedge:pilot-2026 -- --dry-run
+npm run card-hedge:pilot-2026 -- --rpm 80 --grades Raw --count 100 --max-cards 120
+```
+
+When a title parser or taxonomy rule improves, reclassify cached Card Hedge rows locally without spending API calls:
+
+```bash
+npm run card-hedge:sync-player -- --player "Aiva Arquette" --year 2026 --reclassify-only
+```
+
+`sales:doctor` reports Card Hedge cards/sales, source breakdown, canonical coverage, and whether cached Card Hedge rows are ready for local reclassification. Market Movers remains useful as a secondary validation surface, but Card Hedge is the faster path we should build around if the comp coverage proves equivalent.
+
+Market Movers card-search and detail-panel captures can also be imported as structured 365-day card snapshots. Use the structured Market Movers capture helper from the app/library on a logged-in Market Movers page after selecting the desired card and time window, save the clipboard JSON as `*.structured.json` under `local-data/market-movers/`, then run:
+
+```bash
+npm run sales:sync:structured
+```
+
+Structured captures populate card records, latest card metrics, and daily completed-sale aggregates. This complements raw sold rows: the raw cache remains best for item-level modeling, while the structured cache gives fast charting and Market Movers' own taxonomy for the last 365 days.
+
+Canonical comp models now sit underneath both import paths. Run:
+
+```bash
+npm run canonical:rebuild
+```
+
+to rebuild the normalized card ledger from everything already cached, or use the full one-command refresh:
+
+```bash
+npm run sales:refresh
+```
+
+The canonical layer creates stable card identities across item-level sales, Market Movers card snapshots, manual bucket merges, and future eBay sold/listing feeds. It stores one row per canonical card/grade, daily chart prices, and summary metrics such as median, recent 3/5 average, 30/90-day time-weighted models, auction/BIN counts, and latest comp date. This is the intended scale path for recent comps across every checklist player and variation.
+
+To work through the 2026 Bowman checklist at scale, start from the official checklist ledger, generate the next Market Movers batch only when you need browser-assisted validation, then import and sync queue status:
+
+```bash
+npm run checklist:import:2026
+npm run comps:batch:market-movers -- --limit=8
+npm run sales:refresh
+npm run comps:queue:sync
+```
+
+The batch command writes a JSON manifest and a simple local HTML link sheet under `local-data/queues/`. It does not mark players complete until actual Market Movers raw or structured captures are imported into the database, so the queue can pause and resume safely.
+
+The importer writes:
+
+- `local-data/backstop-sales.sqlite`
+- `*.model-summary.json`
+- `*.model-buckets.csv`
+- durable per-player `*.cache-summary.json`
+- durable per-player `*.cache-buckets.csv`
+
+Rows are deduped by item ID, normalized into card buckets, and separated into model-eligible single cards versus noise such as lots, redeemed cards, player mismatches, and in-person autos.
+
+## Legacy Checklist Feed Fallback
+
+The older private checklist feed is still wired as an optional fallback for older release multiplier/base-price data, but it is no longer the source of truth for scale work. New work should start with:
+
+```bash
+npm run checklist:import:2026
+npm run checklist:firsts:2026
+npm run card-hedge:pilot-2026 -- --dry-run
+npm run canonical:rebuild
+npm run sales:doctor
+```
+
+Primary modeled-price inputs now come from:
+
+1. Official Bowman checklist rows, including generated player x variation universe rows
+2. Wax Pack Hero 1st Bowman release lists as high-confidence chase evidence
+3. Card Hedge/native comp rows and local canonical sold-comp summaries
+4. Manual cleanup flags and bucket merges for taxonomy fixes
+5. Active eBay Browse listings as the downstream deal comparison layer
+
+The old feed can still fill temporary gaps while Card Hedge coverage and local comps are being expanded, but anything new should be designed around the checklist ledger and canonical comp model.
 
 ## Data Import
 
@@ -164,7 +330,7 @@ Eli Willits,285,455,Blue /150,2026 Bowman Chrome,https://example.com,0,
 
 ## Scoring
 
-The board is sorted by modeled base auto value by default and includes database-style search, set/category/source/STS filters, and sort controls. STS-powered sorts include overall rank, prospect rank, dynasty score, momentum, riser value, and BIN target score. Export writes the full long-form valuation ladder to CSV, including base source, confidence, 30/90-day sale counts, STS ranks, STS trends, and BIN target score.
+The board is sorted by modeled base auto value by default and includes database-style search, set/category/source/consensus filters, and sort controls. Consensus-powered sorts include overall rank, prospect rank, dynasty score, value score, and BIN target score. Export writes the full long-form valuation ladder to CSV, including base source, confidence, 30/90-day sale counts, consensus ranks, and BIN target score.
 
 The live BIN radar ranks fetched listings by raw dollar spread, but it is now downstream of the model. Unsupported players, wrong-set matches, and adjacent product families are excluded instead of being modeled from broad search noise.
 

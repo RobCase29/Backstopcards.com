@@ -86,6 +86,29 @@ interface ChecklistPlayersResponse {
   aggregatedMultipliers?: ChecklistVariation[]
 }
 
+type ChecklistCatalogRelease = {
+  id: string
+  label: string
+  category: ChecklistModel['category']
+  categoryLabel?: string
+  year: number
+  release: string
+  releaseKey?: string
+  totalPlayers?: number | null
+  firstChromeAutos?: number | null
+  activeChecklistPlayers?: number | null
+}
+
+interface LocalChecklistCatalogResponse {
+  available?: boolean
+  releases?: ChecklistCatalogRelease[]
+}
+
+interface LocalChecklistModelResponse extends ChecklistModel {
+  available?: boolean
+  releaseKey?: string
+}
+
 const SESSION_STORAGE_KEY = 'bowman-trader:pulse-session'
 const SCAN_DEPTH: Record<FeedScanDepth, { maxPages: number; pageSize: number }> = {
   fast: { maxPages: 2, pageSize: 100 },
@@ -359,6 +382,96 @@ function uniquePlayerNames(players?: string[]) {
   }
 
   return names
+}
+
+function playerMergeKey(playerName: string) {
+  return playerName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function mergeChecklistPlayers(primary: ChecklistPlayer[], localPlayers: ChecklistPlayer[]) {
+  const byPlayer = new Map(primary.map((player) => [playerMergeKey(player.playerName), player]))
+
+  for (const localPlayer of localPlayers) {
+    const key = playerMergeKey(localPlayer.playerName)
+    if (!key) continue
+    const existing = byPlayer.get(key)
+    if (!existing) {
+      byPlayer.set(key, localPlayer)
+      continue
+    }
+
+    const localHasBase = (localPlayer.baseSalesCount ?? 0) > 0 && (localPlayer.baseAvgPrice ?? 0) > 0
+    const existingHasBase = (existing.baseSalesCount ?? 0) > 0 && (existing.baseAvgPrice ?? 0) > 0
+    byPlayer.set(key, {
+      ...existing,
+      team: existing.team || localPlayer.team || null,
+      status: existing.status || localPlayer.status || null,
+      prospectId: existing.prospectId || localPlayer.prospectId || null,
+      baseAvgPrice: localHasBase && (!existingHasBase || localPlayer.baseSalesCount >= existing.baseSalesCount)
+        ? localPlayer.baseAvgPrice
+        : existing.baseAvgPrice,
+      baseSalesCount: localHasBase && (!existingHasBase || localPlayer.baseSalesCount >= existing.baseSalesCount)
+        ? localPlayer.baseSalesCount
+        : existing.baseSalesCount,
+      baseSales: localHasBase ? localPlayer.baseSales ?? existing.baseSales : existing.baseSales,
+      variations: existing.variations?.length ? existing.variations : localPlayer.variations,
+    })
+  }
+
+  return [...byPlayer.values()]
+}
+
+function mergeChecklistModels(remoteModel: ChecklistModel | null, localModel: ChecklistModel | null): ChecklistModel | null {
+  if (!remoteModel) return localModel
+  if (!localModel) return remoteModel
+
+  return {
+    ...remoteModel,
+    totalPlayers:
+      Math.max(remoteModel.totalPlayers ?? 0, localModel.totalPlayers ?? 0) ||
+      remoteModel.totalPlayers ||
+      localModel.totalPlayers,
+    firstChromeAutos:
+      Math.max(remoteModel.firstChromeAutos ?? 0, localModel.firstChromeAutos ?? 0) ||
+      remoteModel.firstChromeAutos ||
+      localModel.firstChromeAutos,
+    activeChecklistPlayers:
+      Math.max(remoteModel.activeChecklistPlayers ?? 0, localModel.activeChecklistPlayers ?? 0) ||
+      remoteModel.activeChecklistPlayers ||
+      localModel.activeChecklistPlayers,
+    multipliers: remoteModel.multipliers.length ? remoteModel.multipliers : localModel.multipliers,
+    players: mergeChecklistPlayers(remoteModel.players, localModel.players),
+    fetchedAt: new Date().toISOString(),
+    source: remoteModel.players.length ? remoteModel.source : localModel.source,
+  }
+}
+
+async function fetchLocalChecklistModel(release: string, signal?: AbortSignal) {
+  if (typeof window === 'undefined') return null
+  const url = new URL('/api/checklist/model', window.location.origin)
+  url.searchParams.set('release', release)
+  url.searchParams.set('source', 'waxpackhero')
+  const response = await fetch(url, { signal })
+  const payload = await readJson<LocalChecklistModelResponse>(response)
+  if (!payload.available || !payload.players?.length) return null
+  return payload as ChecklistModel
+}
+
+async function fetchLocalChecklistCatalog(minYear: number, signal?: AbortSignal) {
+  if (typeof window === 'undefined') return []
+  const url = new URL('/api/checklist/catalog', window.location.origin)
+  url.searchParams.set('minYear', String(minYear))
+  url.searchParams.set('source', 'waxpackhero')
+  const response = await fetch(url, { signal })
+  const payload = await readJson<LocalChecklistCatalogResponse>(response)
+  return payload.available ? payload.releases ?? [] : []
 }
 
 function binPriceBands(options: { minPrice?: number; maxPrice?: number | null; scanDepth?: FeedScanDepth }) {
@@ -704,47 +817,62 @@ export async function fetchChecklistModel(options: {
   signal?: AbortSignal
 } = {}): Promise<ChecklistModel> {
   const category = options.category ?? 'bowman'
-  const needsOverview =
-    !options.release ||
-    !options.year ||
-    typeof options.totalPlayers === 'undefined' ||
-    typeof options.firstChromeAutos === 'undefined' ||
-    typeof options.activeChecklistPlayers === 'undefined'
-  const overview = needsOverview
-    ? await callProspectPulse<CategoryOverviewResponse>(
-        'api-checklists',
-        { action: 'getCategoryOverview', category },
-        options.signal,
-      ).catch(() => ({ years: [] }))
-    : { years: [] }
-  const latestYear = overview.years?.[0]
-  const releaseYear = options.year ?? latestYear?.year ?? 2026
-  const releaseOverview = overview.years?.find((year) => year.year === releaseYear)
-  const release = options.release ?? releaseOverview?.release ?? `${releaseYear}-Bowman`
-  const multiplierData = await callProspectPulse<CategoryYearMultipliersResponse>(
-    'api-checklists',
-    { action: 'getCategoryYearMultipliers', category, year: releaseYear },
-    options.signal,
-  )
+  let remoteModel: ChecklistModel | null = null
+  let remoteError: unknown = null
+  let release = options.release ?? ''
+  let releaseYear = options.year ?? 2026
 
-  const playerData = await callProspectPulse<ChecklistPlayersResponse>(
-    'api-checklists',
-    { action: 'getChecklistPlayers', release },
-    options.signal,
-  ).catch(() => null)
+  try {
+    const needsOverview =
+      !options.release ||
+      !options.year ||
+      typeof options.totalPlayers === 'undefined' ||
+      typeof options.firstChromeAutos === 'undefined' ||
+      typeof options.activeChecklistPlayers === 'undefined'
+    const overview = needsOverview
+      ? await callProspectPulse<CategoryOverviewResponse>(
+          'api-checklists',
+          { action: 'getCategoryOverview', category },
+          options.signal,
+        ).catch(() => ({ years: [] }))
+      : { years: [] }
+    const latestYear = overview.years?.[0]
+    releaseYear = options.year ?? latestYear?.year ?? 2026
+    const releaseOverview = overview.years?.find((year) => year.year === releaseYear)
+    release = options.release ?? releaseOverview?.release ?? `${releaseYear}-Bowman`
+    const multiplierData = await callProspectPulse<CategoryYearMultipliersResponse>(
+      'api-checklists',
+      { action: 'getCategoryYearMultipliers', category, year: releaseYear },
+      options.signal,
+    )
 
-  return {
-    category,
-    release,
-    releaseYear: playerData?.releaseYear ?? releaseYear,
-    totalPlayers: options.totalPlayers ?? releaseOverview?.totalPlayers ?? null,
-    firstChromeAutos: options.firstChromeAutos ?? releaseOverview?.firstChromeAutos ?? null,
-    activeChecklistPlayers: options.activeChecklistPlayers ?? releaseOverview?.activeCount ?? null,
-    multipliers: multiplierData.multipliers ?? playerData?.aggregatedMultipliers ?? [],
-    players: playerData?.players ?? [],
-    fetchedAt: new Date().toISOString(),
-    source: playerData?.players?.length ? 'authenticated-player-model' : 'public-multipliers',
+    const playerData = await callProspectPulse<ChecklistPlayersResponse>(
+      'api-checklists',
+      { action: 'getChecklistPlayers', release },
+      options.signal,
+    ).catch(() => null)
+
+    remoteModel = {
+      category,
+      release,
+      releaseYear: playerData?.releaseYear ?? releaseYear,
+      totalPlayers: options.totalPlayers ?? releaseOverview?.totalPlayers ?? null,
+      firstChromeAutos: options.firstChromeAutos ?? releaseOverview?.firstChromeAutos ?? null,
+      activeChecklistPlayers: options.activeChecklistPlayers ?? releaseOverview?.activeCount ?? null,
+      multipliers: multiplierData.multipliers ?? playerData?.aggregatedMultipliers ?? [],
+      players: playerData?.players ?? [],
+      fetchedAt: new Date().toISOString(),
+      source: playerData?.players?.length ? 'authenticated-player-model' : 'public-multipliers',
+    }
+  } catch (error) {
+    remoteError = error
   }
+
+  const localModel = await fetchLocalChecklistModel(release || `${releaseYear}-Bowman`, options.signal).catch(() => null)
+  const merged = mergeChecklistModels(remoteModel, localModel)
+  if (merged) return merged
+  if (remoteError) throw remoteError
+  throw new Error('Checklist model load failed')
 }
 
 export async function fetchChecklistCatalog(options: {
@@ -754,18 +882,21 @@ export async function fetchChecklistCatalog(options: {
 } = {}) {
   const categories = options.categories ?? ['bowman', 'chrome', 'draft']
   const minYear = options.minYear ?? 2018
-  const overviews = await Promise.allSettled(
-    categories.map(async (category) => {
-      const overview = await callProspectPulse<CategoryOverviewResponse>(
-        'api-checklists',
-        { action: 'getCategoryOverview', category },
-        options.signal,
-      )
-      return { category, label: overview.label ?? category, years: overview.years ?? [] }
-    }),
-  )
+  const [remoteOverviews, localCatalog] = await Promise.all([
+    Promise.allSettled(
+      categories.map(async (category) => {
+        const overview = await callProspectPulse<CategoryOverviewResponse>(
+          'api-checklists',
+          { action: 'getCategoryOverview', category },
+          options.signal,
+        )
+        return { category, label: overview.label ?? category, years: overview.years ?? [] }
+      }),
+    ),
+    fetchLocalChecklistCatalog(minYear, options.signal).catch(() => []),
+  ])
 
-  return overviews
+  const remoteCatalog: ChecklistCatalogRelease[] = remoteOverviews
     .flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
     .flatMap((overview) =>
       overview.years
@@ -782,5 +913,32 @@ export async function fetchChecklistCatalog(options: {
           activeChecklistPlayers: year.activeCount ?? null,
         })),
     )
+
+  const merged = new Map<string, (typeof remoteCatalog)[number]>()
+  for (const release of [...remoteCatalog, ...localCatalog]) {
+    const key = `${release.category}:${release.year}:${release.release}`.toLowerCase()
+    const current = merged.get(key)
+    if (!current) {
+      merged.set(key, release)
+      continue
+    }
+    merged.set(key, {
+      ...current,
+      totalPlayers:
+        Math.max(current.totalPlayers ?? 0, release.totalPlayers ?? 0) ||
+        current.totalPlayers ||
+        release.totalPlayers,
+      firstChromeAutos:
+        Math.max(current.firstChromeAutos ?? 0, release.firstChromeAutos ?? 0) ||
+        current.firstChromeAutos ||
+        release.firstChromeAutos,
+      activeChecklistPlayers:
+        Math.max(current.activeChecklistPlayers ?? 0, release.activeChecklistPlayers ?? 0) ||
+        current.activeChecklistPlayers ||
+        release.activeChecklistPlayers,
+    })
+  }
+
+  return [...merged.values()]
     .sort((left, right) => right.year - left.year || left.category.localeCompare(right.category) || left.release.localeCompare(right.release))
 }

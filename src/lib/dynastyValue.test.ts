@@ -47,7 +47,111 @@ describe('dynasty value scoring', () => {
     expect(scoreDynastyValueOpportunity(baseRow)).toBeGreaterThan(cheapNoise + 20)
   })
 
+  it('treats prospect-only coverage as a usable ranking signal', () => {
+    const prospectOnly = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: null,
+      stsDynastyScore: null,
+      stsProspectRank: 22,
+      baseTwmaPrice: 38,
+    })
+
+    expect(prospectOnly).toBeGreaterThan(50)
+  })
+
+  it('treats MLB dynasty rank as a usable fallback when prospect rank is gone', () => {
+    const mlbFallback = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: 18,
+      stsProspectRank: null,
+      stsDynastyScore: 86,
+      stsLevel: 'MLB',
+      stsAge: 24,
+      baseTwmaPrice: 85,
+    })
+    const unranked = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: null,
+      stsProspectRank: null,
+      stsDynastyScore: null,
+      stsLevel: 'MLB',
+      stsAge: 24,
+      baseTwmaPrice: 85,
+    })
+
+    expect(mlbFallback).toBeGreaterThan(50)
+    expect(unranked).toBe(-1)
+  })
+
+  it('boosts similarly priced players when the formulated rank is materially stronger', () => {
+    const strongRank = scoreDynastyValueOpportunity({ ...baseRow, stsRank: 30, stsProspectRank: 12, stsDynastyScore: 82, baseTwmaPrice: 75 })
+    const weakerRank = scoreDynastyValueOpportunity({ ...baseRow, stsRank: 600, stsProspectRank: 230, stsDynastyScore: 45, baseTwmaPrice: 75 })
+
+    expect(strongRank).toBeGreaterThan(weakerRank + 18)
+  })
+
+  it('makes elite cheap base autos beat similarly elite expensive base autos', () => {
+    const cheapElite = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: 2,
+      stsProspectRank: 2,
+      stsDynastyScore: 90,
+      baseTwmaPrice: 23,
+      baseEffectiveSales: 3,
+      baseConfidence: 0.58,
+      baseVolatility: 0.28,
+    })
+    const expensiveElite = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: 1,
+      stsProspectRank: 1,
+      stsDynastyScore: 93,
+      baseTwmaPrice: 199,
+      baseEffectiveSales: 9,
+      baseConfidence: 0.86,
+      baseVolatility: 0.16,
+    })
+
+    expect(cheapElite).toBeGreaterThan(expensiveElite + 8)
+  })
+
+  it('surfaces a top-two prospect with a very cheap base auto above expensive top-five peers', () => {
+    const topTwoCheap = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: 2,
+      stsProspectRank: 2,
+      stsDynastyScore: 91,
+      baseTwmaPrice: 23,
+      baseEffectiveSales: 4,
+      baseConfidence: 0.62,
+      baseVolatility: 0.3,
+    })
+    const topOneExpensive = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: 1,
+      stsProspectRank: 1,
+      stsDynastyScore: 93,
+      baseTwmaPrice: 199,
+      baseEffectiveSales: 9,
+      baseConfidence: 0.86,
+      baseVolatility: 0.16,
+    })
+    const topFiveExpensive = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: 5,
+      stsProspectRank: 5,
+      stsDynastyScore: 86,
+      baseTwmaPrice: 190,
+      baseEffectiveSales: 8,
+      baseConfidence: 0.8,
+      baseVolatility: 0.18,
+    })
+
+    expect(topTwoCheap).toBeGreaterThan(topOneExpensive + 18)
+    expect(topTwoCheap).toBeGreaterThan(topFiveExpensive + 20)
+  })
+
   it('excludes players without ranking signal from value queues', () => {
-    expect(scoreDynastyValueOpportunity({ ...baseRow, stsRank: null, stsDynastyScore: null })).toBe(-1)
+    expect(scoreDynastyValueOpportunity({ ...baseRow, stsRank: null, stsProspectRank: null, stsDynastyScore: null })).toBe(-1)
   })
 })

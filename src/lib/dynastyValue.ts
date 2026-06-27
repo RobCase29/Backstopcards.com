@@ -19,9 +19,9 @@ function clamp(value: number, min = 0, max = 100) {
   return Math.min(max, Math.max(min, value))
 }
 
-function rankScore(rank: number | null, maxRank: number) {
+function rankPercentile(rank: number | null, maxRank: number) {
   if (!rank || rank <= 0) return 0
-  return clamp(100 * (1 - Math.log(rank) / Math.log(maxRank + 1)))
+  return clamp(1 - Math.log(rank) / Math.log(maxRank + 1), 0, 1)
 }
 
 function ageUpside(age: number | null) {
@@ -52,49 +52,121 @@ function sourceAdjustment(source: BasePriceSource) {
   return -5
 }
 
-export function impliedDynastyBasePrice(row: DynastyValueInput) {
-  if (row.stsDynastyScore === null && row.stsRank === null) return 0
-  const dynastySignal = row.stsDynastyScore ?? rankScore(row.stsRank, 7_500)
-  const prospectSignal = rankScore(row.stsProspectRank, 3_600)
-  const positiveMomentum = Math.max(0, (row.stsMomentumScore ?? 50) - 50)
-  const signal =
-    dynastySignal * 0.66 +
-    prospectSignal * 0.18 +
-    positiveMomentum * 0.5 +
-    ageUpside(row.stsAge) +
-    levelUpside(row.stsLevel)
+function rankingCoverage(row: DynastyValueInput) {
+  return row.stsRank !== null || row.stsProspectRank !== null || row.stsDynastyScore !== null
+}
 
-  return Math.round(clamp(10 * Math.exp(signal / 20), 8, 1_500))
+function formulatedRankQuality(row: DynastyValueInput) {
+  const dynastyQuality = row.stsDynastyScore !== null ? clamp(row.stsDynastyScore / 100, 0, 1) : rankPercentile(row.stsRank, 7_500)
+  const overallQuality = rankPercentile(row.stsRank, 7_500)
+  const prospectQuality = rankPercentile(row.stsProspectRank, 3_600)
+  const hasProspectRank = row.stsProspectRank !== null
+  const hasOverallRank = row.stsRank !== null
+
+  if (hasProspectRank && hasOverallRank) {
+    return clamp(dynastyQuality * 0.45 + prospectQuality * 0.35 + overallQuality * 0.2, 0, 1)
+  }
+  if (hasProspectRank) return clamp(dynastyQuality * 0.18 + prospectQuality * 0.82, 0, 1)
+  return clamp(dynastyQuality * 0.72 + overallQuality * 0.28, 0, 1)
+}
+
+function momentumMultiplier(row: DynastyValueInput) {
+  const momentum = row.stsMomentumScore ?? 50
+  const riser = row.stsRiserValueScore ?? 0
+  const momentumBoost = clamp((momentum - 50) / 50, -0.3, 0.65)
+  const riserBoost = clamp(riser / 100, 0, 0.35)
+  return clamp(1 + momentumBoost * 0.28 + riserBoost * 0.22, 0.82, 1.32)
+}
+
+function ageMultiplier(age: number | null) {
+  if (!age) return 1
+  if (age <= 18.5) return 1.16
+  if (age <= 20) return 1.1
+  if (age <= 21.5) return 1.04
+  if (age <= 23) return 1
+  if (age >= 25) return 0.9
+  return 0.96
+}
+
+function levelMultiplier(level: string | null) {
+  const normalized = level?.toUpperCase() ?? ''
+  if (!normalized) return 1
+  if (normalized === 'MLB') return 0.96
+  if (normalized === 'AAA') return 1
+  if (normalized === 'AA') return 1.03
+  if (normalized === 'A+' || normalized === 'A') return 1.08
+  if (normalized.includes('CPX') || normalized.includes('ROK')) return 1.1
+  return 1
+}
+
+function liquidityScore(row: DynastyValueInput) {
+  const salesScore = clamp(row.baseEffectiveSales / 8, 0, 1) * 7
+  const confidenceScore = clamp(row.baseConfidence, 0, 1) * 7
+  const volatilityPenalty = clamp(row.baseVolatility * 12, 0, 9)
+  return salesScore + confidenceScore - volatilityPenalty + sourceAdjustment(row.basePriceSource)
+}
+
+function eliteAffordabilityBoost(row: DynastyValueInput, basePrice: number) {
+  const isElite =
+    (row.stsProspectRank !== null && row.stsProspectRank <= 15) ||
+    (row.stsRank !== null && row.stsRank <= 25) ||
+    (row.stsDynastyScore !== null && row.stsDynastyScore >= 88)
+
+  const referencePrice = isElite ? 220 : 115
+  const maxBoost = isElite ? 22 : 10
+  const normalizedPrice = Math.max(10, basePrice)
+  return clamp(Math.log(referencePrice / normalizedPrice) / Math.log(isElite ? 22 : 11.5), 0, 1) * maxBoost
+}
+
+export function impliedDynastyBasePrice(row: DynastyValueInput) {
+  if (!rankingCoverage(row)) return 0
+  const quality = formulatedRankQuality(row)
+  const rawExpectedBase = 5.5 * Math.exp(quality * 5.28)
+  const adjustedExpectedBase = rawExpectedBase * momentumMultiplier(row) * ageMultiplier(row.stsAge) * levelMultiplier(row.stsLevel)
+
+  return Math.round(clamp(adjustedExpectedBase, 6, 1_800))
 }
 
 export function scoreDynastyValueOpportunity(row: DynastyValueInput) {
-  if (row.stsDynastyScore === null && row.stsRank === null) return -1
+  if (!rankingCoverage(row)) return -1
 
   const basePrice = Math.max(1, row.baseTwmaPrice)
   const impliedBase = impliedDynastyBasePrice(row)
-  const dynastySignal = row.stsDynastyScore ?? rankScore(row.stsRank, 7_500)
-  const prospectSignal = rankScore(row.stsProspectRank, 3_600)
+  const rankQuality = formulatedRankQuality(row)
   const positiveMomentum = Math.max(0, (row.stsMomentumScore ?? 50) - 50)
   const riserSignal = Math.max(0, row.stsRiserValueScore ?? 0)
-  const valueGap = clamp(Math.log(Math.max(0.12, impliedBase / basePrice)) / Math.log(4), -1, 1) * 34
-  const marketQuality = clamp(row.baseEffectiveSales / 6, 0, 1) * 4 + clamp(row.baseConfidence, 0, 1) * 4
-  const volatilityPenalty = clamp(row.baseVolatility * 14, 0, 8)
-  const floorPenalty = basePrice < 8 ? ((8 - basePrice) / 8) * 18 : basePrice < 18 ? ((18 - basePrice) / 10) * 4 : 0
-  const richPenalty = basePrice > 450 ? clamp(Math.log(basePrice / 450) / Math.log(3), 0, 1) * 10 : 0
+  const valueRatio = impliedBase / basePrice
+  const upsideGap = clamp(Math.log(Math.max(1, valueRatio)) / Math.log(30), 0, 1) * 54
+  const qualityAdjustedValueGap = upsideGap * clamp(0.68 + rankQuality * 0.32, 0.62, 1)
+  const downsidePenalty = valueRatio < 1 ? clamp(Math.log(1 / Math.max(0.08, valueRatio)) / Math.log(8), 0, 1) * 18 : 0
+  const affordabilityBoost = eliteAffordabilityBoost(row, basePrice)
+  const thinMarketPenalty =
+    basePrice < 12 && (row.baseEffectiveSales < 1 || row.baseConfidence < 0.35 || row.basePriceSource === 'twma-fallback')
+      ? 18
+      : basePrice < 18 && row.baseConfidence < 0.4
+        ? 8
+        : 0
+  const priceRealityPenalty =
+    basePrice < 8
+      ? ((8 - basePrice) / 8) * 22
+      : basePrice < 18
+        ? ((18 - basePrice) / 10) * 6
+        : basePrice > 350
+          ? clamp(Math.log(basePrice / 350) / Math.log(4), 0, 1) * 10
+          : 0
 
   const score =
-    dynastySignal * 0.5 +
-    prospectSignal * 0.13 +
-    positiveMomentum * 0.45 +
-    riserSignal * 0.08 +
+    rankQuality * 30 +
+    qualityAdjustedValueGap +
+    affordabilityBoost +
+    positiveMomentum * 0.18 +
+    riserSignal * 0.05 +
     ageUpside(row.stsAge) +
     levelUpside(row.stsLevel) +
-    valueGap +
-    marketQuality +
-    sourceAdjustment(row.basePriceSource) -
-    volatilityPenalty -
-    floorPenalty -
-    richPenalty
+    liquidityScore(row) * 0.36 -
+    downsidePenalty -
+    priceRealityPenalty -
+    thinMarketPenalty
 
-  return Number(Math.max(0, score).toFixed(1))
+  return Number(clamp(score, 0, 100).toFixed(1))
 }

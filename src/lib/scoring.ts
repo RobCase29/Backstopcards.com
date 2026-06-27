@@ -1,5 +1,6 @@
 import type {
   ChecklistModel,
+  ChecklistPlayer,
   CompSale,
   GradingCompany,
   ListingStatus,
@@ -11,6 +12,9 @@ import type {
   ValuationSource,
 } from '../types'
 import { estimateBasePrice } from './matrix'
+import { salesCacheValuationForListing } from './liveComps'
+import { titleLooksHandSignedAuto } from './handSigned'
+import type { SalesCachePlayerModel } from './salesCache'
 
 export const DEFAULT_SETTINGS: ScoreSettings = {
   minDiscountPct: 0,
@@ -27,6 +31,25 @@ export const DEFAULT_SETTINGS: ScoreSettings = {
   minCompCount: 0,
   activeOnly: true,
 }
+
+const SNACK_PACK_PATTERN = /\bsnack\s+pack\b|\bgum\s*ball\b|\bbubble\s+gum\b|\bpeanuts?\b|\bpopcorn\b|\bsunflower(?:\s+seeds?)?\b/i
+const BLACK_AND_WHITE_SHIMMER_PATTERN = /\b(?:b\s*&\s*w|b\s*w|black\s+(?:and\s+)?white)\s+shimmer\b/i
+const HAND_SIGNED_BASE_MULTIPLE = 0.55
+const TEAM_COLOR_WORD_CONTEXT_PATTERN = /\b(?:red\s+sox|white\s+sox|reds?|blue\s+jays)\b/gi
+
+const TITLE_PARALLEL_CUES: Array<{ label: string; denominator: number; pattern: RegExp }> = [
+  { label: 'Superfractor', denominator: 1, pattern: /\bsuperfractor\b|\bsuper\s*(?:auto|refractor)\b/i },
+  { label: 'Red', denominator: 5, pattern: /\bred\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+red\b/i },
+  { label: 'Orange', denominator: 25, pattern: /\borange\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+orange\b/i },
+  { label: 'Gold', denominator: 50, pattern: /\bgold\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+gold\b/i },
+  { label: 'Yellow', denominator: 75, pattern: /\byellow\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+yellow\b/i },
+  { label: 'Green', denominator: 99, pattern: /\bgreen\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+green\b/i },
+  { label: 'Aqua', denominator: 125, pattern: /\baqua\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+aqua\b/i },
+  { label: 'Blue', denominator: 150, pattern: /\bblue\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+blue\b/i },
+  { label: 'Purple', denominator: 250, pattern: /\bpurple\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+purple\b/i },
+  { label: 'Speckle', denominator: 299, pattern: /\bspeckle\b/i },
+  { label: 'Refractor', denominator: 499, pattern: /\brefractor\b/i },
+]
 
 function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value))
@@ -123,14 +146,48 @@ function releaseLabel(listing: ProspectPulseListing, releaseYear?: number | null
 function inferSerialDenominator(listing: ProspectPulseListing) {
   const explicit = positiveNumberValue(listing.serial_denominator)
   if (explicit) return explicit
-  const match = searchText(listing).match(/(?:\/|numbered\s+to\s+|#\/)(\d{2,3})\b/)
-  return match ? Number(match[1]) : null
+  const text = variationSearchText(listing)
+  const match = text.match(/(?:\/|numbered\s+to\s+|#\/)(\d{1,3})\b/)
+  if (match) return Number(match[1])
+  if (BLACK_AND_WHITE_SHIMMER_PATTERN.test(text)) return 11
+  const cue = TITLE_PARALLEL_CUES.find((parallel) => parallel.pattern.test(text))
+  if (cue) return cue.denominator
+  return isSnackPackAutoListing(listing) ? 5 : null
 }
 
 function variationLabel(listing: ProspectPulseListing, serialDenominator?: number | null) {
-  const variation = firstString([listing.variation, listing.base_color], 'Base')
+  if (isHandSignedAutoListing(listing)) return 'Hand Signed Auto'
+  if (isSnackPackAutoListing(listing)) return `${snackPackVariant(listing)} Snack Pack /${serialDenominator ?? 5}`
+  const explicitVariation = firstString([listing.variation, listing.base_color], '')
+  const text = variationSearchText(listing)
+  const inferredVariation =
+    BLACK_AND_WHITE_SHIMMER_PATTERN.test(text)
+      ? 'B&W Shimmer'
+      : TITLE_PARALLEL_CUES.find((parallel) => parallel.denominator === serialDenominator && parallel.pattern.test(text))?.label
+  const variation =
+    explicitVariation && !/^base$/i.test(explicitVariation)
+      ? explicitVariation
+      : inferredVariation ?? (explicitVariation || 'Base')
   const serial = serialDenominator ? `/${serialDenominator}` : ''
   return `${variation} ${serial}`.trim()
+}
+
+function isHandSignedAutoListing(listing: ProspectPulseListing) {
+  return Boolean(listing.is_hand_signed) || titleLooksHandSignedAuto(searchText(listing))
+}
+
+function isSnackPackAutoListing(listing: ProspectPulseListing) {
+  const text = searchText(listing)
+  return SNACK_PACK_PATTERN.test(text) && /\b(auto|autos|autograph|autographed|autographs|signed|signature|redemption)\b/.test(text)
+}
+
+function snackPackVariant(listing: ProspectPulseListing) {
+  const text = searchText(listing)
+  if (/\bsunflower(?:\s+seeds?)?\b/i.test(text)) return 'Sunflower'
+  if (/\bgum\s*ball\b|\bbubble\s+gum\b/i.test(text)) return 'Gumball'
+  if (/\bpeanuts?\b/i.test(text)) return 'Peanuts'
+  if (/\bpopcorn\b/i.test(text)) return 'Popcorn'
+  return 'Snack Pack'
 }
 
 function imageUrl(listing: ProspectPulseListing) {
@@ -231,9 +288,19 @@ function searchText(listing: ProspectPulseListing) {
     .toLowerCase()
 }
 
+function variationSearchText(listing: ProspectPulseListing) {
+  return searchText(listing).replace(TEAM_COLOR_WORD_CONTEXT_PATTERN, ' ')
+}
+
 function comparableText(value: string) {
   return value
     .toLowerCase()
+    .replace(TEAM_COLOR_WORD_CONTEXT_PATTERN, ' ')
+    .replace(/\bsunflower\s+seeds?\b/g, 'sunflower snack pack')
+    .replace(/\bsunflower\b(?!\s+snack\s+pack)/g, 'sunflower snack pack')
+    .replace(/\bgum\s*ball\b(?!\s+snack\s+pack)|\bbubble\s+gum\b(?!\s+snack\s+pack)/g, 'gumball snack pack')
+    .replace(/\bpeanuts?\b(?!\s+snack\s+pack)/g, 'peanuts snack pack')
+    .replace(/\bpopcorn\b(?!\s+snack\s+pack)/g, 'popcorn snack pack')
     .replace(/\b(1st|first|bowman|chrome|prospect|auto|autograph|autographed)\b/g, ' ')
     .replace(/#/g, '/')
     .replace(/[^a-z0-9/]+/g, ' ')
@@ -301,23 +368,26 @@ function listingProductBlockedForModel(listing: NormalizedListing, model: Checkl
   return ADJACENT_PRODUCT_BLOCKERS.some((pattern) => pattern.test(listingText) && !pattern.test(modelText))
 }
 
-function detectUniverse(listing: ProspectPulseListing) {
+function detectUniverse(listing: ProspectPulseListing, serialDenominator?: number | null) {
   const text = searchText(listing)
   const isBowman = /\bbowman\b/.test(text)
+  const isHandSigned = isHandSignedAutoListing(listing)
   const nonAuto = /\b(non[-\s]?auto|no\s+auto|unsigned|facsimile|reprint)\b/.test(text)
   const isAutograph =
     !nonAuto && /\b(auto|autos|autograph|autographed|autographs|signed|signature)\b/.test(text)
   const hasFirstMarker = /\b(1st|first)\b/.test(text)
   const isFirstEditionOnly = /\bfirst\s+edition\b/.test(text) && !/\b(1st|first)\s+bowman\b/.test(text)
   const isFirstBowman = isBowman && hasFirstMarker && !isFirstEditionOnly
-  const serialDenominator = positiveNumberValue(listing.serial_denominator)
+  const serial = serialDenominator ?? positiveNumberValue(listing.serial_denominator)
+  const isLowSerialNonAuto = Boolean(isBowman && isFirstBowman && !isAutograph && !isHandSigned && serial && serial <= 99)
 
   let universeScore = 0
   if (isBowman) universeScore += 0.34
   if (isAutograph) universeScore += 0.34
   if (isFirstBowman) universeScore += 0.26
   if (/chrome/.test(text)) universeScore += 0.04
-  if (serialDenominator && serialDenominator <= 150) universeScore += 0.02
+  if (serial && serial <= 150) universeScore += 0.02
+  if (isLowSerialNonAuto) universeScore += 0.2
 
   const isTargetAuto = isBowman && isAutograph && isFirstBowman
 
@@ -326,7 +396,17 @@ function detectUniverse(listing: ProspectPulseListing) {
     isAutograph,
     isFirstBowman,
     isTargetAuto,
-    universeScore: clamp(isTargetAuto ? Math.max(universeScore, 0.96) : universeScore),
+    isLowSerialNonAuto,
+    isHandSigned,
+    universeScore: clamp(
+      isHandSigned
+        ? Math.min(isTargetAuto ? Math.max(universeScore, 0.74) : universeScore, 0.78)
+        : isTargetAuto
+          ? Math.max(universeScore, 0.96)
+          : isLowSerialNonAuto
+            ? Math.max(universeScore, 0.84)
+            : universeScore,
+    ),
   }
 }
 
@@ -359,11 +439,11 @@ export function normalizeListing(listing: ProspectPulseListing): NormalizedListi
   const prospect = normalizeProspect(listing.prospect)
   const kind = inferKind(listing)
   const status = inferStatus(listing, kind)
-  const universe = detectUniverse(listing)
   const releaseYear = inferReleaseYear(listing)
   const createdAt = listing.created_at ?? listing.listed_at ?? null
   const endTime = listing.end_time ?? null
   const serialDenominator = inferSerialDenominator(listing)
+  const universe = detectUniverse(listing, serialDenominator)
   const playerName = firstString([listing.player_name, prospect?.name], 'Unknown player')
   const title = firstString([listing.title, playerName], 'Untitled listing')
   const gradeDetails = inferGradeDetails(listing)
@@ -481,6 +561,69 @@ function playerKey(value: string) {
     .trim()
 }
 
+type SalesCacheModelsInput =
+  | SalesCachePlayerModel
+  | SalesCachePlayerModel[]
+  | Record<string, SalesCachePlayerModel>
+  | Map<string, SalesCachePlayerModel>
+  | null
+  | undefined
+
+type ChecklistModelIndex = {
+  model: ChecklistModel
+  playersByKey: Map<string, ChecklistPlayer>
+  searchablePlayers: Array<{ key: string; player: ChecklistPlayer }>
+}
+
+type ChecklistMatch = {
+  model: ChecklistModel
+  player: ChecklistPlayer
+}
+
+type SalesCacheModelIndex = {
+  modelsByKey: Map<string, SalesCachePlayerModel>
+  searchableModels: Array<{ key: string; model: SalesCachePlayerModel }>
+}
+
+function isSalesCachePlayerModel(value: unknown): value is SalesCachePlayerModel {
+  return Boolean(value && typeof value === 'object' && 'available' in value && 'playerName' in value)
+}
+
+function salesCacheModelsArray(input: SalesCacheModelsInput) {
+  if (!input) return []
+  if (Array.isArray(input)) return input
+  if (input instanceof Map) return [...input.values()]
+  if (isSalesCachePlayerModel(input)) return [input]
+  return Object.values(input)
+}
+
+function buildSalesCacheModelIndex(models: SalesCachePlayerModel[]): SalesCacheModelIndex {
+  const modelsByKey = new Map<string, SalesCachePlayerModel>()
+  const searchableModels: SalesCacheModelIndex['searchableModels'] = []
+
+  for (const model of models) {
+    if (!model.available) continue
+    const key = playerKey(model.playerName)
+    if (!key) continue
+    modelsByKey.set(key, model)
+    if (key.split(' ').length >= 2) searchableModels.push({ key, model })
+  }
+
+  return { modelsByKey, searchableModels }
+}
+
+function findSalesCacheModelForListingIndexed(listing: NormalizedListing, index: SalesCacheModelIndex) {
+  if (index.modelsByKey.size === 0) return null
+  const listingName = playerKey(listing.playerName)
+  const exact = index.modelsByKey.get(listingName)
+  if (exact) return exact
+
+  const listingText = playerKey(`${listing.playerName} ${listing.title}`)
+  return (
+    index.searchableModels.find(({ key }) => listingText.includes(key))?.model ?? null
+  )
+}
+
 function findChecklistPlayer(listing: NormalizedListing, model?: ChecklistModel | null) {
   if (!model?.players.length) return null
   const listingName = playerKey(listing.playerName)
@@ -496,6 +639,31 @@ function findChecklistPlayer(listing: NormalizedListing, model?: ChecklistModel 
   )
 }
 
+function buildChecklistModelIndexes(models: ChecklistModel[]) {
+  return models.map<ChecklistModelIndex>((model) => {
+    const playersByKey = new Map<string, ChecklistPlayer>()
+    const searchablePlayers: ChecklistModelIndex['searchablePlayers'] = []
+
+    for (const player of model.players) {
+      const key = playerKey(player.playerName)
+      if (!key) continue
+      playersByKey.set(key, player)
+      if (key.split(' ').length >= 2) searchablePlayers.push({ key, player })
+    }
+
+    return { model, playersByKey, searchablePlayers }
+  })
+}
+
+function findChecklistPlayerInIndex(listing: NormalizedListing, index: ChecklistModelIndex) {
+  const listingName = playerKey(listing.playerName)
+  const exact = index.playersByKey.get(listingName)
+  if (exact) return exact
+
+  const listingText = playerKey(`${listing.playerName} ${listing.title}`)
+  return index.searchablePlayers.find(({ key }) => listingText.includes(key))?.player ?? null
+}
+
 function modelReleaseMatchScore(listing: NormalizedListing, model: ChecklistModel) {
   let score = 0
   if (listing.releaseYear && listing.releaseYear === model.releaseYear) score += 2
@@ -505,14 +673,15 @@ function modelReleaseMatchScore(listing: NormalizedListing, model: ChecklistMode
   return score
 }
 
-function findChecklistModelForListing(
+function findChecklistMatchForListing(
   listing: NormalizedListing,
-  models: ChecklistModel[],
+  indexes: ChecklistModelIndex[],
   settings: ScoreSettings,
 ) {
-  let best: { model: ChecklistModel; score: number } | null = null
+  let best: { match: ChecklistMatch; score: number } | null = null
 
-  for (const model of models) {
+  for (const index of indexes) {
+    const { model } = index
     if (!model.players.length) continue
     if (settings.releaseScope === 'selected') {
       if (model.releaseYear !== settings.targetReleaseYear) continue
@@ -522,14 +691,14 @@ function findChecklistModelForListing(
     if (!releaseCategoryMatches(listing, model.category)) continue
     if (listingProductBlockedForModel(listing, model)) continue
 
-    const player = findChecklistPlayer(listing, model)
+    const player = findChecklistPlayerInIndex(listing, index)
     if (!player) continue
 
     const score = modelReleaseMatchScore(listing, model)
-    if (!best || score > best.score) best = { model, score }
+    if (!best || score > best.score) best = { match: { model, player }, score }
   }
 
-  return best?.model ?? null
+  return best?.match ?? null
 }
 
 function variationScore(haystack: string, variation: string) {
@@ -580,25 +749,69 @@ function findVariation<T extends { variation: string }>(listing: NormalizedListi
   return best && best.score >= 0.55 ? best : null
 }
 
-function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | null) {
-  const player = findChecklistPlayer(listing, model)
+function isBaseAutoListing(listing: NormalizedListing) {
+  const variation = comparableText(listing.variationLabel)
+  return (
+    listing.isAutograph &&
+    !listing.isHandSigned &&
+    !listing.serialDenominator &&
+    (/^base(?: auto)?$/.test(variation) || variation === 'base auto')
+  )
+}
+
+function estimateValuation(
+  listing: NormalizedListing,
+  model?: ChecklistModel | null,
+  salesCacheModel?: SalesCachePlayerModel | null,
+  matchedPlayer?: ChecklistPlayer | null,
+) {
+  const player = matchedPlayer ?? findChecklistPlayer(listing, model)
   const baseEstimate = player ? estimateBasePrice(player) : null
   const modeledBasePrice = baseEstimate?.price ?? player?.baseAvgPrice ?? 0
   const playerVariation = player ? findVariation(listing, player.variations) : null
-  const releaseVariation = model ? findVariation(listing, model.multipliers) : null
+  const releaseVariation =
+    model && playerVariation
+      ? findVariation(listing, model.multipliers) ??
+        findVariation(
+          {
+            ...listing,
+            title: `${listing.title} ${playerVariation.item.variation}`,
+            variationLabel: playerVariation.item.variation,
+          },
+          model.multipliers,
+        )
+      : model
+        ? findVariation(listing, model.multipliers)
+        : null
   const baseTwmaPrice =
     modeledBasePrice && releaseVariation?.item.avgMultiplier
       ? modeledBasePrice * releaseVariation.item.avgMultiplier
       : null
   const variationPrice = playerVariation?.item.avgPrice ?? null
-  const compPrice = listing.marketPrice > 0 ? listing.marketPrice : null
+  const playerVariationSales = playerVariation?.item.salesCount ?? 0
+  const reliablePlayerVariation = variationPrice && playerVariationSales >= 3
+  const compPrice = listing.marketPrice > 0 && listing.compCount > 0 ? listing.marketPrice : null
   let modelPrice: number | null = null
   let modelConfidence = 0
   let matchedVariation: string | null = null
   let valuationSource: ValuationSource = 'listing-comps'
 
-  if (variationPrice && baseTwmaPrice) {
-    const variationSales = playerVariation?.item.salesCount ?? 0
+  if (player && modeledBasePrice > 0 && listing.isHandSigned) {
+    const baseConfidence = baseEstimate?.confidence ?? 0.5
+    const baseSales = baseEstimate?.effectiveSales ?? player.baseSalesCount
+    modelPrice = modeledBasePrice * HAND_SIGNED_BASE_MULTIPLE
+    modelConfidence = clamp(0.34 + baseConfidence * 0.24 + Math.min(baseSales, 12) / 95, 0.38, 0.66)
+    matchedVariation = 'Hand Signed Auto'
+    valuationSource = 'hand-signed-base'
+  } else if (player && modeledBasePrice > 0 && isBaseAutoListing(listing)) {
+    const baseConfidence = baseEstimate?.confidence ?? 0.58
+    const baseSales = baseEstimate?.effectiveSales ?? player.baseSalesCount
+    modelPrice = modeledBasePrice
+    modelConfidence = clamp(0.48 + baseConfidence * 0.38 + Math.min(baseSales, 16) / 70, 0.52, 0.96)
+    matchedVariation = 'Base Auto'
+    valuationSource = 'base-auto'
+  } else if (variationPrice && baseTwmaPrice && reliablePlayerVariation) {
+    const variationSales = playerVariationSales
     const baseSales = baseEstimate?.effectiveSales ?? player?.baseSalesCount ?? 0
     const baseConfidence = baseEstimate?.confidence ?? 0.5
     const variationWeight = clamp(0.42 + Math.min(variationSales, 8) / 28, 0.42, 0.68)
@@ -620,11 +833,6 @@ function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | 
     )
     matchedVariation = playerVariation?.item.variation ?? releaseVariation?.item.variation ?? null
     valuationSource = 'base-twma-blend'
-  } else if (variationPrice && playerVariation) {
-    modelPrice = variationPrice
-    modelConfidence = clamp(0.78 + Math.min(playerVariation?.item.salesCount ?? 0, 8) / 40)
-    matchedVariation = playerVariation.item.variation
-    valuationSource = 'player-variation'
   } else if (baseTwmaPrice && player && releaseVariation) {
     const baseConfidence = baseEstimate?.confidence ?? 0.5
     const baseSales = baseEstimate?.effectiveSales ?? player.baseSalesCount
@@ -635,6 +843,11 @@ function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | 
     modelConfidence = clamp(0.42 + baseConfidence * 0.34 + Math.min(baseSales, 8) / 44 + Math.min(releaseVariation.item.totalSales ?? 0, 200) / 900)
     matchedVariation = releaseVariation.item.variation
     valuationSource = 'player-base-curve'
+  } else if (variationPrice && playerVariation && reliablePlayerVariation) {
+    modelPrice = variationPrice
+    modelConfidence = clamp(0.78 + Math.min(playerVariationSales, 8) / 40)
+    matchedVariation = playerVariation.item.variation
+    valuationSource = 'player-variation'
   } else if (releaseVariation?.item.avgPrice) {
     modelPrice = releaseVariation.item.avgPrice
     modelConfidence = clamp(0.08 + Math.min(releaseVariation.item.playerCount ?? 0, 75) / 420, 0.08, 0.24)
@@ -643,9 +856,66 @@ function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | 
   }
 
   const compValue = listing.marketPrice
+  const withSalesCacheValuation = (valuation: {
+    fairValue: number
+    modelPrice: number | null
+    baseTwmaPrice: number | null
+    variationPrice: number | null
+    compPrice: number | null
+    modelConfidence: number
+    matchedVariation: string | null
+    valuationSource: ValuationSource
+  }) => {
+    const soldComp = salesCacheValuationForListing(listing, salesCacheModel, valuation.matchedVariation ?? listing.variationLabel)
+    if (!soldComp) {
+      return {
+        ...valuation,
+        compBucketLabel: null,
+        compSaleCount: null,
+        compLast3Avg: null,
+        compLast5Avg: null,
+        compTrailingModel: null,
+        compAskVsLast5Pct: null,
+      }
+    }
+
+    const soldWeight = listing.isLowSerialNonAuto
+      ? 1
+      : soldComp.saleCount >= 5 && soldComp.matchScore >= 72
+        ? 0.82
+        : soldComp.saleCount >= 3
+          ? 0.68
+          : 0.54
+    const curveWeight = valuation.modelPrice && valuation.modelPrice > 0 ? 1 - soldWeight : 0
+    const soldModelPrice = weightedAverage([
+      { value: soldComp.soldModelPrice, weight: soldWeight },
+      { value: valuation.modelPrice ?? 0, weight: curveWeight },
+    ])
+    const blendedConfidence = clamp(
+      soldComp.confidence * (curveWeight > 0 ? soldWeight : 1) + valuation.modelConfidence * curveWeight,
+      0,
+      0.97,
+    )
+
+    return {
+      ...valuation,
+      fairValue: soldModelPrice,
+      modelPrice: soldModelPrice,
+      compPrice: soldComp.soldModelPrice,
+      modelConfidence: Math.max(valuation.modelConfidence, blendedConfidence),
+      matchedVariation: soldComp.bucket.variationLabel || valuation.matchedVariation,
+      valuationSource: soldComp.source,
+      compBucketLabel: soldComp.bucketLabel,
+      compSaleCount: soldComp.saleCount,
+      compLast3Avg: soldComp.last3Avg,
+      compLast5Avg: soldComp.last5Avg,
+      compTrailingModel: soldComp.trailingModel,
+      compAskVsLast5Pct: soldComp.last5Avg && soldComp.last5Avg > 0 ? listing.allInPrice / soldComp.last5Avg - 1 : null,
+    }
+  }
 
   if (!modelPrice || modelConfidence <= 0) {
-    return {
+    return withSalesCacheValuation({
       fairValue: compValue,
       modelPrice: null,
       baseTwmaPrice,
@@ -654,11 +924,11 @@ function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | 
       modelConfidence: 0,
       matchedVariation,
       valuationSource,
-    }
+    })
   }
 
   if (compValue <= 0) {
-    return {
+    return withSalesCacheValuation({
       fairValue: modelPrice,
       modelPrice,
       baseTwmaPrice,
@@ -667,10 +937,10 @@ function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | 
       modelConfidence,
       matchedVariation,
       valuationSource,
-    }
+    })
   }
 
-  return {
+  return withSalesCacheValuation({
     fairValue: modelPrice,
     modelPrice,
     baseTwmaPrice,
@@ -679,7 +949,7 @@ function estimateValuation(listing: NormalizedListing, model?: ChecklistModel | 
     modelConfidence,
     matchedVariation,
     valuationSource,
-  }
+  })
 }
 
 function availabilityScore(listing: NormalizedListing) {
@@ -734,9 +1004,16 @@ function buildReasons(args: {
   const tags: string[] = []
   const hoursToClose = listing.hoursToClose ?? null
 
-  if (listing.isTargetAuto) {
+  if (listing.isHandSigned) {
+    reasons.push('hand-signed/IP auto bucket')
+    warnings.push('not pack-issued certified auto')
+    tags.push('hand signed')
+  } else if (listing.isTargetAuto) {
     reasons.push('explicit 1st Bowman auto')
     tags.push('1st auto')
+  } else if (listing.isLowSerialNonAuto) {
+    reasons.push('low-serial 1st Bowman non-auto')
+    tags.push('low serial')
   } else if (listing.isBowman && listing.isAutograph) {
     reasons.push('Bowman auto target')
     warnings.push('1st Bowman is not explicit')
@@ -757,7 +1034,15 @@ function buildReasons(args: {
   if (listing.allInPrice <= maxEntry) reasons.push('inside max entry')
   if (matchedVariation && modelConfidence > 0.2) {
     reasons.push(
-      valuationSource === 'base-twma-blend'
+      valuationSource === 'sales-cache-exact'
+        ? `${matchedVariation} recent sold lane`
+        : valuationSource === 'sales-cache-blend'
+          ? `${matchedVariation} sold lane blend`
+          : valuationSource === 'base-auto'
+            ? `${matchedVariation} base anchor`
+          : valuationSource === 'hand-signed-base'
+            ? `${matchedVariation} hand-signed floor`
+          : valuationSource === 'base-twma-blend'
         ? `${matchedVariation} base TWMA blend`
         : valuationSource === 'player-variation'
         ? `${matchedVariation} player model`
@@ -783,6 +1068,7 @@ function buildReasons(args: {
   }
   if (confidence < 0.52 || compQuality < 0.42) warnings.push('thin or noisy comp base')
   if (valuationSource === 'release-curve') warnings.push('release curve estimate')
+  if (valuationSource === 'sales-cache-blend' && modelConfidence < 0.68) warnings.push('thin sold lane blend')
   if (listing.bidCount >= 20) warnings.push('crowded auction')
   if (levelAgePenalty(listing.prospect) > 0.2) warnings.push('age-to-level drag')
   if (listing.marketPrice < 35) warnings.push('low-dollar noise')
@@ -804,7 +1090,13 @@ function buildThesis(
   compQuality: number,
   valuationSource: ValuationSource,
 ) {
-  const target = listing.isTargetAuto ? 'confirmed 1st Bowman auto' : 'Bowman auto that needs 1st verification'
+  const target = listing.isHandSigned
+    ? 'hand-signed/IP auto, not pack-issued'
+    : listing.isTargetAuto
+      ? 'confirmed 1st Bowman auto'
+      : listing.isLowSerialNonAuto
+        ? 'low-serial 1st Bowman non-auto'
+        : 'Bowman auto that needs 1st verification'
   const compText = compQuality >= 0.7 ? 'solid comps' : compQuality >= 0.45 ? 'usable comps' : 'thin comps'
   const modelText = valuationSource === 'listing-comps' ? 'comp-led model' : valuationSource.replaceAll('-', ' ')
   const direction = edgeDollars >= 0 ? 'under model' : 'over model'
@@ -901,10 +1193,12 @@ export function scoreListing(
   listing: NormalizedListing,
   settings: ScoreSettings = DEFAULT_SETTINGS,
   checklistModel?: ChecklistModel | null,
+  salesCacheModel?: SalesCachePlayerModel | null,
+  checklistPlayer?: ChecklistPlayer | null,
 ): Opportunity {
-  const valuation = estimateValuation(listing, checklistModel)
+  const valuation = estimateValuation(listing, checklistModel, salesCacheModel, checklistPlayer)
   const rawMarketPrice = valuation.fairValue
-  const gradePremium = listing.isEligibleGraded
+  const gradePremium = listing.isEligibleGraded && !listing.isHandSigned
     ? estimateGradedPremium({
         rawPrice: rawMarketPrice,
         serialDenominator: listing.serialDenominator,
@@ -939,6 +1233,7 @@ export function scoreListing(
       (1 - targetFit) * 0.24 +
       stalePenalty +
       (weakCurveOnly ? 0.16 : 0) +
+      (listing.isHandSigned ? 0.14 : 0) +
       levelAgePenalty(listing.prospect) +
       (listing.bidCount > 18 ? 0.1 : 0) +
       (rawMarketPrice < 35 ? 0.08 : 0),
@@ -985,6 +1280,10 @@ export function scoreListing(
   const meetsEntry = listing.allInPrice <= maxEntry
   const isExecutable = availability >= 0.55 && listing.kind === 'bin'
   const hasActionableEvidence =
+    valuation.valuationSource === 'sales-cache-exact' ||
+    valuation.valuationSource === 'sales-cache-blend' ||
+    valuation.valuationSource === 'base-auto' ||
+    valuation.valuationSource === 'hand-signed-base' ||
     valuation.valuationSource === 'base-twma-blend' ||
     valuation.valuationSource === 'player-variation' ||
     valuation.valuationSource === 'player-base-curve' ||
@@ -994,6 +1293,7 @@ export function scoreListing(
   else if (isExecutable && hasActionableEvidence && confidence >= 0.54 && discountPct >= settings.minDiscountPct / 100 && edgeDollars >= 40) action = 'Make offer'
   else if (listing.kind === 'live' && hasActionableEvidence && discountPct >= 0.18 && confidence >= 0.54 && availability > 0.2) action = 'Bid window'
   else if (discountPct >= settings.minDiscountPct / 100 && availability > 0.2) action = 'Watchlist'
+  if (listing.isHandSigned && action === 'Buy now') action = 'Make offer'
 
   const lane: Opportunity['lane'] =
     action === 'Buy now' || action === 'Make offer'
@@ -1030,6 +1330,12 @@ export function scoreListing(
     baseTwmaPrice: valuation.baseTwmaPrice,
     variationPrice: valuation.variationPrice ? valuation.variationPrice * gradePremium.multiplier : valuation.variationPrice,
     compPrice: valuation.compPrice,
+    compBucketLabel: valuation.compBucketLabel,
+    compSaleCount: valuation.compSaleCount,
+    compLast3Avg: valuation.compLast3Avg,
+    compLast5Avg: valuation.compLast5Avg,
+    compTrailingModel: valuation.compTrailingModel,
+    compAskVsLast5Pct: valuation.compAskVsLast5Pct,
     modelConfidence,
     gradingMultiplier: listing.isEligibleGraded ? gradePremium.multiplier : null,
     gradingConfidence: listing.isEligibleGraded ? gradePremium.confidence : null,
@@ -1071,46 +1377,62 @@ export function rankOpportunities(
   listings: ProspectPulseListing[],
   settings: Partial<ScoreSettings> = {},
   checklistModel?: ChecklistModel | ChecklistModel[] | null,
+  salesCacheModels?: SalesCacheModelsInput,
 ) {
   const mergedSettings = { ...DEFAULT_SETTINGS, ...settings }
   const checklistModels = (Array.isArray(checklistModel) ? checklistModel : checklistModel ? [checklistModel] : []).filter(
     (model) => model.players.length > 0,
   )
+  const salesModels = salesCacheModelsArray(salesCacheModels)
+  const checklistIndexes = buildChecklistModelIndexes(checklistModels)
+  const salesCacheIndex = buildSalesCacheModelIndex(salesModels)
+  const opportunities: Opportunity[] = []
 
-  return listings
-    .map(normalizeListing)
-    .filter((listing) => listing.allInPrice > 0)
-    .filter((listing) => {
-      const modeMatches = marketModeMatches(listing, mergedSettings.mode)
-      const releaseMatches =
-        mergedSettings.releaseScope === 'all' || listing.releaseYear === mergedSettings.targetReleaseYear
-      const categoryMatches =
-        mergedSettings.releaseScope === 'all' || releaseCategoryMatches(listing, mergedSettings.targetCategory)
-      const activeMatches =
-        !mergedSettings.activeOnly || (listing.status !== 'ended' && listing.status !== 'sold')
-      const targetMatches =
-        mergedSettings.targetUniverse === 'strict'
-          ? listing.isTargetAuto
+  for (const rawListing of listings) {
+    const listing = normalizeListing(rawListing)
+    if (listing.allInPrice <= 0) continue
+
+    const modeMatches = marketModeMatches(listing, mergedSettings.mode)
+    const releaseMatches = mergedSettings.releaseScope === 'all' || listing.releaseYear === mergedSettings.targetReleaseYear
+    const categoryMatches = mergedSettings.releaseScope === 'all' || releaseCategoryMatches(listing, mergedSettings.targetCategory)
+    const activeMatches = !mergedSettings.activeOnly || (listing.status !== 'ended' && listing.status !== 'sold')
+    const targetMatches =
+      mergedSettings.targetUniverse === 'strict'
+        ? listing.isTargetAuto
+        : mergedSettings.targetUniverse === 'low-serial-non-auto'
+          ? listing.isLowSerialNonAuto
           : listing.isBowman && listing.isAutograph && listing.universeScore >= 0.68
-      return modeMatches && releaseMatches && categoryMatches && activeMatches && targetMatches
-    })
-    .map((listing) => ({
+
+    if (!modeMatches || !releaseMatches || !categoryMatches || !activeMatches || !targetMatches) continue
+
+    const checklistMatch = findChecklistMatchForListing(listing, checklistIndexes, mergedSettings)
+    if (mergedSettings.checklistOnly && !checklistMatch?.model) continue
+
+    const opportunity = scoreListing(
       listing,
-      model: findChecklistModelForListing(listing, checklistModels, mergedSettings),
-    }))
-    .filter(({ model }) => !mergedSettings.checklistOnly || Boolean(model))
-    .map(({ listing, model }) => scoreListing(listing, mergedSettings, model))
-    .filter((opportunity) => {
-      const overFloor = opportunity.listing.allInPrice >= mergedSettings.minPrice
-      const underBudget =
-        typeof mergedSettings.maxPrice === 'number' && Number.isFinite(mergedSettings.maxPrice)
-          ? opportunity.listing.allInPrice <= mergedSettings.maxPrice
-          : true
-      const hasValuation = opportunity.fairValue > 0
-      const hasCompFloor = opportunity.listing.compCount >= mergedSettings.minCompCount
-      return overFloor && underBudget && hasValuation && hasCompFloor
-    })
-    .sort((left, right) => {
-      return right.edgeDollars - left.edgeDollars || right.score - left.score
-    })
+      mergedSettings,
+      checklistMatch?.model ?? null,
+      findSalesCacheModelForListingIndexed(listing, salesCacheIndex),
+      checklistMatch?.player ?? null,
+    )
+
+    const overFloor = opportunity.listing.allInPrice >= mergedSettings.minPrice
+    const underBudget =
+      typeof mergedSettings.maxPrice === 'number' && Number.isFinite(mergedSettings.maxPrice)
+        ? opportunity.listing.allInPrice <= mergedSettings.maxPrice
+        : true
+    const hasValuation = opportunity.fairValue > 0
+    const hasCompFloor = opportunity.listing.compCount >= mergedSettings.minCompCount
+    const lowSerialHasExactComps =
+      mergedSettings.targetUniverse !== 'low-serial-non-auto' ||
+      (opportunity.valuationSource === 'sales-cache-exact' &&
+        (opportunity.compSaleCount ?? 0) >= 2 &&
+        opportunity.modelConfidence >= 0.62)
+
+    if (overFloor && underBudget && hasValuation && hasCompFloor && lowSerialHasExactComps) {
+      opportunities.push(opportunity)
+    }
+  }
+
+  return opportunities.sort((left, right) => right.edgeDollars - left.edgeDollars || right.score - left.score)
 }

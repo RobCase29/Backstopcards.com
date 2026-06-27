@@ -57,6 +57,141 @@ const MARKET_MOVERS_CAPTURE_SCRIPT = `(() => {
 
 export const MARKET_MOVERS_CAPTURE_BOOKMARKLET = `javascript:${encodeURIComponent(MARKET_MOVERS_CAPTURE_SCRIPT)}`
 
+const MARKET_MOVERS_STRUCTURED_CAPTURE_SCRIPT = `(() => {
+  const capturedAt = new Date().toISOString();
+  const compact = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const money = (value) => {
+    const parsed = Number(String(value || '').replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const integer = (value) => {
+    const parsed = Number(String(value || '').replace(/[^0-9-]/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const percent = (value) => {
+    const parsed = Number(String(value || '').replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  const text = (el) => compact(el?.textContent);
+  const directTexts = (el) => [...(el?.children || [])].map(text).filter(Boolean);
+  const leafTexts = (root) => {
+    const out = [];
+    const walk = (node) => {
+      if (!node || !visible(node)) return;
+      const children = [...node.children].filter(visible);
+      if (children.length === 0) {
+        const value = text(node);
+        if (value) out.push(value);
+        return;
+      }
+      const own = [...node.childNodes]
+        .filter((child) => child.nodeType === Node.TEXT_NODE)
+        .map((child) => compact(child.textContent))
+        .filter(Boolean)
+        .join(' ');
+      if (own) out.push(own);
+      children.forEach(walk);
+    };
+    walk(root);
+    return out.filter((value, index, values) => value && values[index - 1] !== value);
+  };
+  const firstDateIndex = (values) => values.findIndex((value) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(value));
+  const parseCardRow = (row, index) => {
+    const content = row.querySelector('[class*="max-w"]') || row;
+    const contentLines = directTexts(content);
+    const priceCell = [...row.querySelectorAll('p, div')]
+      .find((el) => /\\$\\s?\\d/.test(text(el)) && /\\d{1,2}\\/\\d{1,2}\\/\\d{4}/.test(text(el)));
+    const priceDateLines = directTexts(priceCell);
+    const fallbackText = text(row);
+    const fallbackDate = fallbackText.match(/\\d{1,2}\\/\\d{1,2}\\/\\d{4}/)?.[0] || '';
+    const fallbackPrice = fallbackText.match(/\\$\\s?[\\d,.]+/)?.[0] || '';
+    return {
+      index,
+      playerName: contentLines[0] || '',
+      cardTitle: contentLines[1] || '',
+      category: contentLines[2] || '',
+      grade: contentLines[3] || '',
+      latestPriceText: priceDateLines.find((line) => /^\\$/.test(line)) || fallbackPrice,
+      latestPrice: money(priceDateLines.find((line) => /^\\$/.test(line)) || fallbackPrice),
+      latestDate: priceDateLines.find((line) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(line)) || fallbackDate,
+      imageUrl: row.querySelector('img')?.src || '',
+      rawText: fallbackText,
+    };
+  };
+  const parseSelectedCard = () => {
+    const flyouts = [...document.querySelectorAll('div')]
+      .filter((el) => visible(el) && el.getBoundingClientRect().x > window.innerWidth * 0.45 && /Completed Sales/i.test(text(el)));
+    const root = flyouts.sort((a, b) => text(a).length - text(b).length)[0] || null;
+    if (!root) return null;
+    const values = leafTexts(root);
+    const dateIndex = firstDateIndex(values);
+    const playerName = values[0] || '';
+    const cardTitle = values[1] || '';
+    const category = values[2] || '';
+    const grade = values[3] || '';
+    const latestDate = dateIndex >= 0 ? values[dateIndex] : '';
+    const latestPriceText = dateIndex >= 0 ? values.slice(dateIndex + 1).find((value) => /^\\$/.test(value)) || '' : '';
+    const trendText = values.find((value) => /^[-+]?\\d+(?:\\.\\d+)?%$/.test(value)) || '';
+    const avgLabelIndex = values.findIndex((value) => /Day Avg/i.test(value));
+    const salesCountIndex = values.findIndex((value) => /Sales Count/i.test(value));
+    const dailyHeaderIndex = values.findIndex((value, index) => value === 'Date' && values[index + 1] === 'Number of Sales');
+    const dailySales = [];
+    if (dailyHeaderIndex >= 0) {
+      for (let index = dailyHeaderIndex + 3; index < values.length - 2; index += 3) {
+        if (/^Page\\b|^For Sale$/i.test(values[index])) break;
+        if (!/^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(values[index])) break;
+        dailySales.push({
+          date: values[index],
+          saleCount: integer(values[index + 1]),
+          avgPriceText: values[index + 2],
+          avgPrice: money(values[index + 2]),
+        });
+      }
+    }
+    return {
+      playerName,
+      cardTitle,
+      category,
+      grade,
+      latestDate,
+      latestPriceText,
+      latestPrice: money(latestPriceText),
+      trendText,
+      trendPct: percent(trendText),
+      selectedWindowLabel: avgLabelIndex >= 0 ? values[avgLabelIndex] : '',
+      selectedWindowDays: avgLabelIndex >= 0 ? integer(values[avgLabelIndex]) : null,
+      rollingAverageText: avgLabelIndex > 0 ? values[avgLabelIndex - 1] : '',
+      rollingAverage: avgLabelIndex > 0 ? money(values[avgLabelIndex - 1]) : null,
+      salesCount: salesCountIndex > 0 ? integer(values[salesCountIndex - 1]) : null,
+      dailySales,
+      imageUrl: root.querySelector('img')?.src || '',
+      leafText: values,
+      rawText: text(root),
+    };
+  };
+  const cards = [...document.querySelectorAll('li[class*="VerticalTilesList_item"]')]
+    .map(parseCardRow)
+    .filter((row) => row.playerName || row.cardTitle || row.category);
+  const selectedCard = parseSelectedCard();
+  const payload = {
+    source: 'market-movers-structured-capture',
+    sourceUrl: location.href,
+    capturedAt,
+    query: document.querySelector('input[placeholder="e.g. Luka Doncic Prizm"]')?.value || '',
+    cards,
+    selectedCard,
+  };
+  navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+  alert('Copied Market Movers structured capture: ' + cards.length + ' card rows' + (selectedCard ? ' + selected card detail.' : '.'));
+})();`
+
+export const MARKET_MOVERS_STRUCTURED_CAPTURE_BOOKMARKLET = `javascript:${encodeURIComponent(MARKET_MOVERS_STRUCTURED_CAPTURE_SCRIPT)}`
+
 function numberValue(value: unknown, fallback = 0) {
   const parsed =
     typeof value === 'number'

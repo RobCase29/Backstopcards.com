@@ -84,10 +84,103 @@ describe('fetchEbayBinListings', () => {
     expect(result.listings[0]?.serial_denominator).toBe(150)
     expect(result.listings[0]?.prospect).toMatchObject({
       name: 'Eli Willits',
-      ranking: 2,
+      ranking: expect.any(Number),
       level: 'A+',
     })
+    expect(result.listings[0]?.prospect?.ranking).toBeLessThan(25)
     expect(result.stats.mappedListings).toBe(1)
+  })
+
+  it('classifies plain chrome autograph listings as base autos instead of borrowing numbered lanes', async () => {
+    const kendryModel: ChecklistModel = {
+      ...model,
+      players: [
+        {
+          playerName: 'Kendry Chourio',
+          baseAvgPrice: 68,
+          baseSalesCount: 6,
+          variations: [],
+        },
+      ],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string }> }
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                itemId: 'kendry-base-auto',
+                title: '2026 Bowman Kendry Chourio Chrome Auto Autograph 1st Prospect #CPA-KC Royals',
+                price: { value: '45.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+            ],
+            stats: {
+              queriesRun: 1,
+              queriesSucceeded: 1,
+              queriesFailed: 0,
+              pagesFetched: 1,
+              upstreamTotal: 1,
+              dedupedItems: 1,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayBinListings({ model: kendryModel, playerLimit: 1 })
+
+    expect(result.listings).toHaveLength(1)
+    expect(result.listings[0]?.variation).toBe('Base Auto')
+    expect(result.listings[0]?.serial_denominator).toBeNull()
+  })
+
+  it('uses structured image-variation labels while matching eBay gold ink wording', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string; variationTerm?: string }> }
+        expect(body.queries[0]?.q).toBe('Eli Willits gold ink 2026 bowman chrome 1st auto')
+        expect(body.queries[0]?.variationTerm).toBe('Gold Image Variation /15')
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                itemId: 'gold-ink',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Gold Ink Auto /15',
+                price: { value: '950.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+            ],
+            stats: {
+              queriesRun: 1,
+              queriesSucceeded: 1,
+              queriesFailed: 0,
+              pagesFetched: 1,
+              upstreamTotal: 1,
+              dedupedItems: 1,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayBinListings({
+      model,
+      playerLimit: 1,
+      searchMode: 'variation',
+      searchTerm: 'Gold Image Variation /15',
+    })
+
+    expect(result.listings.map((listing) => listing.item_id)).toEqual(['gold-ink'])
+    expect(result.listings[0]?.variation).toBe('Gold Image Variation /15')
+    expect(result.listings[0]?.serial_denominator).toBe(15)
   })
 
   it('rejects eBay results whose title does not contain the searched player', async () => {
@@ -368,6 +461,159 @@ describe('fetchEbayBinListings', () => {
 
     expect(result.listings).toEqual([])
     expect(result.stats.rejectedPlayerMismatches).toBe(1)
+  })
+
+  it('runs a base-auto scan that rejects numbered and color parallel autos', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string; baseAutoOnly?: boolean }> }
+        expect(body.queries).toHaveLength(1)
+        expect(body.queries[0]?.q).toBe('Eli Willits 2026 bowman chrome 1st auto')
+        expect(body.queries[0]?.baseAutoOnly).toBe(true)
+
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                itemId: 'base-auto',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Chrome Prospect Autographs Auto CPA-EW',
+                price: { value: '140.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'red-sox-base-auto',
+                title: '2026 Bowman Chrome Boston Red Sox Eli Willits 1st Bowman Auto CPA-EW',
+                price: { value: '145.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'signed-rare',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Signed Rare Auto #BCP-95',
+                price: { value: '95.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'ip-auto',
+                title: '2026 Bowman Chrome Eli Willits Base #BCP-95 IP AUTO',
+                price: { value: '88.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'blue-parallel',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Blue Refractor Auto /150',
+                price: { value: '350.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'refractor-redemption',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Auto Refractor Redemption',
+                price: { value: '175.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+            ],
+            stats: {
+              queriesRun: 1,
+              queriesSucceeded: 1,
+              queriesFailed: 0,
+              pagesFetched: 1,
+              upstreamTotal: 6,
+              dedupedItems: 6,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayBinListings({ model, playerLimit: 1, searchMode: 'base-auto' })
+
+    expect(result.listings.map((listing) => listing.item_id)).toEqual(['base-auto', 'red-sox-base-auto', 'signed-rare', 'ip-auto'])
+    expect(result.listings.map((listing) => listing.variation)).toEqual([
+      'Base Auto',
+      'Base Auto',
+      'Hand Signed Auto',
+      'Hand Signed Auto',
+    ])
+    expect(result.listings.slice(2).every((listing) => listing.is_hand_signed)).toBe(true)
+    expect(result.listings.every((listing) => listing.serial_denominator === null)).toBe(true)
+    expect(result.stats.rejectedPlayerMismatches).toBe(2)
+  })
+
+  it('can map low-serial 1st Bowman non-autos while rejecting autos and /100+ cards', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string; lowSerialNonAuto?: boolean }> }
+        expect(body.queries).toHaveLength(7)
+        expect(body.queries[0]?.q).toBe('Eli Willits 2026 bowman chrome 1st /99')
+        expect(body.queries.every((query) => query.lowSerialNonAuto)).toBe(true)
+
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                itemId: 'green-non-auto',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Green Refractor /99',
+                price: { value: '42.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'yellow-non-auto',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Yellow Refractor /75',
+                price: { value: '55.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[1],
+              },
+              {
+                itemId: 'red-sox-numbered',
+                title: '2026 Bowman Chrome Eli Willits Red Sox 1st Bowman /99',
+                price: { value: '40.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'auto-green',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Green Refractor Auto /99',
+                price: { value: '240.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'blue-non-auto',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Blue Refractor /150',
+                price: { value: '28.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+            ],
+            stats: {
+              queriesRun: 7,
+              queriesSucceeded: 7,
+              queriesFailed: 0,
+              pagesFetched: 7,
+              upstreamTotal: 3,
+              dedupedItems: 3,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayBinListings({ model, playerLimit: 1, searchMode: 'low-serial-non-auto' })
+
+    expect(result.listings.map((listing) => listing.item_id)).toEqual(['green-non-auto', 'yellow-non-auto', 'red-sox-numbered'])
+    expect(result.listings.map((listing) => listing.variation)).toEqual(['Green /99', 'Yellow /75', 'Numbered /99'])
+    expect(result.listings[0]?.serial_denominator).toBe(99)
+    expect(result.stats.rejectedPlayerMismatches).toBe(2)
   })
 
   it('rejects paper autos and insert autos that do not belong to the chrome auto model', async () => {

@@ -1,5 +1,6 @@
 import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
 import { findStsRanking, scoreStsBinTarget, scoreStsMomentum, scoreStsRanking, scoreStsRiserValue } from './stsRankings'
+import { normalizeTeamCode, teamDisplayName, teamSearchText } from './teams'
 
 export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'variation-implied' | 'twma-fallback'
 export type SaleChannel = 'auction' | 'bin' | 'unknown'
@@ -47,6 +48,9 @@ export interface PricingRow {
   id: string
   rank: number
   playerName: string
+  checklistTeam: string | null
+  currentTeam: string | null
+  currentTeamName: string | null
   stsName: string | null
   stsTeam: string | null
   stsPosition: string | null
@@ -136,6 +140,11 @@ interface VariationBucket {
 export function modelKey(value: string) {
   return value
     .toLowerCase()
+    .replace(/\bsunflower\s+seeds?\b/g, 'sunflower snack pack')
+    .replace(/\bsunflower\b(?!\s+snack\s+pack)/g, 'sunflower snack pack')
+    .replace(/\bgum\s*ball\b(?!\s+snack\s+pack)|\bbubble\s+gum\b(?!\s+snack\s+pack)/g, 'gumball snack pack')
+    .replace(/\bpeanuts?\b(?!\s+snack\s+pack)/g, 'peanuts snack pack')
+    .replace(/\bpopcorn\b(?!\s+snack\s+pack)/g, 'popcorn snack pack')
     .replace(/#/g, '/')
     .replace(/\b(1st|first|bowman|chrome|prospect|auto|autograph|autographs|autographed)\b/g, ' ')
     .replace(/[^a-z0-9/]+/g, ' ')
@@ -425,7 +434,7 @@ export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): B
     volatility: Number(volatility.toFixed(3)),
     latestSaleAt,
     fallbackPrice,
-    methodLabel: sales.length > 0 ? 'thin sales fallback' : 'ProspectPulse TWMA',
+    methodLabel: sales.length > 0 ? 'thin sales fallback' : player.baseSalesCount > 0 ? 'cached comp summary' : 'baseline average',
   }
 }
 
@@ -612,6 +621,9 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
 
     for (const { player, estimate: baseEstimate } of pricedEntries) {
       const stsRanking = findStsRanking(player.playerName)
+      const checklistTeam = normalizeTeamCode(player.team) || null
+      const currentTeam = normalizeTeamCode(stsRanking?.team) || checklistTeam || null
+      const currentTeamName = currentTeam ? teamDisplayName(currentTeam) : null
       const ladder = variations.map<VariationQuote>((variation) => {
         const price = Number((baseEstimate.price * variation.avgMultiplier).toFixed(2))
         return {
@@ -629,6 +641,11 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
         model.release,
         model.releaseYear,
         model.category,
+        checklistTeam,
+        currentTeam,
+        currentTeamName,
+        teamSearchText(currentTeam),
+        player.team,
         stsRanking?.team,
         stsRanking?.pos,
         stsRanking?.level,
@@ -639,6 +656,9 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
       rowsWithoutRank.push({
         id: `${model.release}:${player.playerName}`,
         playerName: player.playerName,
+        checklistTeam,
+        currentTeam,
+        currentTeamName,
         stsName: stsRanking?.name ?? null,
         stsTeam: stsRanking?.team ?? null,
         stsPosition: stsRanking?.pos ?? null,

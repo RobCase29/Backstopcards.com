@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChecklistModel } from '../types'
-import { buildPricingMatrix, estimateBasePrice, releaseVariationCurve } from './matrix'
+import { buildPricingMatrix, estimateBasePrice, releaseVariationCurve, variationKey } from './matrix'
 
 const asOf = Date.UTC(2026, 5, 21)
 
@@ -89,6 +89,11 @@ describe('pricing matrix', () => {
       price: 300,
       multiplier: 3,
     })
+  })
+
+  it('treats snack-pack wording variants as one variation key', () => {
+    expect(variationKey('Sunflower Seeds /5')).toBe(variationKey('Sunflower Snack Pack /5'))
+    expect(variationKey('Gum Ball /5')).toBe(variationKey('Gumball Snack Pack /5'))
   })
 
   it('uses a 30-day recency-weighted base when enough raw sales are available', () => {

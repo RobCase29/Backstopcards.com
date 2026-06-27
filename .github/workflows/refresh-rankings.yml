@@ -1,0 +1,49 @@
+name: Refresh Consensus Rankings
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "18 10 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-consensus-rankings
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Pull latest hitter and pitcher consensus
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Refresh rankings
+        run: npm run rankings:refresh
+
+      - name: Validate ranking parser
+        run: npm run test -- src/lib/stsRankings.test.ts
+
+      - name: Commit updated ranking data
+        run: |
+          if git diff --quiet -- src/data/sts_formulated_consensus_hitters.csv src/data/sts_formulated_consensus_pitchers.csv; then
+            echo "Consensus data unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/data/sts_formulated_consensus_hitters.csv src/data/sts_formulated_consensus_pitchers.csv
+          git commit -m "Refresh consensus rankings"
+          git push

@@ -4,7 +4,7 @@ export type MarketMode = 'raw' | 'graded' | 'raw-plus-graded'
 
 export type GradingCompany = 'PSA' | 'BGS' | 'SGC' | 'CGC'
 
-export type TargetUniverse = 'strict' | 'expanded'
+export type TargetUniverse = 'strict' | 'expanded' | 'low-serial-non-auto'
 
 export type FeedScanDepth = 'fast' | 'deep'
 
@@ -13,6 +13,10 @@ export type ReleaseScope = 'all' | 'selected'
 export type ListingStatus = 'active' | 'ended' | 'sold' | 'unknown'
 
 export type ValuationSource =
+  | 'sales-cache-exact'
+  | 'sales-cache-blend'
+  | 'base-auto'
+  | 'hand-signed-base'
   | 'base-twma-blend'
   | 'player-variation'
   | 'player-base-curve'
@@ -84,6 +88,7 @@ export interface ProspectPulseListing {
   variation?: string | null
   base_color?: string | null
   serial_denominator?: number | string | null
+  is_hand_signed?: boolean | null
   is_graded?: boolean | null
   grader?: string | null
   grade?: string | number | null
@@ -140,6 +145,7 @@ export interface ChecklistSale {
 export interface ChecklistPlayer {
   playerName: string
   prospectId?: string | null
+  team?: string | null
   status?: string | null
   baseAvgPrice: number
   baseSalesCount: number
@@ -200,6 +206,8 @@ export interface NormalizedListing {
   isAutograph: boolean
   isFirstBowman: boolean
   isTargetAuto: boolean
+  isLowSerialNonAuto: boolean
+  isHandSigned: boolean
   universeScore: number
   listingAgeHours?: number | null
   hoursToClose?: number | null
@@ -217,6 +225,12 @@ export interface Opportunity {
   baseTwmaPrice?: number | null
   variationPrice?: number | null
   compPrice?: number | null
+  compBucketLabel?: string | null
+  compSaleCount?: number | null
+  compLast3Avg?: number | null
+  compLast5Avg?: number | null
+  compTrailingModel?: number | null
+  compAskVsLast5Pct?: number | null
   modelConfidence: number
   gradingMultiplier?: number | null
   gradingConfidence?: number | null

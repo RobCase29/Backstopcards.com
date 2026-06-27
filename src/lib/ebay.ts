@@ -1,5 +1,6 @@
 import type { ChecklistModel, ProspectPulseListing } from '../types'
 import { titleEligibleForBowmanChromeAutoModel } from './cardTitleGuards'
+import { titleLooksHandSignedAuto } from './handSigned'
 import { findStsRanking } from './stsRankings'
 
 type EbayQueryMeta = {
@@ -9,6 +10,9 @@ type EbayQueryMeta = {
   releaseYear?: number
   category?: ChecklistModel['category']
   variationTerm?: string
+  baseAutoOnly?: boolean
+  lowSerialNonAuto?: boolean
+  serialDenominator?: number
 }
 
 type EbayMoney = {
@@ -75,7 +79,7 @@ export type EbayBinScanResult = {
   stats: EbayScanStats
 }
 
-export type EbayBinSearchMode = 'checklist' | 'player' | 'variation'
+export type EbayBinSearchMode = 'checklist' | 'player' | 'variation' | 'base-auto' | 'low-serial-non-auto'
 export type EbayListingMode = 'bin' | 'auction'
 
 export class EbayRateLimitError extends Error {
@@ -151,7 +155,81 @@ function titleMatchesPlayer(title: string, playerName: string) {
 
 function titleMatchesVariationTerm(title: string, variationTerm?: string) {
   if (!variationTerm?.trim()) return true
-  return matchesSearchTerm(title, variationTerm)
+  return variationSearchAliases(variationTerm).some((alias) => matchesSearchTerm(title, alias))
+}
+
+function variationSearchAliases(variationTerm: string) {
+  const term = variationTerm.trim()
+  const normalized = normalizedKey(term)
+  const aliases = new Set<string>([term])
+  if (/\bimage\b/.test(normalized) && /\bgold\b/.test(normalized)) aliases.add('gold ink')
+  if (/\bimage\b/.test(normalized) && /\bblack\b/.test(normalized)) aliases.add('black ink')
+  if (/\bimage\b/.test(normalized) && /\bred\b/.test(normalized)) aliases.add('red ink')
+  if (/\bmini\s+diamond\b/.test(normalized)) aliases.add('mini diamond')
+  if (/\bb\s+w\b|\bblack\s+white\b/.test(normalized)) aliases.add('black white shimmer')
+  if (/\bpackfractor\b/.test(normalized)) aliases.add('packfractor')
+  return [...aliases]
+}
+
+function variationQueryTerm(variationTerm = '') {
+  const normalized = normalizedKey(variationTerm)
+  if (/\bimage\b/.test(normalized) && /\bgold\b/.test(normalized)) return 'gold ink'
+  if (/\bimage\b/.test(normalized) && /\bblack\b/.test(normalized)) return 'black ink'
+  if (/\bimage\b/.test(normalized) && /\bred\b/.test(normalized)) return 'red ink'
+  return variationTerm
+}
+
+const BASE_AUTO_EXCLUSION_PATTERN =
+  /\b(?:superfractor|super\s+fractor|refractor|xfractor|x-fractor|logofractor|firefractor|packfractor|speckle|atomic|mini\s*diamond|shimmer|lava|wave|raywave|mojo|sapphire|image\s+variation|peanuts?|popcorn|sunflower|gum\s*ball|gumball|snack\s+pack)\b/i
+const BASE_AUTO_COLOR_PARALLEL_PATTERN =
+  /\b(?:blue|green|aqua|purple|yellow|gold|orange|red|black|rose|fuchsia|teal|pink|silver|pearl)\s+(?:refractor|auto|parallel|lava|wave|shimmer)\b|\b(?:refractor|auto|parallel|lava|wave|shimmer)\s+(?:blue|green|aqua|purple|yellow|gold|orange|red|black|rose|fuchsia|teal|pink|silver|pearl)\b/i
+
+function titleLooksLikeBaseAuto(title: string) {
+  if (serialDenominatorFromTitle(title)) return false
+  return !BASE_AUTO_EXCLUSION_PATTERN.test(title) && !BASE_AUTO_COLOR_PARALLEL_PATTERN.test(title)
+}
+
+function titleLooksLikePackIssuedAuto(title: string) {
+  return /\b(auto|autos|autograph|autographed|autographs|signed|signature|redemption)\b/i.test(title)
+}
+
+function titleLooksLikeLowSerialNonAuto(title: string) {
+  const serialDenominator = serialDenominatorFromTitle(title)
+  return Boolean(
+    serialDenominator &&
+      serialDenominator <= 99 &&
+      /\bbowman\b/i.test(title) &&
+      /\b(1st|first)\b/i.test(title) &&
+      !titleLooksLikePackIssuedAuto(title) &&
+      !titleLooksHandSignedAuto(title),
+  )
+}
+
+function parallelText(title: string) {
+  return title.replace(/\b(?:red\s+sox|white\s+sox|reds?|blue\s+jays)\b/gi, ' ')
+}
+
+function lowSerialNonAutoVariationLabel(title: string, serialDenominator: number | null) {
+  const normalized = parallelText(title).toLowerCase()
+  const parallel =
+    /\bsuperfractor\b|\bsuper\s+fractor\b/.test(normalized)
+      ? 'Superfractor'
+      : /\bred\b/.test(normalized)
+        ? 'Red'
+        : /\borange\b/.test(normalized)
+          ? 'Orange'
+          : /\bgold\b/.test(normalized)
+            ? 'Gold'
+            : /\bblack\b/.test(normalized)
+              ? 'Black'
+              : /\bgreen\b/.test(normalized)
+                ? 'Green'
+                : /\byellow\b/.test(normalized)
+                  ? 'Yellow'
+                : /\bmini\s*diamond\b/.test(normalized)
+                  ? 'Mini Diamond'
+                  : 'Numbered'
+  return serialDenominator ? `${parallel} /${serialDenominator}` : parallel
 }
 
 function compactQuery(query: string) {
@@ -171,10 +249,10 @@ function releaseQueryProduct(model: ChecklistModel) {
   return product.includes('chrome') ? product : `${product} chrome`
 }
 
-function buildPlayerQuery(model: ChecklistModel, playerName: string, variationTerm = ''): EbayQueryMeta {
+function buildPlayerQuery(model: ChecklistModel, playerName: string, variationTerm = '', baseAutoOnly = false): EbayQueryMeta {
   const queryParts = [
     playerName,
-    variationTerm,
+    variationQueryTerm(variationTerm),
     String(model.releaseYear),
     releaseQueryProduct(model),
     '1st auto',
@@ -187,7 +265,22 @@ function buildPlayerQuery(model: ChecklistModel, playerName: string, variationTe
     releaseYear: model.releaseYear,
     category: model.category,
     variationTerm: variationTerm || undefined,
+    baseAutoOnly: baseAutoOnly || undefined,
   }
+}
+
+const LOW_SERIAL_NON_AUTO_DENOMINATORS = [99, 75, 50, 25, 10, 5, 1]
+
+function buildLowSerialNonAutoQueries(model: ChecklistModel, playerName: string): EbayQueryMeta[] {
+  return LOW_SERIAL_NON_AUTO_DENOMINATORS.map((serialDenominator) => ({
+    q: compactQuery(`${playerName} ${model.releaseYear} ${releaseQueryProduct(model)} 1st /${serialDenominator}`),
+    playerName,
+    release: model.release,
+    releaseYear: model.releaseYear,
+    category: model.category,
+    lowSerialNonAuto: true,
+    serialDenominator,
+  }))
 }
 
 function selectedPlayers(options: {
@@ -254,7 +347,12 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   const title = firstString([item.title], '')
   if (!playerName || !title || !titleMatchesPlayer(title, playerName)) return null
   if (!titleMatchesVariationTerm(title, meta?.variationTerm)) return null
-  if (!titleEligibleForBowmanChromeAutoModel(title)) return null
+  if (meta?.lowSerialNonAuto) {
+    if (!titleLooksLikeLowSerialNonAuto(title)) return null
+  } else {
+    if (meta?.baseAutoOnly && !titleLooksLikeBaseAuto(title)) return null
+    if (!titleEligibleForBowmanChromeAutoModel(title)) return null
+  }
 
   const buyingOptions = item.buyingOptions ?? []
   const fixedPrice = listingMode === 'bin' || buyingOptions.includes('FIXED_PRICE')
@@ -262,6 +360,16 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   const itemId = firstString([item.legacyItemId, item.itemId], title)
   const price = currentListingPrice(item, listingMode)
   const stsRanking = findStsRanking(playerName)
+  const isHandSigned = titleLooksHandSignedAuto(title)
+  const serialDenominator = isHandSigned || meta?.baseAutoOnly ? null : serialDenominatorFromTitle(title)
+  const inferredVariation =
+    isHandSigned
+      ? 'Hand Signed Auto'
+      : meta?.lowSerialNonAuto
+        ? lowSerialNonAutoVariationLabel(title, serialDenominator)
+        : meta?.baseAutoOnly || titleLooksLikeBaseAuto(title)
+          ? 'Base Auto'
+          : meta?.variationTerm ?? ''
 
   return {
     item_id: itemId,
@@ -281,8 +389,9 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
     release_year: meta?.releaseYear ?? null,
     product_type: fallbackReleaseLabel,
     release: meta?.release ?? fallbackReleaseLabel,
-    variation: meta?.variationTerm ?? '',
-    serial_denominator: serialDenominatorFromTitle(title),
+    variation: inferredVariation,
+    serial_denominator: serialDenominator,
+    is_hand_signed: isHandSigned,
     comps: [],
     prospect: {
       name: playerName,
@@ -349,8 +458,17 @@ async function fetchEbayListings(options: FetchEbayListingsOptions & { listingMo
     throw new Error(searchMode === 'player' ? `No ${releaseLabel} checklist player matches "${searchTerm}".` : 'No checklist players are available to scan.')
   }
 
-  const queries = players.map((player) =>
-    buildPlayerQuery(options.model, player.playerName, searchMode === 'variation' ? searchTerm : ''),
+  const queries = players.flatMap((player) =>
+    searchMode === 'low-serial-non-auto'
+      ? buildLowSerialNonAutoQueries(options.model, player.playerName)
+      : [
+          buildPlayerQuery(
+            options.model,
+            player.playerName,
+            searchMode === 'variation' ? searchTerm : '',
+            searchMode === 'base-auto',
+          ),
+        ],
   )
   const response = await fetch('/api/ebay/search', {
     method: 'POST',
