@@ -6862,6 +6862,13 @@ button.sales-bucket-tile {
   line-height: 1.35;
 }
 
+.bin-results-anchor {
+  height: 1px;
+  margin-top: 12px;
+  scroll-margin-top: 18px;
+  outline: none;
+}
+
 .bin-opportunity-list {
   display: grid;
   gap: 8px;

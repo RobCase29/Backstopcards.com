@@ -22,7 +22,7 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react'
-import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
@@ -292,7 +292,7 @@ const BIN_RESULT_SORT_LABELS: Record<BinResultSort, string> = {
   'trend-desc': 'Trend',
   'price-asc': 'Price low',
   'price-desc': 'Price high',
-  'roi-desc': 'ROI',
+  'roi-desc': 'Edge %',
 }
 
 function binVariationOptionsForModels(models: ChecklistModel[]): BinVariationOption[] {
@@ -512,7 +512,7 @@ function scoreSettingsForSearchMode(settings: ScoreSettings, searchMode: BinSear
 
 function pricingVerdict(spread: number | null, modelValue: number, askPrice: number | null) {
   if (!askPrice) return { label: 'No Ask', tone: 'neutral' as const }
-  if (askPrice <= modelValue * 0.78) return { label: 'Buy Zone', tone: 'good' as const }
+  if (askPrice <= modelValue * 0.78) return { label: 'Target Price', tone: 'good' as const }
   if (spread !== null && spread >= 0) return { label: 'Under Model', tone: 'good' as const }
   if (askPrice <= modelValue * (1 + LIVE_MODEL_WINDOW_PCT)) return { label: 'Near Model', tone: 'watch' as const }
   return { label: 'Rich', tone: 'risk' as const }
@@ -1285,7 +1285,7 @@ function WorkflowCommand({
   listingCount: number
   modelReady: boolean
 }) {
-  const modeTitle = mode === 'lookup' ? 'Undervalued Board' : mode === 'deals' ? 'Advanced Radar' : 'Beta Lab'
+  const modeTitle = mode === 'lookup' ? 'Value Board' : mode === 'deals' ? 'Deal Radar' : 'Beta Lab'
   return (
     <section className="workflow-command" aria-label="Bowman auto desk">
       <div className="workflow-command-copy">
@@ -1312,9 +1312,9 @@ function WorkflowCommand({
             <Search size={19} />
           </span>
           <span className="workflow-card-copy">
-            <span>Capital board</span>
+            <span>Value board</span>
             <strong>Value board</strong>
-            <small>Search, filter, then scan the ranked board</small>
+            <small>Search, filter, then scan live listings</small>
           </span>
           <span className="workflow-value">{pricedRows.toLocaleString()}</span>
         </button>
@@ -1577,7 +1577,7 @@ function Leaderboard({
         <span>#</span>
         <span>Player</span>
         <span>Base Auto</span>
-        <span>Value Gap</span>
+        <span>Value Signal</span>
       </div>
       <div className="leaderboard-list">
         {rows.map((row, index) => {
@@ -1608,12 +1608,12 @@ function Leaderboard({
                     onSelect(row.id)
                     onScanPlayer(row)
                   }}
-                  aria-label={`Scan active eBay deals for ${row.playerName}`}
+                  aria-label={`Scan live listings for ${row.playerName}`}
                 >
                   <strong>{row.playerName}</strong>
                   <span>
                     <Radio size={12} />
-                    Scan deals
+                    Scan now
                   </span>
                 </button>
                 <small>
@@ -1704,8 +1704,8 @@ function CapitalThesis({
   const cards = [
     {
       key: 'gap',
-      label: 'Best value gap',
-      note: 'Rank price mismatch',
+      label: 'Best value signal',
+      note: 'Rank vs price mismatch',
       item: pick(scoredRows[0]),
     },
     {
@@ -1741,9 +1741,9 @@ function CapitalThesis({
 
   if (cards.length === 0) {
     return (
-      <section className="capital-thesis-strip loading" aria-label="Capital thesis">
+      <section className="capital-thesis-strip loading" aria-label="Value signals">
         <div className="capital-thesis-intro">
-          <span>Capital thesis</span>
+          <span>Value signals</span>
           <strong>{loading ? 'Building the value board' : 'No value board yet'}</strong>
           <small>
             {progress ? `Loaded ${progress.loaded.toLocaleString()} of ${progress.total.toLocaleString()} checklist models` : 'Waiting for ranked base-auto prices'}
@@ -1756,9 +1756,9 @@ function CapitalThesis({
   }
 
   return (
-    <section className="capital-thesis-strip" aria-label="Capital thesis">
+    <section className="capital-thesis-strip" aria-label="Value signals">
       <div className="capital-thesis-intro">
-        <span>Capital thesis</span>
+        <span>Value signals</span>
         <strong>{cards[0].item.row.playerName}</strong>
         <small>
           {money(cards[0].item.row.baseTwmaPrice)} base auto / {money(cards[0].item.impliedBase)} rank-implied base
@@ -1794,7 +1794,7 @@ function CapitalThesis({
               }}
             >
               <Radio size={13} />
-              Scan
+              Scan now
             </button>
           </article>
         )
@@ -2073,12 +2073,12 @@ function QuickPriceModule({
           <small>{gradeModel.note}</small>
         </div>
         <div>
-          <span>Buy Zone</span>
+          <span>Target Price</span>
           <strong>{money(buyZone)}</strong>
           <small>{DEFAULT_SETTINGS.targetMarginPct}% margin</small>
         </div>
         <div>
-          <span>Watch Cap</span>
+          <span>Review Up To</span>
           <strong>{money(watchCeiling)}</strong>
           <small>{LIVE_MODEL_WINDOW_LABEL} window</small>
         </div>
@@ -2092,7 +2092,7 @@ function QuickPriceModule({
           <span className={rawFloorSpread !== null && rawFloorSpread >= 0 ? 'good' : 'neutral'}>
             Raw floor {rawFloorSpread !== null ? money(rawFloorSpread) : '--'}
           </span>
-          <span className={roi !== null && roi >= 0 ? 'good' : 'risk'}>{roi !== null ? percent(roi) : '--'} ROI</span>
+          <span className={roi !== null && roi >= 0 ? 'good' : 'risk'}>{roi !== null ? percent(roi) : '--'} edge</span>
         </div>
       ) : null}
 
@@ -2104,7 +2104,7 @@ function QuickPriceModule({
 
       <button className="ghost-button quick-scan-button" type="button" onClick={() => onScanPlayer(activeRow)}>
         <Radio size={15} />
-        Scan deals
+        Scan now
       </button>
     </section>
   )
@@ -3397,6 +3397,7 @@ function BinRadar({
   onScanTopProspects,
   onScanBaseAutos,
   onScanLowSerial,
+  resultsRef,
 }: {
   models: ChecklistModel[]
   modelOptions: ChecklistModel[]
@@ -3438,6 +3439,7 @@ function BinRadar({
   onScanTopProspects: () => void
   onScanBaseAutos: () => void
   onScanLowSerial: () => void
+  resultsRef: RefObject<HTMLDivElement | null>
 }) {
   const configured = Boolean(ebayStatus?.configured)
   const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
@@ -3491,7 +3493,7 @@ function BinRadar({
   else if (!hasTargetQueue) readinessLabel = queueWaitingLabel
   else if (!hasFocus) readinessLabel = searchMode === 'player' ? 'Enter player' : 'Enter variation'
 
-  let scanButtonLabel = 'Scan Deals'
+  let scanButtonLabel = 'Scan Now'
   if (loading) scanButtonLabel = 'Scanning'
   else if (isBaseAutoMode) scanButtonLabel = 'Scan Base Autos'
   else if (isLowSerialMode) scanButtonLabel = 'Scan Low Serial'
@@ -3501,7 +3503,7 @@ function BinRadar({
   else if (setCount === 0 || !hasPlayerUniverse) scanButtonLabel = 'Player list needed'
   else if (!hasTargetQueue) scanButtonLabel = queueWaitingLabel
   else if (!hasFocus) scanButtonLabel = searchMode === 'player' ? 'Enter player' : 'Enter variation'
-  const auctionButtonLabel = auctionLoading ? 'Scanning auctions' : modelLoading ? 'Model loading' : configured ? 'Scan 24h Auctions' : 'eBay offline'
+  const auctionButtonLabel = auctionLoading ? 'Scanning auctions' : modelLoading ? 'Model loading' : configured ? 'Scan 24h listings' : 'eBay offline'
   const focusPlaceholder = searchMode === 'player' ? 'Eli Willits' : 'Select variation'
   const scopeLabel =
     playerScope === 'value-25'
@@ -3713,7 +3715,7 @@ function BinRadar({
             </button>
             <button className="ghost-button value-scan-button" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
               <Brain size={16} />
-              Scan Value Board
+              Scan Value Board Now
             </button>
             <button className="ghost-button value-scan-button" type="button" onClick={onScanTopProspects} disabled={!canScanTopProspects}>
               <BookOpenCheck size={16} />
@@ -3743,6 +3745,8 @@ function BinRadar({
           )}
         </div>
       </div>
+
+      <div ref={resultsRef} className="bin-results-anchor" tabIndex={-1} aria-label="Scan results" />
 
       {error ? (
         <div className="bin-radar-alert">
@@ -3909,7 +3913,7 @@ function BinRadar({
                 </div>
                 <div className={`bin-money-cell ${opportunity.edgeDollars >= 0 ? 'edge' : 'near-model'}`}>
                   <strong>{money(opportunity.edgeDollars)}</strong>
-                  <span>{percent(opportunity.expectedRoiPct)} ROI</span>
+                  <span>{percent(opportunity.expectedRoiPct)} model edge</span>
                 </div>
                 <div className="bin-signal-cell">
                   <span>{opportunity.action}</span>
@@ -4284,7 +4288,7 @@ function LiveMarketMap({
                   <b>{money(opportunity.fairValue)}</b>
                   <small>model</small>
                   <b>{percent(opportunity.expectedRoiPct)}</b>
-                  <small>ROI</small>
+                  <small>Model edge</small>
                 </span>
               </a>
             ))}
@@ -4462,7 +4466,7 @@ function LiveMarketMap({
                       </div>
                       <div className={dot.opportunity.edgeDollars >= 0 ? 'edge' : ''}>
                         <b>{money(dot.opportunity.edgeDollars)}</b>
-                        <em>{percent(dot.opportunity.expectedRoiPct)} ROI</em>
+                        <em>{percent(dot.opportunity.expectedRoiPct)} model edge</em>
                       </div>
                     </div>
                   </a>
@@ -5069,6 +5073,17 @@ function App() {
   const caseHitRequestRef = useRef<AbortController | null>(null)
   const salesCacheRequestRef = useRef<AbortController | null>(null)
   const activeSalesCacheRequestRef = useRef<AbortController | null>(null)
+  const dealResultsRef = useRef<HTMLDivElement | null>(null)
+
+  const revealDealResults = useCallback(() => {
+    if (typeof window === 'undefined') return
+    window.setTimeout(() => {
+      const target = dealResultsRef.current
+      if (!target) return
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      target.focus({ preventScroll: true })
+    }, 120)
+  }, [])
 
   const loadChecklistCatalog = useCallback(async (signal?: AbortSignal) => {
     setCatalogLoading(true)
@@ -5747,6 +5762,8 @@ function App() {
       searchTerm: '',
     }
 
+    setWorkMode('deals')
+    revealDealResults()
     void scanEbayBinListings(scanOptions)
     void scanEbayAuctionListings(scanOptions)
   }
@@ -5768,6 +5785,8 @@ function App() {
     setBinError(null)
     resetAuctionScan()
 
+    setWorkMode('deals')
+    revealDealResults()
     void scanEbayBinListings({
       models: scanModels,
       playerScope: 'all',
@@ -5784,6 +5803,7 @@ function App() {
 
   function scanValue25Targets() {
     setWorkMode('deals')
+    revealDealResults()
     setBinSearchMode('checklist')
     setBinSearchTerm('')
     setBinPlayerScope('value-25')
@@ -5801,6 +5821,7 @@ function App() {
 
   function scanTop100Prospects() {
     setWorkMode('deals')
+    revealDealResults()
     setBinSearchMode('checklist')
     setBinSearchTerm('')
     setBinPlayerScope('prospect-100')
@@ -5820,6 +5841,7 @@ function App() {
 
   function scanBaseAutos() {
     setWorkMode('deals')
+    revealDealResults()
     setBinSearchMode('base-auto')
     setBinSearchTerm('')
     setBinListings([])
@@ -5835,6 +5857,7 @@ function App() {
 
   function scanLowSerialNonAutos() {
     setWorkMode('deals')
+    revealDealResults()
     setBinSearchMode('low-serial-non-auto')
     setBinSearchTerm('')
     setBinPlayerScope('value-25')
@@ -5984,6 +6007,7 @@ function App() {
       return
     }
 
+    revealDealResults()
     binRequestRef.current?.abort()
     const controller = new AbortController()
     binRequestRef.current = controller
@@ -6143,6 +6167,7 @@ function App() {
       return
     }
 
+    revealDealResults()
     auctionRequestRef.current?.abort()
     const controller = new AbortController()
     auctionRequestRef.current = controller
@@ -6339,12 +6364,12 @@ function App() {
       ) : null}
 
       {workMode === 'lookup' ? (
-        <section className="workbench-layout lookup-workflow" aria-label="Undervalued capital ranking">
+        <section className="workbench-layout lookup-workflow" aria-label="Value ranking">
           <div className="valuation-workspace">
             <div className="lookup-intent-bar">
               <div className="lookup-intent-copy">
-                <span>Deploy capital first</span>
-                <strong>{effectiveSelectedRow ? effectiveSelectedRow.playerName : trimmedQuery ? 'No modeled player selected' : 'Undervalued board'}</strong>
+                <span>Find the best values</span>
+                <strong>{effectiveSelectedRow ? effectiveSelectedRow.playerName : trimmedQuery ? 'No modeled player selected' : 'Value board'}</strong>
                 <small>
                   {effectiveSelectedRow
                     ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} / ${effectiveSelectedRow.currentTeamName ?? 'team unknown'} / ${money(effectiveSelectedRow.baseTwmaPrice)} base auto / ${formatStsLine(effectiveSelectedRow) || 'no rank signal'}`
@@ -6372,7 +6397,7 @@ function App() {
                   disabled={renderedRowsForDisplay.length === 0 || binLoading || auctionLoading}
                 >
                   <Radio size={15} />
-                  Scan Board
+                  Scan Board Now
                 </button>
                 <button className="ghost-button board-radar-button" type="button" onClick={() => setWorkMode('deals')}>
                   <SlidersHorizontal size={15} />
@@ -6631,6 +6656,7 @@ function App() {
             onScanTopProspects={scanTop100Prospects}
             onScanBaseAutos={scanBaseAutos}
             onScanLowSerial={scanLowSerialNonAutos}
+            resultsRef={dealResultsRef}
           />
           <LiveMarketMap
             binOpportunities={displayedBinOpportunities}
