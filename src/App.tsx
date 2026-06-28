@@ -1286,19 +1286,22 @@ function WorkflowCommand({
   listingCount: number
   modelReady: boolean
 }) {
-  const modeTitle = mode === 'lookup' ? 'Value Board' : mode === 'deals' ? 'Deal Radar' : 'Beta Lab'
+  const modeTitle = mode === 'lookup' ? 'Value Board' : mode === 'deals' ? 'Live Scanner' : 'Beta Lab'
   return (
     <section className="workflow-command" aria-label="Bowman auto desk">
       <div className="workflow-command-copy">
         <span className="workflow-kicker">
           <Activity size={14} />
-          Command Center
+          Product Flow
         </span>
         <h2>{modeTitle}</h2>
+        <p>
+          Start with the ranked value board, narrow by player/team/set, then scan live listings only when the target pool is worth attention.
+        </p>
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
           <span>{pricedRows.toLocaleString()} players</span>
-          <span>{mode === 'lookup' ? 'Sort, inspect, scan' : `Top base ${money(topBase)}`}</span>
+          <span>{mode === 'lookup' ? 'Value first' : `Top base ${money(topBase)}`}</span>
         </div>
       </div>
 
@@ -1313,9 +1316,9 @@ function WorkflowCommand({
             <Search size={19} />
           </span>
           <span className="workflow-card-copy">
-            <span>Value board</span>
-            <strong>Value board</strong>
-            <small>Search, filter, then scan live listings</small>
+            <span>Step 1</span>
+            <strong>Ranked board</strong>
+            <small>Who looks underpriced?</small>
           </span>
           <span className="workflow-value">{pricedRows.toLocaleString()}</span>
         </button>
@@ -1330,9 +1333,9 @@ function WorkflowCommand({
             <Radio size={19} />
           </span>
           <span className="workflow-card-copy">
-            <span>Advanced</span>
-            <strong>Radar</strong>
-            <small>{listingCount.toLocaleString()} active listings scanned</small>
+            <span>Step 2</span>
+            <strong>Live scanner</strong>
+            <small>{listingCount.toLocaleString()} active listings checked</small>
           </span>
           <span className="workflow-value">{dealCount.toLocaleString()}</span>
         </button>
@@ -3494,9 +3497,9 @@ function BinRadar({
   else if (!hasTargetQueue) readinessLabel = queueWaitingLabel
   else if (!hasFocus) readinessLabel = searchMode === 'player' ? 'Enter player' : 'Enter variation'
 
-  let scanButtonLabel = 'Scan Now'
-  if (loading) scanButtonLabel = 'Scanning'
-  else if (isBaseAutoMode) scanButtonLabel = 'Scan Base Autos'
+  let scanButtonLabel = 'Scan Live Market'
+  if (loading || auctionLoading) scanButtonLabel = 'Scanning'
+  else if (isBaseAutoMode) scanButtonLabel = 'Scan Base Market'
   else if (isLowSerialMode) scanButtonLabel = 'Scan Low Serial'
   else if (modelLoading) scanButtonLabel = 'Model loading'
   else if (rateLimited && !scan) scanButtonLabel = 'Retry Scan'
@@ -3504,7 +3507,7 @@ function BinRadar({
   else if (setCount === 0 || !hasPlayerUniverse) scanButtonLabel = 'Player list needed'
   else if (!hasTargetQueue) scanButtonLabel = queueWaitingLabel
   else if (!hasFocus) scanButtonLabel = searchMode === 'player' ? 'Enter player' : 'Enter variation'
-  const auctionButtonLabel = auctionLoading ? 'Scanning auctions' : modelLoading ? 'Model loading' : configured ? 'Scan 24h listings' : 'eBay offline'
+  const auctionButtonLabel = auctionLoading ? 'Scanning auctions' : modelLoading ? 'Model loading' : configured ? 'Auctions only' : 'eBay offline'
   const focusPlaceholder = searchMode === 'player' ? 'Eli Willits' : 'Select variation'
   const scopeLabel =
     playerScope === 'value-25'
@@ -3545,8 +3548,8 @@ function BinRadar({
         <div className="section-title">
           <Radio size={18} />
           <div>
-            <h2>Deal Radar</h2>
-            <span>{selectedSetLabel} live BINs + urgent auctions vs modeled price</span>
+            <h2>Live Deal Scanner</h2>
+            <span>{selectedSetLabel} active listings compared against modeled value</span>
           </div>
         </div>
         <div className="bin-radar-pills">
@@ -3573,6 +3576,37 @@ function BinRadar({
           <span>{scan ? `${opportunities.length.toLocaleString()} candidates` : 'No scan yet'}</span>
           {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
         </div>
+      </div>
+
+      <div className="bin-preset-strip" aria-label="High value scan presets">
+        <button className="preset-scan-card primary-preset" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
+          <Brain size={17} />
+          <span>
+            <strong>Value board</strong>
+            <small>{valuePlayerCount.toLocaleString()} ranked players</small>
+          </span>
+        </button>
+        <button className="preset-scan-card" type="button" onClick={onScanTopProspects} disabled={!canScanTopProspects}>
+          <BookOpenCheck size={17} />
+          <span>
+            <strong>Top 100 prospects</strong>
+            <small>rank-first scan</small>
+          </span>
+        </button>
+        <button className="preset-scan-card" type="button" onClick={onScanBaseAutos} disabled={!canScanBaseAutos}>
+          <Database size={17} />
+          <span>
+            <strong>Base autos</strong>
+            <small>sharpest model lane</small>
+          </span>
+        </button>
+        <button className="preset-scan-card" type="button" onClick={onScanLowSerial} disabled={!canScanLowSerial}>
+          <Sigma size={17} />
+          <span>
+            <strong>Low serial</strong>
+            <small>/99 and lower only</small>
+          </span>
+        </button>
       </div>
 
       <div className="bin-control-board" aria-label="BIN scan setup">
@@ -3707,28 +3741,12 @@ function BinRadar({
           </div>
           <div className="bin-action-stack">
             <button className="primary-button bin-scan-button" type="button" onClick={onScan} disabled={!canScan}>
-              <RefreshCw size={16} className={loading ? 'spin' : undefined} />
+              <RefreshCw size={16} className={loading || auctionLoading ? 'spin' : undefined} />
               {scanButtonLabel}
             </button>
             <button className="ghost-button value-scan-button" type="button" onClick={onScanAuctions} disabled={!canScan}>
               <Activity size={16} className={auctionLoading ? 'spin' : undefined} />
               {auctionButtonLabel}
-            </button>
-            <button className="ghost-button value-scan-button" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
-              <Brain size={16} />
-              Scan Value Board Now
-            </button>
-            <button className="ghost-button value-scan-button" type="button" onClick={onScanTopProspects} disabled={!canScanTopProspects}>
-              <BookOpenCheck size={16} />
-              Scan Top 100
-            </button>
-            <button className="ghost-button value-scan-button" type="button" onClick={onScanBaseAutos} disabled={!canScanBaseAutos}>
-              <Database size={16} />
-              Scan Base Autos
-            </button>
-            <button className="ghost-button value-scan-button" type="button" onClick={onScanLowSerial} disabled={!canScanLowSerial}>
-              <Sigma size={16} />
-              Scan Low Serial 25
             </button>
           </div>
           {scan ? (
@@ -5032,6 +5050,7 @@ function App() {
   const [sortMode, setSortMode] = useState<SortMode>('dynasty-value')
   const [selectedRowId, setSelectedRowId] = useState<string | undefined>()
   const [workMode, setWorkMode] = useState<WorkMode>('lookup')
+  const [calculatorOpen, setCalculatorOpen] = useState(false)
   const [ebayStatus, setEbayStatus] = useState<EbayStatus | null>(null)
   const [binListings, setBinListings] = useState<ProspectPulseListing[]>([])
   const [binLoading, setBinLoading] = useState(false)
@@ -6410,7 +6429,7 @@ function App() {
                 <small>
                   {effectiveSelectedRow
                     ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} / ${effectiveSelectedRow.currentTeamName ?? 'team unknown'} / ${money(effectiveSelectedRow.baseTwmaPrice)} base auto / ${formatStsLine(effectiveSelectedRow) || 'no rank signal'}`
-                    : 'Search a player, filter by team or set, or keep the default sort to rank the strongest value gaps first.'}
+                    : 'Search a player, filter by team or set, or keep the default value sort.'}
                 </small>
               </div>
               <label className="lookup-primary-search">
@@ -6435,6 +6454,15 @@ function App() {
                 >
                   <Radio size={15} />
                   {selectedTeamOption ? 'Scan Team' : 'Scan Board Now'}
+                </button>
+                <button
+                  className={`ghost-button calculator-toggle-button ${calculatorOpen ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => setCalculatorOpen((open) => !open)}
+                  aria-expanded={calculatorOpen}
+                >
+                  <Calculator size={15} />
+                  Price a Card
                 </button>
                 <button className="ghost-button board-radar-button" type="button" onClick={() => setWorkMode('deals')}>
                   <SlidersHorizontal size={15} />
@@ -6470,7 +6498,7 @@ function App() {
                     ? teamScanOverflowCount > 0
                       ? `Top ${teamScanRows.length.toLocaleString()} of ${visibleRowsForDisplay.length.toLocaleString()} value-ranked players queued. Uses the current set, rank, and source filters.`
                       : `${teamScanRows.length.toLocaleString()} value-ranked players queued. Uses the current set, rank, and source filters.`
-                    : 'Pick a team to filter the board, then scan live BINs and 24h auctions for that roster slice.'}
+                    : 'Pick a team to filter the board, then scan live deals for that roster slice.'}
                 </small>
               </div>
               <label className="team-scan-select">
@@ -6509,13 +6537,15 @@ function App() {
               onScanPlayer={scanBinsForLookupRow}
             />
 
-            <QuickPriceModule
-              row={effectiveSelectedRow}
-              onScanPlayer={scanBinsForLookupRow}
-              pickerRows={quickPickerRows}
-              onPickRow={setSelectedRowId}
-              className="lookup-calculator-strip"
-            />
+            {calculatorOpen ? (
+              <QuickPriceModule
+                row={effectiveSelectedRow}
+                onScanPlayer={scanBinsForLookupRow}
+                pickerRows={quickPickerRows}
+                onPickRow={setSelectedRowId}
+                className="lookup-calculator-strip"
+              />
+            ) : null}
 
             <div className="toolbar valuation-toolbar">
               <label className="filter-select">
@@ -6719,7 +6749,10 @@ function App() {
             onSearchTermChange={updateBinSearchTerm}
             onRejectListing={rejectLiveListing}
             onUndoRejectListing={undoLastListingRejection}
-            onScan={() => void scanEbayBinListings()}
+            onScan={() => {
+              void scanEbayBinListings()
+              void scanEbayAuctionListings()
+            }}
             onScanAuctions={() => void scanEbayAuctionListings()}
             onScanValueTargets={scanValue25Targets}
             onScanTopProspects={scanTop100Prospects}
@@ -6754,34 +6787,48 @@ function App() {
         </section>
       )}
 
-      <ObservabilityBoard
-        snapshot={observability}
-        loading={observabilityLoading}
-        error={observabilityError}
-        onRefresh={() => void refreshObservability()}
-        onRefreshRankings={() => void handleRefreshRankings()}
-        rankingsRefreshing={rankingsRefreshing}
-      />
+      <details className="operations-drawer" open={Boolean(observabilityError) || undefined}>
+        <summary>
+          <span>
+            <Activity size={15} />
+            Data health
+          </span>
+          <small>Freshness, queues, rankings, and API budget</small>
+        </summary>
+        <ObservabilityBoard
+          snapshot={observability}
+          loading={observabilityLoading}
+          error={observabilityError}
+          onRefresh={() => void refreshObservability()}
+          onRefreshRankings={() => void handleRefreshRankings()}
+          rankingsRefreshing={rankingsRefreshing}
+        />
+      </details>
 
-      <section className="model-support-dock" aria-label="Data access">
-        <div className="support-dock-head">
-          <span>Access</span>
-          <strong>Checklist connection</strong>
-        </div>
-        <div className="model-support-grid">
-          <ProspectPulsePanel
-            liveConnected={liveConnected}
-            authMode={pulseAuthMode}
-            authEmail={authEmail}
-            authPassword={authPassword}
-            authBusy={authBusy}
-            onEmailChange={setAuthEmail}
-            onPasswordChange={setAuthPassword}
-            onConnect={connectProspectPulse}
-            onDisconnect={disconnectProspectPulse}
-          />
-        </div>
-      </section>
+      <details className="operations-drawer access-drawer">
+        <summary>
+          <span>
+            <Database size={15} />
+            Data access
+          </span>
+          <small>Checklist and source connection settings</small>
+        </summary>
+        <section className="model-support-dock" aria-label="Data access">
+          <div className="model-support-grid">
+            <ProspectPulsePanel
+              liveConnected={liveConnected}
+              authMode={pulseAuthMode}
+              authEmail={authEmail}
+              authPassword={authPassword}
+              authBusy={authBusy}
+              onEmailChange={setAuthEmail}
+              onPasswordChange={setAuthPassword}
+              onConnect={connectProspectPulse}
+              onDisconnect={disconnectProspectPulse}
+            />
+          </div>
+        </section>
+      </details>
     </main>
   )
 }
