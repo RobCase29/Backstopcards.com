@@ -493,6 +493,7 @@ const BIN_SCAN_CONCURRENCY = 2
 const LEADERBOARD_RENDER_LIMIT = 25
 const FILTERED_LEADERBOARD_RENDER_LIMIT = 120
 const BOARD_DEAL_SCAN_LIMIT = 25
+const TEAM_DEAL_SCAN_LIMIT = 50
 const BIN_RENDER_LIMIT = 40
 const AUCTION_RENDER_LIMIT = 30
 const LIVE_MODEL_WINDOW_PCT = 1
@@ -5304,6 +5305,11 @@ function App() {
 
   const matrix = useMemo(() => buildPricingMatrix(checklistModels), [checklistModels])
   const teamOptions = useMemo(() => buildTeamOptions(matrix.rows), [matrix.rows])
+  const selectedTeamOption = useMemo(() => {
+    if (teamFilter === 'all') return null
+    const teamCode = normalizeTeamCode(teamFilter)
+    return teamOptions.find((team) => normalizeTeamCode(team.code) === teamCode) ?? null
+  }, [teamFilter, teamOptions])
   const bowman2026Model = useMemo(
     () => checklistModels.find((model) => model.releaseYear === 2026 && model.category === 'bowman') ?? null,
     [checklistModels],
@@ -5533,6 +5539,11 @@ function App() {
     if (adjustedRows.length < leaderboardRenderLimit) return [...adjustedRows, effectiveSelectedRow]
     return [...adjustedRows.slice(0, Math.max(leaderboardRenderLimit - 1, 0)), effectiveSelectedRow]
   }, [effectiveSelectedRow, leaderboardRenderLimit, renderedRows, selectedRow])
+  const teamScanRows = useMemo(
+    () => (selectedTeamOption ? visibleRowsForDisplay.slice(0, TEAM_DEAL_SCAN_LIMIT) : []),
+    [selectedTeamOption, visibleRowsForDisplay],
+  )
+  const teamScanOverflowCount = selectedTeamOption ? Math.max(visibleRowsForDisplay.length - teamScanRows.length, 0) : 0
   const undervaluedCalloutRow = useMemo(() => {
     if (visibleRowsForDisplay.length === 0) return null
     const scoredRows = visibleRowsForDisplay.filter((row) => dynastyValueSortScore(row) > 0)
@@ -5754,6 +5765,32 @@ function App() {
     }
 
     const { scanModels, playerNames } = prepareBoardDealScan(boardRows)
+    const scanOptions = {
+      models: scanModels,
+      playerScope: 'value-25' as const,
+      playerNames,
+      searchMode: 'checklist' as const,
+      searchTerm: '',
+    }
+
+    setWorkMode('deals')
+    revealDealResults()
+    void scanEbayBinListings(scanOptions)
+    void scanEbayAuctionListings(scanOptions)
+  }
+
+  function scanSelectedTeamDeals() {
+    if (!selectedTeamOption) {
+      setBinError('Choose a current team before scanning team deals.')
+      return
+    }
+
+    if (teamScanRows.length === 0) {
+      setBinError(`No priced ${selectedTeamOption.label} players match the current filters.`)
+      return
+    }
+
+    const { scanModels, playerNames } = prepareBoardDealScan(teamScanRows)
     const scanOptions = {
       models: scanModels,
       playerScope: 'value-25' as const,
@@ -6393,11 +6430,11 @@ function App() {
                 <button
                   className="primary-button board-scan-button"
                   type="button"
-                  onClick={scanVisibleBoardDeals}
-                  disabled={renderedRowsForDisplay.length === 0 || binLoading || auctionLoading}
+                  onClick={selectedTeamOption ? scanSelectedTeamDeals : scanVisibleBoardDeals}
+                  disabled={(selectedTeamOption ? teamScanRows.length === 0 : renderedRowsForDisplay.length === 0) || binLoading || auctionLoading}
                 >
                   <Radio size={15} />
-                  Scan Board Now
+                  {selectedTeamOption ? 'Scan Team' : 'Scan Board Now'}
                 </button>
                 <button className="ghost-button board-radar-button" type="button" onClick={() => setWorkMode('deals')}>
                   <SlidersHorizontal size={15} />
@@ -6420,6 +6457,49 @@ function App() {
                 Scan finds live BINs and auctions
               </span>
             </div>
+
+            <section className={`team-scan-panel ${selectedTeamOption ? 'ready' : ''}`} aria-label="Team scanner">
+              <div className="team-scan-copy">
+                <span>
+                  <Radio size={14} />
+                  Team scanner
+                </span>
+                <strong>{selectedTeamOption ? selectedTeamOption.label : 'Choose a current team'}</strong>
+                <small>
+                  {selectedTeamOption
+                    ? teamScanOverflowCount > 0
+                      ? `Top ${teamScanRows.length.toLocaleString()} of ${visibleRowsForDisplay.length.toLocaleString()} value-ranked players queued. Uses the current set, rank, and source filters.`
+                      : `${teamScanRows.length.toLocaleString()} value-ranked players queued. Uses the current set, rank, and source filters.`
+                    : 'Pick a team to filter the board, then scan live BINs and 24h auctions for that roster slice.'}
+                </small>
+              </div>
+              <label className="team-scan-select">
+                <span>Current team</span>
+                <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value as TeamFilter)}>
+                  <option value="all">Choose a team</option>
+                  {teamOptions.map((team) => (
+                    <option value={team.code} key={team.code}>
+                      {team.label} ({team.count.toLocaleString()})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="team-scan-actions">
+                <div className="team-scan-meta">
+                  <span>{selectedTeamOption ? `${teamScanRows.length.toLocaleString()} queued` : 'Team first'}</span>
+                  <span>Sorted by {SORT_LABELS[sortMode]}</span>
+                </div>
+                <button
+                  className="primary-button team-scan-button"
+                  type="button"
+                  onClick={scanSelectedTeamDeals}
+                  disabled={!selectedTeamOption || teamScanRows.length === 0 || binLoading || auctionLoading}
+                >
+                  <Radio size={15} />
+                  {selectedTeamOption ? `Scan ${selectedTeamOption.label}` : 'Scan Team'}
+                </button>
+              </div>
+            </section>
 
             <CapitalThesis
               rows={visibleRowsForDisplay}
@@ -6456,17 +6536,6 @@ function App() {
                   {CHECKLIST_CATEGORIES.map((category) => (
                     <option value={category} key={category}>
                       {CATEGORY_LABELS[category]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="filter-select team-filter">
-                <span>Current Team</span>
-                <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value as TeamFilter)}>
-                  <option value="all">All teams</option>
-                  {teamOptions.map((team) => (
-                    <option value={team.code} key={team.code}>
-                      {team.label} ({team.count.toLocaleString()})
                     </option>
                   ))}
                 </select>

@@ -1800,6 +1800,131 @@ thead .matrix-player-col span,
   min-width: 0;
 }
 
+.team-scan-panel {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(220px, 0.72fr) minmax(190px, auto);
+  align-items: stretch;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid rgba(8, 127, 140, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(120deg, rgba(159, 216, 207, 0.18), transparent 48%),
+    linear-gradient(180deg, rgba(255, 253, 247, 0.96), rgba(255, 250, 240, 0.88));
+  box-shadow: 0 14px 30px rgba(19, 32, 31, 0.09);
+}
+
+.team-scan-panel.ready {
+  border-color: rgba(8, 127, 140, 0.28);
+  box-shadow:
+    inset 4px 0 0 rgba(8, 127, 140, 0.42),
+    0 14px 30px rgba(19, 32, 31, 0.1);
+}
+
+.team-scan-copy,
+.team-scan-actions,
+.team-scan-select {
+  min-width: 0;
+  border: 1px solid rgba(14, 47, 46, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 253, 247, 0.74);
+}
+
+.team-scan-copy {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+}
+
+.team-scan-copy span,
+.team-scan-select span,
+.team-scan-meta span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.team-scan-copy span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.team-scan-copy span svg {
+  color: var(--accent);
+}
+
+.team-scan-copy strong {
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: clamp(1.05rem, 1.25vw, 1.32rem);
+  line-height: 1.08;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-scan-copy small {
+  color: rgba(14, 47, 46, 0.64);
+  font-size: 0.76rem;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.team-scan-select {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 10px 12px;
+}
+
+.team-scan-select select {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.team-scan-actions {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 9px;
+}
+
+.team-scan-meta {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.team-scan-meta span {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid rgba(14, 47, 46, 0.1);
+  border-radius: 999px;
+  background: rgba(14, 47, 46, 0.05);
+}
+
+.team-scan-button {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .lookup-intent-meta span {
   min-height: 26px;
   display: inline-flex;
@@ -4457,6 +4582,20 @@ button.sales-bucket-tile {
 
   .lookup-intent-bar {
     grid-template-columns: 1fr;
+  }
+
+  .team-scan-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 0.72fr);
+  }
+
+  .team-scan-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
+    align-items: center;
+  }
+
+  .team-scan-meta {
+    justify-content: flex-start;
   }
 
   .capital-thesis-strip {
@@ -9004,6 +9143,7 @@ button.sales-bucket-tile {
   .workflow-command,
   .observability-board,
   .lookup-intent-bar,
+  .team-scan-panel,
   .undervalued-callout,
   .lookup-calculator-strip,
   .leaderboard-shell,
@@ -9147,6 +9287,58 @@ button.sales-bucket-tile {
     color: #087f8c;
   }
 
+  .team-scan-panel {
+    order: 3;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-bottom: 0;
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .team-scan-copy,
+  .team-scan-select,
+  .team-scan-actions {
+    border-radius: 12px;
+  }
+
+  .team-scan-copy {
+    padding: 10px;
+  }
+
+  .team-scan-copy strong {
+    font-size: clamp(1.2rem, 6vw, 1.5rem);
+  }
+
+  .team-scan-copy small {
+    font-size: 0.78rem;
+  }
+
+  .team-scan-select {
+    min-height: 58px;
+    padding: 10px;
+  }
+
+  .team-scan-select select {
+    font-size: 16px;
+  }
+
+  .team-scan-actions {
+    grid-column: auto;
+    grid-template-columns: 1fr;
+    padding: 8px;
+  }
+
+  .team-scan-meta {
+    display: none;
+  }
+
+  .team-scan-button {
+    min-height: 48px;
+    justify-content: center;
+    border-radius: 10px;
+  }
+
   .capital-thesis-strip {
     display: none;
   }
@@ -9202,7 +9394,7 @@ button.sales-bucket-tile {
   }
 
   .valuation-toolbar {
-    order: 3;
+    order: 4;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
@@ -9239,7 +9431,7 @@ button.sales-bucket-tile {
   }
 
   .undervalued-callout {
-    order: 4;
+    order: 5;
     grid-template-columns: 1fr;
     gap: 10px;
     margin: 0;
