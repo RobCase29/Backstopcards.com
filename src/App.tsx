@@ -182,7 +182,7 @@ type QuickGradeKey =
   | 'sgc-10'
   | 'cgc-9'
   | 'cgc-10'
-type WorkMode = 'lookup' | 'price' | 'deals' | 'beta'
+type WorkMode = 'lookup' | 'deals' | 'price' | 'health' | 'beta'
 type FreshnessTone = 'fresh' | 'watch' | 'stale' | 'empty' | 'offline'
 type BinVariationOption = {
   key: string
@@ -384,12 +384,6 @@ function dynastyValueSortScore(row: PricingRow) {
   const multipleSignal = clampNumber(Math.log(Math.max(1, multiple)) / Math.log(30), 0, 1) * 18
   const dollarGapSignal = clampNumber((impliedDynastyBasePrice(row) - row.baseTwmaPrice) / 650, 0, 1) * 5
   return (valueScore + multipleSignal + dollarGapSignal) * investableBaseFloor
-}
-
-function dynastyValueGapPct(row: PricingRow) {
-  const impliedBase = impliedDynastyBasePrice(row)
-  if (!positiveNumber(impliedBase) || !positiveNumber(row.baseTwmaPrice)) return null
-  return impliedBase / row.baseTwmaPrice - 1
 }
 
 function sortRows(rows: PricingRow[], sortMode: SortMode) {
@@ -1343,22 +1337,31 @@ function WorkflowCommand({
   listingCount: number
   modelReady: boolean
 }) {
-  const modeTitle = mode === 'lookup' ? 'Value Board' : mode === 'price' ? 'Price My Card' : mode === 'deals' ? 'Live Scanner' : 'Beta Lab'
+  const modeTitle =
+    mode === 'lookup'
+      ? 'Value Board'
+      : mode === 'deals'
+        ? 'Live Deals'
+        : mode === 'price'
+          ? 'Price My Card'
+          : mode === 'health'
+            ? 'Data Health'
+            : 'Beta Lab'
   return (
-    <section className="workflow-command" aria-label="Bowman auto desk">
+    <section className="workflow-command" aria-label="Primary navigation">
       <div className="workflow-command-copy">
         <span className="workflow-kicker">
           <Activity size={14} />
-          Product Flow
+          Market Desk
         </span>
         <h2>{modeTitle}</h2>
         <p>
-          Start with the ranked value board, narrow by player/team/set, then scan live listings only when the target pool is worth attention.
+          Start with the value board, scan live listings when a target is worth attention, or price a card directly.
         </p>
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
           <span>{pricedRows.toLocaleString()} players</span>
-          <span>{mode === 'lookup' ? 'Value first' : mode === 'price' ? 'Calculator' : `Top base ${money(topBase)}`}</span>
+          <span>{mode === 'lookup' ? 'Value first' : mode === 'price' ? 'Calculator' : mode === 'health' ? 'Freshness' : `Top base ${money(topBase)}`}</span>
         </div>
       </div>
 
@@ -1373,28 +1376,11 @@ function WorkflowCommand({
             <Search size={19} />
           </span>
           <span className="workflow-card-copy">
-            <span>Step 1</span>
-            <strong>Ranked board</strong>
-            <small>Who looks underpriced?</small>
+            <span>Home</span>
+            <strong>Value Board</strong>
+            <small>Ranked players and teams</small>
           </span>
           <span className="workflow-value">{pricedRows.toLocaleString()}</span>
-        </button>
-
-        <button
-          className={`workflow-mode-card ${mode === 'price' ? 'active' : ''}`}
-          type="button"
-          onClick={() => onModeChange('price')}
-          aria-pressed={mode === 'price'}
-        >
-          <span className="workflow-icon">
-            <Calculator size={19} />
-          </span>
-          <span className="workflow-card-copy">
-            <span>Step 2</span>
-            <strong>Price my card</strong>
-            <small>Player, variation, grade, all-in</small>
-          </span>
-          <span className="workflow-value">{money(topBase)}</span>
         </button>
 
         <button
@@ -1407,11 +1393,45 @@ function WorkflowCommand({
             <Radio size={19} />
           </span>
           <span className="workflow-card-copy">
-            <span>Step 3</span>
-            <strong>Live scanner</strong>
-            <small>{listingCount.toLocaleString()} active listings checked</small>
+            <span>Live</span>
+            <strong>Live Deals</strong>
+            <small>{listingCount.toLocaleString()} listings checked</small>
           </span>
           <span className="workflow-value">{dealCount.toLocaleString()}</span>
+        </button>
+
+        <button
+          className={`workflow-mode-card ${mode === 'price' ? 'active' : ''}`}
+          type="button"
+          onClick={() => onModeChange('price')}
+          aria-pressed={mode === 'price'}
+        >
+          <span className="workflow-icon">
+            <Calculator size={19} />
+          </span>
+          <span className="workflow-card-copy">
+            <span>Quote</span>
+            <strong>Price My Card</strong>
+            <small>Player, variation, grade, all-in</small>
+          </span>
+          <span className="workflow-value">{money(topBase)}</span>
+        </button>
+
+        <button
+          className={`workflow-mode-card ${mode === 'health' ? 'active' : ''}`}
+          type="button"
+          onClick={() => onModeChange('health')}
+          aria-pressed={mode === 'health'}
+        >
+          <span className="workflow-icon">
+            <Activity size={19} />
+          </span>
+          <span className="workflow-card-copy">
+            <span>Trust</span>
+            <strong>Data Health</strong>
+            <small>Freshness and source coverage</small>
+          </span>
+          <span className="workflow-value">{modelReady ? 'OK' : '--'}</span>
         </button>
       </div>
     </section>
@@ -1691,7 +1711,7 @@ function Leaderboard({
                   <strong>{row.playerName}</strong>
                   <span>
                     <Radio size={12} />
-                    Scan now
+                    Scan deals
                   </span>
                 </button>
                 <small>
@@ -1742,142 +1762,6 @@ function RankingOnlyMatch({ ranking }: { ranking: NonNullable<ReturnType<typeof 
         <span className={changeClassName(ranking.change30d)}>30D {formatSigned(ranking.change30d)}</span>
       </div>
     </div>
-  )
-}
-
-function CapitalThesis({
-  rows,
-  loading,
-  progress,
-  onSelect,
-  onScanPlayer,
-}: {
-  rows: PricingRow[]
-  loading: boolean
-  progress: { loaded: number; total: number } | null
-  onSelect: (rowId: string) => void
-  onScanPlayer: (row: PricingRow) => void
-}) {
-  const scoredRows = rows
-    .map((row) => ({
-      row,
-      score: scoreDynastyValueOpportunity(row),
-      impliedBase: impliedDynastyBasePrice(row),
-      gapPct: dynastyValueGapPct(row),
-      multiple: dynastyValueMultiple(row),
-    }))
-    .filter((item) => item.score > 0 && positiveNumber(item.impliedBase) && positiveNumber(item.multiple))
-    .sort(
-      (left, right) =>
-        right.score - left.score || right.multiple - left.multiple || comparePrimaryRank(left.row, right.row),
-    )
-
-  const selected = new Set<string>()
-  const pick = (candidate: (typeof scoredRows)[number] | undefined) => {
-    if (!candidate || selected.has(candidate.row.id)) return null
-    selected.add(candidate.row.id)
-    return candidate
-  }
-
-  const cards = [
-    {
-      key: 'gap',
-      label: 'Best value signal',
-      note: 'Rank vs price mismatch',
-      item: pick(scoredRows[0]),
-    },
-    {
-      key: 'elite',
-      label: 'Cheap elite',
-      note: 'Top rank, low base',
-      item: pick(
-        scoredRows.find(
-          ({ row }) =>
-            ((row.stsProspectRank !== null && row.stsProspectRank <= 25) || (row.stsRank !== null && row.stsRank <= 50)) &&
-            row.baseTwmaPrice <= 75,
-        ),
-      ),
-    },
-    {
-      key: 'riser',
-      label: 'Fresh riser',
-      note: 'Ranking trend support',
-      item: pick(
-        [...scoredRows]
-          .filter(({ row }) => (row.stsChange30d ?? 0) > 0)
-          .sort(
-            (left, right) =>
-              (right.row.stsChange30d ?? 0) - (left.row.stsChange30d ?? 0) ||
-              right.score - left.score ||
-              right.multiple - left.multiple,
-          )[0] ?? scoredRows.find(({ row }) => (row.stsMomentumScore ?? 0) >= 62),
-      ),
-    },
-  ]
-    .map((card) => (card.item ? card : { ...card, item: pick(scoredRows.find(({ row }) => !selected.has(row.id))) }))
-    .filter((card): card is typeof card & { item: NonNullable<typeof card.item> } => Boolean(card.item))
-
-  if (cards.length === 0) {
-    return (
-      <section className="capital-thesis-strip loading" aria-label="Value signals">
-        <div className="capital-thesis-intro">
-          <span>Value signals</span>
-          <strong>{loading ? 'Building the value board' : 'No value board yet'}</strong>
-          <small>
-            {progress ? `Loaded ${progress.loaded.toLocaleString()} of ${progress.total.toLocaleString()} checklist models` : 'Waiting for ranked base-auto prices'}
-          </small>
-        </div>
-        <div className="thesis-placeholder" />
-        <div className="thesis-placeholder" />
-      </section>
-    )
-  }
-
-  return (
-    <section className="capital-thesis-strip" aria-label="Value signals">
-      <div className="capital-thesis-intro">
-        <span>Value signals</span>
-        <strong>{cards[0].item.row.playerName}</strong>
-        <small>
-          {money(cards[0].item.row.baseTwmaPrice)} base auto / {money(cards[0].item.impliedBase)} rank-implied base
-        </small>
-      </div>
-      {cards.map(({ key, label, note, item }) => {
-        const row = item.row
-        const gapPct = item.gapPct
-        return (
-          <article
-            className="capital-thesis-card"
-            key={`${key}:${row.id}`}
-            onClick={() => onSelect(row.id)}
-            aria-label={`${label}: ${row.playerName}`}
-          >
-            <div>
-              <span>{label}</span>
-              <strong>{row.playerName}</strong>
-              <small>{note}</small>
-            </div>
-            <div className="capital-thesis-metrics">
-              <span>{money(row.baseTwmaPrice)} base</span>
-              <span>{item.score.toFixed(0)} value</span>
-              <span>{gapPct !== null ? `${gapPct >= 0 ? '+' : ''}${Math.round(gapPct * 100)}% gap` : `${item.multiple.toFixed(1)}x`}</span>
-            </div>
-            <button
-              className="capital-scan-button"
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation()
-                onSelect(row.id)
-                onScanPlayer(row)
-              }}
-            >
-              <Radio size={13} />
-              Scan now
-            </button>
-          </article>
-        )
-      })}
-    </section>
   )
 }
 
@@ -5722,29 +5606,6 @@ function App() {
     () => (selectedTeamOption ? visibleRowsForDisplay.slice(0, TEAM_DEAL_SCAN_LIMIT) : []),
     [selectedTeamOption, visibleRowsForDisplay],
   )
-  const teamScanOverflowCount = selectedTeamOption ? Math.max(visibleRowsForDisplay.length - teamScanRows.length, 0) : 0
-  const undervaluedCalloutRow = useMemo(() => {
-    if (visibleRowsForDisplay.length === 0) return null
-    const scoredRows = visibleRowsForDisplay.filter((row) => dynastyValueSortScore(row) > 0)
-    const pool = scoredRows.length > 0 ? scoredRows : visibleRowsForDisplay
-    return [...pool].sort(
-      (left, right) =>
-        dynastyValueSortScore(right) - dynastyValueSortScore(left) ||
-        comparePrimaryRank(left, right) ||
-        left.baseTwmaPrice - right.baseTwmaPrice ||
-        left.playerName.localeCompare(right.playerName),
-    )[0] ?? null
-  }, [visibleRowsForDisplay])
-  const undervaluedCalloutScore = undervaluedCalloutRow ? Math.max(0, Math.round(scoreDynastyBaseValue(undervaluedCalloutRow))) : 0
-  const undervaluedCalloutImpliedBase = undervaluedCalloutRow ? impliedDynastyBasePrice(undervaluedCalloutRow) : 0
-  const undervaluedCalloutMultiple =
-    undervaluedCalloutRow && undervaluedCalloutRow.baseTwmaPrice > 0 && undervaluedCalloutImpliedBase > 0
-      ? undervaluedCalloutImpliedBase / undervaluedCalloutRow.baseTwmaPrice
-      : 0
-  const undervaluedCalloutGap =
-    undervaluedCalloutRow && undervaluedCalloutRow.baseTwmaPrice > 0 && undervaluedCalloutImpliedBase > 0
-      ? undervaluedCalloutImpliedBase / undervaluedCalloutRow.baseTwmaPrice - 1
-      : 0
   const activeSalesCacheError =
     salesCacheError && salesCacheError.playerName === selectedRow?.playerName ? salesCacheError.message : null
   const flagCachedSale = useCallback(async (itemId: string, erroneous: boolean, note?: string) => {
@@ -6566,12 +6427,12 @@ function App() {
           <div className="valuation-workspace">
             <div className="lookup-intent-bar">
               <div className="lookup-intent-copy">
-                <span>Find the best values</span>
+                <span>Value Board</span>
                 <strong>{effectiveSelectedRow ? effectiveSelectedRow.playerName : trimmedQuery ? 'No modeled player selected' : 'Value board'}</strong>
                 <small>
                   {effectiveSelectedRow
                     ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} / ${effectiveSelectedRow.currentTeamName ?? 'team unknown'} / ${money(effectiveSelectedRow.baseTwmaPrice)} base auto / ${formatStsLine(effectiveSelectedRow) || 'no rank signal'}`
-                    : 'Search a player, filter by team or set, or keep the default value sort.'}
+                    : 'Start with the ranked board, then narrow by player, current team, or set.'}
                 </small>
               </div>
               <label className="lookup-primary-search">
@@ -6579,7 +6440,7 @@ function App() {
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search a player, team, release, or variation"
+                  placeholder="Search player, team, set, or variation"
                   aria-label="Search player, current team, release, or variation"
                 />
               </label>
@@ -6595,7 +6456,7 @@ function App() {
                   disabled={(selectedTeamOption ? teamScanRows.length === 0 : renderedRowsForDisplay.length === 0) || binLoading || auctionLoading}
                 >
                   <Radio size={15} />
-                  {selectedTeamOption ? 'Scan Team' : 'Scan Board Now'}
+                  {selectedTeamOption ? `Scan ${selectedTeamOption.label}` : 'Scan Top Values'}
                 </button>
                 <button
                   className="ghost-button calculator-toggle-button"
@@ -6603,11 +6464,11 @@ function App() {
                   onClick={() => setWorkMode('price')}
                 >
                   <Calculator size={15} />
-                  Price My Card
+                  Price Card
                 </button>
                 <button className="ghost-button board-radar-button" type="button" onClick={() => setWorkMode('deals')}>
                   <SlidersHorizontal size={15} />
-                  Advanced
+                  Live Deals
                 </button>
               </div>
             </div>
@@ -6626,57 +6487,6 @@ function App() {
                 Scan finds live BINs and auctions
               </span>
             </div>
-
-            <section className={`team-scan-panel ${selectedTeamOption ? 'ready' : ''}`} aria-label="Team scanner">
-              <div className="team-scan-copy">
-                <span>
-                  <Radio size={14} />
-                  Team scanner
-                </span>
-                <strong>{selectedTeamOption ? selectedTeamOption.label : 'Choose a current team'}</strong>
-                <small>
-                  {selectedTeamOption
-                    ? teamScanOverflowCount > 0
-                      ? `Top ${teamScanRows.length.toLocaleString()} of ${visibleRowsForDisplay.length.toLocaleString()} value-ranked players queued. Uses the current set, rank, and source filters.`
-                      : `${teamScanRows.length.toLocaleString()} value-ranked players queued. Uses the current set, rank, and source filters.`
-                    : 'Pick a team to filter the board, then scan live deals for that roster slice.'}
-                </small>
-              </div>
-              <label className="team-scan-select">
-                <span>Current team</span>
-                <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value as TeamFilter)}>
-                  <option value="all">Choose a team</option>
-                  {teamOptions.map((team) => (
-                    <option value={team.code} key={team.code}>
-                      {team.label} ({team.count.toLocaleString()})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="team-scan-actions">
-                <div className="team-scan-meta">
-                  <span>{selectedTeamOption ? `${teamScanRows.length.toLocaleString()} queued` : 'Team first'}</span>
-                  <span>Sorted by {SORT_LABELS[sortMode]}</span>
-                </div>
-                <button
-                  className="primary-button team-scan-button"
-                  type="button"
-                  onClick={scanSelectedTeamDeals}
-                  disabled={!selectedTeamOption || teamScanRows.length === 0 || binLoading || auctionLoading}
-                >
-                  <Radio size={15} />
-                  {selectedTeamOption ? `Scan ${selectedTeamOption.label}` : 'Scan Team'}
-                </button>
-              </div>
-            </section>
-
-            <CapitalThesis
-              rows={visibleRowsForDisplay}
-              loading={checklistLoading || catalogLoading}
-              progress={checklistProgress}
-              onSelect={setSelectedRowId}
-              onScanPlayer={scanBinsForLookupRow}
-            />
 
             <div className="toolbar valuation-toolbar">
               <label className="filter-select">
@@ -6756,44 +6566,6 @@ function App() {
                 ) : null}
               </div>
             </div>
-
-            {undervaluedCalloutRow ? (
-              <button
-                className={`undervalued-callout ${selectedRow?.id === undervaluedCalloutRow.id ? 'selected' : ''}`}
-                type="button"
-                onClick={() => setSelectedRowId(undervaluedCalloutRow.id)}
-              >
-                <div className="undervalued-callout-copy">
-                  <span>Best value on this board</span>
-                  <strong>{undervaluedCalloutRow.playerName}</strong>
-                  <small>
-                    {undervaluedCalloutRow.release.replaceAll('-', ' ')} / {undervaluedCalloutRow.currentTeamName ?? 'team unknown'} /{' '}
-                    {primaryRankLabel(undervaluedCalloutRow) ?? 'unranked'}
-                  </small>
-                </div>
-                <div className="undervalued-callout-thesis">
-                  <strong>{money(undervaluedCalloutRow.baseTwmaPrice)} base auto</strong>
-                  <small>
-                    {money(undervaluedCalloutImpliedBase)} rank-implied base
-                    {undervaluedCalloutMultiple > 0 ? ` / ${undervaluedCalloutMultiple.toFixed(undervaluedCalloutMultiple >= 10 ? 1 : 2)}x current` : ''}
-                  </small>
-                </div>
-                <div className="undervalued-callout-metrics">
-                  <span>
-                    <strong>{undervaluedCalloutScore}</strong>
-                    <small>value</small>
-                  </span>
-                  <span>
-                    <strong>{percent(undervaluedCalloutGap)}</strong>
-                    <small>gap</small>
-                  </span>
-                  <span>
-                    <strong>{money(undervaluedCalloutImpliedBase)}</strong>
-                    <small>target</small>
-                  </span>
-                </div>
-              </button>
-            ) : null}
 
             {rankingOnlyMatch ? <RankingOnlyMatch ranking={rankingOnlyMatch} /> : null}
 
@@ -6882,7 +6654,7 @@ function App() {
                 </button>
                 <button className="ghost-button" type="button" onClick={() => setWorkMode('deals')}>
                   <Radio size={15} />
-                  Live Scanner
+                  Live Deals
                 </button>
               </div>
             </div>
@@ -6952,6 +6724,50 @@ function App() {
             cachedObservedAt={cachedLiveMarket?.observedAt ?? null}
           />
         </section>
+      ) : workMode === 'health' ? (
+        <section className="health-workflow" aria-label="Data health">
+          <div className="health-workflow-shell">
+            <div className="health-intro-card">
+              <span className="workflow-kicker">
+                <Activity size={14} />
+                Data Health
+              </span>
+              <strong>Trust the board before you scan.</strong>
+              <small>
+                Freshness, source coverage, cache status, and API budget live here so the main buying workflow can stay focused.
+              </small>
+              <div className="health-action-row">
+                <button className="primary-button" type="button" onClick={() => void handleRefreshRankings()} disabled={rankingsRefreshing}>
+                  <RefreshCw size={15} className={rankingsRefreshing ? 'spin' : undefined} />
+                  Refresh rankings
+                </button>
+                <button className="ghost-button" type="button" onClick={() => void refreshObservability()} disabled={observabilityLoading}>
+                  <RefreshCw size={15} className={observabilityLoading ? 'spin' : undefined} />
+                  Refresh status
+                </button>
+              </div>
+            </div>
+            <ObservabilityBoard
+              snapshot={observability}
+              loading={observabilityLoading}
+              error={observabilityError}
+              onRefresh={() => void refreshObservability()}
+              onRefreshRankings={() => void handleRefreshRankings()}
+              rankingsRefreshing={rankingsRefreshing}
+            />
+            <section className="model-support-dock health-source-stack" aria-label="Data source stack">
+              <div className="model-support-grid">
+                <SourceStackPanel
+                  snapshot={observability}
+                  ebayStatus={ebayStatus}
+                  releaseCount={releaseOptions.length}
+                  modelCount={checklistModels.length}
+                  pricedPlayers={matrix.totalPricedPlayers}
+                />
+              </div>
+            </section>
+          </div>
+        </section>
       ) : (
         <section className="beta-workflow" aria-label="Beta labs">
           <div className="beta-page-head">
@@ -6971,25 +6787,27 @@ function App() {
         </section>
       )}
 
-      <details className="operations-drawer" open={Boolean(observabilityError) || undefined}>
-        <summary>
-          <span>
-            <Activity size={15} />
-            Data health
-          </span>
-          <small>Freshness, queues, rankings, and API budget</small>
-        </summary>
-        <ObservabilityBoard
-          snapshot={observability}
-          loading={observabilityLoading}
-          error={observabilityError}
-          onRefresh={() => void refreshObservability()}
-          onRefreshRankings={() => void handleRefreshRankings()}
-          rankingsRefreshing={rankingsRefreshing}
-        />
-      </details>
+      {workMode !== 'health' ? (
+        <details className="operations-drawer" open={Boolean(observabilityError) || undefined}>
+          <summary>
+            <span>
+              <Activity size={15} />
+              Data health
+            </span>
+            <small>Freshness, queues, rankings, and API budget</small>
+          </summary>
+          <ObservabilityBoard
+            snapshot={observability}
+            loading={observabilityLoading}
+            error={observabilityError}
+            onRefresh={() => void refreshObservability()}
+            onRefreshRankings={() => void handleRefreshRankings()}
+            rankingsRefreshing={rankingsRefreshing}
+          />
+        </details>
+      ) : null}
 
-      <details className="operations-drawer access-drawer">
+      {workMode !== 'health' ? <details className="operations-drawer access-drawer">
         <summary>
           <span>
             <Database size={15} />
@@ -7008,7 +6826,7 @@ function App() {
             />
           </div>
         </section>
-      </details>
+      </details> : null}
     </main>
   )
 }

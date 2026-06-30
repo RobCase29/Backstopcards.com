@@ -5646,6 +5646,457 @@ button.sales-bucket-tile {
   }
 }
 
+/* Product UX v2: value-first workspace, explicit modes, and mobile cards. */
+.valuation-app .workflow-command {
+  grid-template-columns: minmax(250px, 0.28fr) minmax(720px, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+  border-radius: 12px;
+}
+
+.valuation-app .workflow-command-copy {
+  min-height: 92px;
+}
+
+.valuation-app .workflow-command h2 {
+  font-size: clamp(1.55rem, 2vw, 2.15rem);
+}
+
+.valuation-app .workflow-command p {
+  max-width: 46ch;
+}
+
+.valuation-app .workflow-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.valuation-app .workflow-mode-card {
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  min-height: 88px;
+  padding: 12px;
+  border-radius: 10px;
+}
+
+.valuation-app .workflow-card-copy small {
+  max-width: 100%;
+}
+
+.valuation-app .lookup-workflow {
+  padding-top: 12px;
+}
+
+.valuation-app .lookup-intent-bar {
+  grid-template-columns: minmax(230px, 0.55fr) minmax(360px, 1fr) minmax(300px, auto);
+  gap: 12px;
+  align-items: stretch;
+  padding: 12px;
+  border-radius: 12px;
+}
+
+.valuation-app .lookup-intent-copy {
+  min-width: 0;
+}
+
+.valuation-app .lookup-intent-copy > span,
+.valuation-app .lookup-intent-copy small {
+  text-transform: none;
+}
+
+.valuation-app .lookup-intent-copy > span {
+  color: #087f8c;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.valuation-app .lookup-intent-copy strong {
+  font-size: clamp(1.15rem, 1.45vw, 1.55rem);
+}
+
+.valuation-app .lookup-primary-search {
+  min-height: 56px;
+}
+
+.valuation-app .lookup-action-stack {
+  grid-template-columns: repeat(3, minmax(110px, 1fr));
+  min-width: 0;
+}
+
+.valuation-app .lookup-action-stack .lookup-intent-meta {
+  justify-content: start;
+}
+
+.valuation-app .toolbar.valuation-toolbar {
+  grid-template-columns:
+    minmax(150px, 0.86fr)
+    minmax(180px, 0.9fr)
+    minmax(140px, 0.74fr)
+    minmax(150px, 0.72fr)
+    minmax(170px, 0.86fr)
+    minmax(170px, 0.84fr)
+    auto;
+  gap: 8px;
+}
+
+.valuation-app .filter-select {
+  min-height: 50px;
+}
+
+.valuation-app .row-counts {
+  min-width: 150px;
+}
+
+.valuation-app .lookup-board-market-grid {
+  grid-template-columns: minmax(520px, 0.58fr) minmax(560px, 0.42fr);
+  gap: 12px;
+}
+
+.valuation-app .lookup-board-market-grid .leaderboard-list {
+  min-height: min(700px, calc(100svh - 305px));
+  max-height: min(820px, calc(100svh - 280px));
+}
+
+.valuation-app .lookup-board-market-grid .leaderboard-head,
+.valuation-app .lookup-board-market-grid .leaderboard-row {
+  grid-template-columns: 46px minmax(190px, 1.05fr) minmax(92px, 0.42fr) minmax(190px, 0.8fr);
+}
+
+.valuation-app .lookup-board-market-grid .leaderboard-row {
+  min-height: 78px;
+  border-radius: 10px;
+}
+
+.valuation-app .leaderboard-player-button span {
+  min-height: 24px;
+  padding-inline: 9px;
+}
+
+.valuation-app .leaderboard-player-button span::after {
+  content: '';
+}
+
+.valuation-app .value-signal-cell strong {
+  color: #087f8c;
+}
+
+.valuation-app .lookup-board-market-grid .live-market-map.compact {
+  top: 10px;
+  min-height: min(820px, calc(100svh - 280px));
+  padding: 16px;
+}
+
+.valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-head {
+  gap: 10px;
+}
+
+.valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-head h2 {
+  font-size: clamp(1.8rem, 3.2vw, 3.3rem);
+  line-height: 0.95;
+}
+
+.valuation-app .lookup-board-market-grid .live-market-map.compact .live-opportunity-chart {
+  height: min(560px, calc(100svh - 470px));
+  min-height: 360px;
+}
+
+.valuation-app .lookup-board-market-grid .live-market-map.compact.no-dots .live-map-empty {
+  min-height: 360px;
+}
+
+.valuation-app .live-mobile-opportunity-list {
+  display: none;
+}
+
+.valuation-app .operations-drawer {
+  width: min(var(--stage-max), 100%);
+  margin-inline: auto;
+}
+
+.valuation-app .health-workflow {
+  width: min(var(--stage-max), 100%);
+  margin: 14px auto 0;
+}
+
+.valuation-app .health-workflow-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.valuation-app .health-intro-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid rgba(159, 216, 207, 0.2);
+  border-radius: 12px;
+  background:
+    linear-gradient(120deg, rgba(159, 216, 207, 0.12), transparent 42%),
+    #081013;
+  color: #fff6e5;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.2);
+}
+
+.valuation-app .health-intro-card > strong {
+  font-size: clamp(1.45rem, 2.5vw, 2.4rem);
+  line-height: 1;
+}
+
+.valuation-app .health-intro-card > small {
+  max-width: 62ch;
+  color: rgba(255, 250, 240, 0.68);
+  font-size: 0.9rem;
+  font-weight: 760;
+  line-height: 1.4;
+}
+
+.valuation-app .health-action-row {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  display: grid;
+  gap: 8px;
+  min-width: 210px;
+}
+
+.valuation-app .health-source-stack {
+  margin-top: 0;
+}
+
+@media (max-width: 1320px) {
+  .valuation-app .workflow-command {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .workflow-command-copy {
+    min-height: auto;
+  }
+
+  .valuation-app .lookup-intent-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .lookup-action-stack {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .valuation-app .toolbar.valuation-toolbar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .row-counts {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .valuation-app .lookup-board-market-grid {
+    grid-template-columns: minmax(500px, 0.56fr) minmax(460px, 0.44fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .valuation-app .workflow-mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .valuation-app .lookup-board-market-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact {
+    position: static;
+    min-height: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .valuation-app .workflow-command {
+    display: grid;
+    position: sticky;
+    z-index: 15;
+    top: 0;
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 12px;
+  }
+
+  .valuation-app .workflow-command-copy {
+    display: none;
+  }
+
+  .valuation-app .workflow-mode-grid {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .valuation-app .workflow-mode-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .workflow-mode-card {
+    flex: 0 0 172px;
+    grid-template-columns: 32px minmax(0, 1fr);
+    min-height: 68px;
+    padding: 10px;
+    scroll-snap-align: start;
+  }
+
+  .valuation-app .workflow-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .valuation-app .workflow-card-copy span,
+  .valuation-app .workflow-card-copy small,
+  .valuation-app .workflow-value {
+    display: none;
+  }
+
+  .valuation-app .workflow-card-copy strong {
+    font-size: 0.96rem;
+  }
+
+  .valuation-app .lookup-intent-bar {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .valuation-app .lookup-intent-copy strong {
+    font-size: 1.32rem;
+  }
+
+  .valuation-app .lookup-action-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .valuation-app .lookup-action-stack .lookup-intent-meta {
+    grid-column: 1 / -1;
+  }
+
+  .valuation-app .board-scan-button {
+    grid-column: 1 / -1;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .filter-select {
+    flex: 0 0 210px;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .row-counts {
+    flex: 0 0 180px;
+    align-items: center;
+  }
+
+  .valuation-app .lookup-board-market-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-shell {
+    order: 1;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-list {
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-row {
+    grid-template-columns: 46px minmax(0, 1fr);
+    gap: 8px 10px;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .valuation-app .lookup-board-market-grid .rank-chip {
+    align-self: start;
+  }
+
+  .valuation-app .lookup-board-market-grid .money-chip,
+  .valuation-app .lookup-board-market-grid .value-signal-cell {
+    grid-column: 2;
+    min-height: auto;
+  }
+
+  .valuation-app .lookup-board-market-grid .value-signal-cell small,
+  .valuation-app .leaderboard-player-button span + span,
+  .valuation-app .sts-inline span:first-child {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact {
+    order: 2;
+    padding: 14px;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-head {
+    display: grid;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-head h2 {
+    font-size: clamp(1.7rem, 9vw, 2.35rem);
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact.has-dots .live-map-grid {
+    display: none;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact.has-dots .live-mobile-opportunity-list {
+    display: grid;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact.no-dots .live-map-empty {
+    min-height: 160px;
+  }
+
+  .valuation-app .health-intro-card {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .health-action-row {
+    grid-column: auto;
+    grid-row: auto;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .valuation-app .workflow-mode-card {
+    flex-basis: 150px;
+  }
+
+  .valuation-app .lookup-action-stack {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .calculator-toggle-button,
+  .valuation-app .board-radar-button {
+    min-height: 46px;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .filter-select {
+    flex-basis: 185px;
+  }
+}
+
 .valuation-app .metric-grid {
   gap: 12px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -11217,5 +11668,507 @@ button.sales-bucket-tile {
     flex-direction: column;
     justify-content: center;
     padding-block: 10px;
+  }
+}
+
+/* Product UX v4: final public workflow layer. Keep this last so older layout experiments cannot win. */
+.valuation-app {
+  --stage-max: 1880px;
+  --focus-ring: 0 0 0 3px rgba(159, 216, 207, 0.34);
+}
+
+.valuation-app .workflow-command {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.32fr) minmax(760px, 1fr);
+  gap: 12px;
+}
+
+.valuation-app .workflow-command-copy {
+  min-height: 92px;
+}
+
+.valuation-app .workflow-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.valuation-app .workflow-mode-card {
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  min-height: 88px;
+  padding: 12px;
+}
+
+.valuation-app .workflow-mode-card:focus-visible,
+.valuation-app .lookup-primary-search:focus-within,
+.valuation-app .filter-select:focus-within,
+.valuation-app .price-workflow-search:focus-within {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.valuation-app .workflow-card-copy strong,
+.valuation-app .workflow-card-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.valuation-app .lookup-intent-bar {
+  grid-template-columns: minmax(245px, 0.5fr) minmax(420px, 1fr) minmax(315px, auto);
+}
+
+.valuation-app .lookup-action-stack {
+  grid-template-columns: repeat(3, minmax(112px, 1fr));
+}
+
+.valuation-app .lookup-action-stack .lookup-intent-meta {
+  justify-content: start;
+}
+
+.valuation-app .lookup-board-market-grid {
+  grid-template-columns: minmax(500px, 0.46fr) minmax(780px, 0.54fr);
+  gap: 14px;
+}
+
+.valuation-app .lookup-board-market-grid .leaderboard-head,
+.valuation-app .lookup-board-market-grid .leaderboard-row {
+  grid-template-columns: 42px minmax(150px, 1fr) minmax(82px, 0.38fr) minmax(150px, 0.62fr);
+}
+
+.valuation-app .lookup-board-market-grid .leaderboard-list {
+  min-height: min(760px, calc(100svh - 320px));
+  max-height: min(860px, calc(100svh - 286px));
+}
+
+.valuation-app .lookup-board-market-grid .leaderboard-row {
+  min-height: 70px;
+  padding-block: 8px;
+}
+
+.valuation-app .lookup-board-market-grid .player-chip strong {
+  font-size: 0.94rem;
+}
+
+.valuation-app .lookup-board-market-grid .player-chip small,
+.valuation-app .lookup-board-market-grid .money-chip small,
+.valuation-app .lookup-board-market-grid .value-signal-cell small {
+  line-height: 1.22;
+}
+
+.valuation-app .lookup-board-market-grid .live-market-map.compact {
+  min-height: min(860px, calc(100svh - 286px));
+  padding: 18px;
+}
+
+.valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-head h2 {
+  font-size: clamp(2.1rem, 3vw, 3.9rem);
+  letter-spacing: 0;
+}
+
+.valuation-app .lookup-board-market-grid .live-market-map.compact .live-opportunity-chart {
+  height: min(650px, calc(100svh - 455px));
+  min-height: 460px;
+}
+
+.valuation-app .lookup-board-market-grid .live-market-map.compact.no-dots .live-map-empty {
+  min-height: 460px;
+}
+
+.valuation-app .live-mobile-opportunity-list {
+  display: none;
+}
+
+.valuation-app .health-workflow {
+  width: min(var(--stage-max), 100%);
+  margin-inline: auto;
+}
+
+@media (min-width: 1900px) {
+  .valuation-app .lookup-board-market-grid {
+    grid-template-columns: minmax(580px, 0.42fr) minmax(1080px, 0.58fr);
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact .live-opportunity-chart {
+    min-height: 620px;
+  }
+}
+
+@media (max-width: 1460px) {
+  .valuation-app .workflow-command,
+  .valuation-app .lookup-intent-bar,
+  .valuation-app .lookup-board-market-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact {
+    position: static;
+  }
+}
+
+@media (max-width: 980px) {
+  .valuation-app .workflow-command {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .workflow-command p {
+    max-width: 66ch;
+  }
+
+  .valuation-app .workflow-mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .valuation-app .toolbar.valuation-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .row-counts {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .valuation-app.app-shell {
+    padding-inline: 10px;
+  }
+
+  .valuation-app .workflow-command {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 12px;
+  }
+
+  .valuation-app .workflow-command-copy {
+    min-height: auto;
+    padding: 5px 6px 0;
+  }
+
+  .valuation-app .workflow-command h2 {
+    font-size: 1.18rem;
+  }
+
+  .valuation-app .workflow-command p {
+    display: none;
+  }
+
+  .valuation-app .workflow-mini-tape {
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .valuation-app .workflow-mini-tape::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .workflow-mode-grid {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 1px 1px 3px;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .valuation-app .workflow-mode-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .workflow-mode-card {
+    flex: 0 0 178px;
+    scroll-snap-align: start;
+    grid-template-columns: 34px minmax(0, 1fr);
+    min-height: 66px;
+    padding: 9px;
+  }
+
+  .valuation-app .workflow-mode-card .workflow-value {
+    display: none;
+  }
+
+  .valuation-app .workflow-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .valuation-app .workflow-card-copy span {
+    font-size: 0.58rem;
+  }
+
+  .valuation-app .workflow-card-copy strong {
+    font-size: 0.82rem;
+  }
+
+  .valuation-app .workflow-card-copy small {
+    font-size: 0.62rem;
+  }
+
+  .valuation-app .lookup-workflow {
+    padding-top: 10px;
+  }
+
+  .valuation-app .lookup-intent-bar {
+    grid-template-columns: 1fr;
+    padding: 11px;
+    border-radius: 12px;
+  }
+
+  .valuation-app .lookup-intent-copy {
+    gap: 4px;
+  }
+
+  .valuation-app .lookup-intent-copy strong {
+    font-size: 1.08rem;
+  }
+
+  .valuation-app .lookup-primary-search {
+    min-height: 50px;
+  }
+
+  .valuation-app .lookup-action-stack {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .valuation-app .lookup-action-stack .lookup-intent-meta {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .valuation-app .board-scan-button {
+    grid-column: 1 / -1;
+  }
+
+  .valuation-app .mobile-start-guide {
+    display: flex;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .filter-select {
+    flex: 0 0 185px;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .row-counts {
+    flex: 0 0 150px;
+    align-items: center;
+  }
+
+  .valuation-app .lookup-board-market-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-shell {
+    order: 1;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-list {
+    min-height: 0;
+    max-height: none;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-row {
+    grid-template-columns: 42px minmax(0, 1fr);
+    min-height: 0;
+    padding: 12px 10px;
+  }
+
+  .valuation-app .lookup-board-market-grid .money-chip,
+  .valuation-app .lookup-board-market-grid .value-signal-cell {
+    grid-column: 2;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact {
+    order: 2;
+    min-height: auto;
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-head h2 {
+    font-size: clamp(1.7rem, 9vw, 2.6rem);
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-kpis {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-kpis::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-kpis span {
+    flex: 0 0 auto;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact.has-dots .live-map-grid {
+    display: none;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact.has-dots .live-mobile-opportunity-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact.no-dots .live-map-empty {
+    min-height: 210px;
+  }
+
+  .valuation-app .live-mobile-opportunity-head,
+  .valuation-app .live-mobile-opportunity-row {
+    border: 1px solid rgba(8, 127, 140, 0.14);
+    border-radius: 10px;
+    background:
+      linear-gradient(135deg, rgba(159, 216, 207, 0.16), transparent 50%),
+      rgba(255, 253, 247, 0.88);
+  }
+
+  .valuation-app .live-mobile-opportunity-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 10px;
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .valuation-app .live-mobile-opportunity-head strong {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
+
+  .valuation-app .live-mobile-opportunity-row {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    gap: 9px;
+    align-items: center;
+    padding: 10px;
+    color: var(--text-strong);
+    text-decoration: none;
+  }
+
+  .valuation-app .live-mobile-rank {
+    width: 32px;
+    height: 32px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 9px;
+    background: #071014;
+    color: #fffaf0;
+    font-family: var(--mono);
+    font-weight: 950;
+  }
+
+  .valuation-app .live-mobile-copy {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .valuation-app .live-mobile-copy strong,
+  .valuation-app .live-mobile-copy small,
+  .valuation-app .live-mobile-copy em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .live-mobile-copy small {
+    color: rgba(14, 47, 46, 0.7);
+    font-size: 0.72rem;
+    font-weight: 750;
+  }
+
+  .valuation-app .live-mobile-copy em {
+    color: #087f8c;
+    font-size: 0.66rem;
+    font-style: normal;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .valuation-app .live-mobile-money {
+    display: grid;
+    gap: 1px;
+    text-align: right;
+  }
+
+  .valuation-app .live-mobile-money strong {
+    color: #087f8c;
+    font-family: var(--mono);
+  }
+
+  .valuation-app .live-mobile-money small {
+    color: var(--muted);
+    font-size: 0.58rem;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .valuation-app .live-mobile-metrics {
+    grid-column: 2 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding-top: 4px;
+  }
+
+  .valuation-app .live-mobile-metrics b,
+  .valuation-app .live-mobile-metrics small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .live-mobile-metrics b {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+  }
+
+  .valuation-app .live-mobile-metrics small {
+    color: var(--muted);
+    font-size: 0.56rem;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .valuation-app .health-intro-card {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .health-action-row {
+    grid-column: 1;
+    grid-row: auto;
+    min-width: 0;
   }
 }
