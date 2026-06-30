@@ -553,6 +553,33 @@ function listingMarketplaceLabel(listing: Pick<NormalizedListing, 'marketplace' 
   return 'Listing'
 }
 
+function rawListingMarketplaceLabel(listing: ProspectPulseListing) {
+  if (listing.marketplace_label) return listing.marketplace_label
+  if (listing.marketplace === 'fanatics-collect') return 'Fanatics Collect'
+  if (listing.marketplace === 'comc') return 'COMC'
+  if (listing.marketplace === 'ebay') return 'eBay'
+  return 'Marketplace'
+}
+
+function marketplaceCountsFromLabels(labels: string[]) {
+  const counts = new Map<string, number>()
+  for (const label of labels) {
+    const cleanLabel = label.trim() || 'Marketplace'
+    counts.set(cleanLabel, (counts.get(cleanLabel) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
+}
+
+function marketplaceCountsFromListings(listings: ProspectPulseListing[]) {
+  return marketplaceCountsFromLabels(listings.map(rawListingMarketplaceLabel))
+}
+
+function marketplaceCountsFromOpportunities(opportunities: Opportunity[]) {
+  return marketplaceCountsFromLabels(opportunities.map((opportunity) => listingMarketplaceLabel(opportunity.listing)))
+}
+
 function compactVariation(label: string) {
   return label
     .replace(/\b(autograph|autographs|autographed|auto)\b/gi, '')
@@ -3359,10 +3386,12 @@ function SourceStackPanel({
     {
       key: 'live',
       label: 'Live market',
-      value: ebayStatus?.configured ? 'eBay live' : 'Offline',
-      detail: ebayStatus?.cache?.enabled ? `Browse cache on / ${ebayStatus.cache.fixedPriceTtlSeconds / 3600}h BIN TTL` : 'set eBay keys to scan active listings',
+      value: ebayStatus?.configured ? 'eBay + Fanatics' : 'Offline',
+      detail: ebayStatus?.cache?.enabled
+        ? `eBay cache on / Fanatics fixed-price search live`
+        : 'set eBay keys to scan active listings',
       tone: ebayStatus?.configured ? 'fresh' : 'offline',
-      role: 'eBay Browse finds active asks and bids; cached pages protect rate limits.',
+      role: 'eBay powers active asks and auctions; Fanatics Collect adds fixed-price asks.',
     },
     {
       key: 'rankings',
@@ -3515,6 +3544,9 @@ function BinRadar({
 }) {
   const configured = Boolean(ebayStatus?.configured)
   const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
+  const listingMarketplaceCounts = scan ? marketplaceCountsFromListings(scan.listings) : []
+  const opportunityMarketplaceCounts = opportunities.length ? marketplaceCountsFromOpportunities(opportunities) : []
+  const visibleMarketplaceCounts = opportunityMarketplaceCounts.length ? opportunityMarketplaceCounts : listingMarketplaceCounts
   const model = models[0] ?? null
   const setCount = models.length
   const playerCount = models.reduce((total, currentModel) => total + currentModel.players.length, 0)
@@ -3630,7 +3662,7 @@ function BinRadar({
         <div className="bin-radar-pills">
           <span className={configured ? 'connected' : 'offline'}>
             {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
-            {configured ? 'eBay live' : 'eBay keys needed'}
+            {configured ? 'eBay + Fanatics' : 'eBay keys needed'}
           </span>
           {configured ? <span className={ebayStatus?.cache?.enabled ? 'connected' : 'offline'}>{browseCacheLabel}</span> : null}
           <span className={hasPlayerUniverse ? 'connected' : 'offline'}>{readinessLabel}</span>
@@ -3647,6 +3679,11 @@ function BinRadar({
                 : `${searchMode}: ${trimmedSearchTerm || 'focus needed'}`}
           </span>
           <span>{listingCount.toLocaleString()} BINs</span>
+          {visibleMarketplaceCounts.map((provider) => (
+            <span key={provider.label}>
+              {provider.label}: {provider.count.toLocaleString()}
+            </span>
+          ))}
           <span>{auctionListingCount.toLocaleString()} auctions</span>
           {hiddenListingCount > 0 ? <span>{hiddenListingCount.toLocaleString()} hidden rejects</span> : null}
           <span>{scan ? `${opportunities.length.toLocaleString()} candidates` : 'No scan yet'}</span>
@@ -4197,6 +4234,7 @@ function LiveMarketMap({
     (1 - (Math.log(Math.max(1, price)) - lowLog) / Math.max(0.001, highLog - lowLog)) * (chart.height - chart.top - chart.bottom)
   const ticks = [25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000].filter((tick) => tick >= minPrice && tick <= maxPrice)
   const activeBuyDots = dots.filter(({ opportunity }) => opportunity.edgeDollars >= 0)
+  const liveMarketplaceCounts = marketplaceCountsFromOpportunities(dots.map(({ opportunity }) => opportunity))
   const mobileOpportunityRows = (activeBuyDots.length ? activeBuyDots : dots).slice(0, 10)
   const liveLineDots = [...activeBuyDots]
     .sort(
@@ -4329,6 +4367,11 @@ function LiveMarketMap({
           <span>{activeBuyDots.length.toLocaleString()} buy dots</span>
           {activeBuyDots.length ? <span>Median edge {money(medianBuySpread)} / {percent(medianBuyRoi)}</span> : null}
           <span>{binOpportunities.length.toLocaleString()} BINs</span>
+          {liveMarketplaceCounts.map((provider) => (
+            <span key={provider.label}>
+              {provider.label}: {provider.count.toLocaleString()}
+            </span>
+          ))}
           <span>{auctionOpportunities.length.toLocaleString()} auctions</span>
           {focusCompModel?.available ? <span>{compBackedCount.toLocaleString()} comp-backed</span> : null}
           <span>Updated {latestLabel}</span>

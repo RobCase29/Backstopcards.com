@@ -1074,7 +1074,7 @@ function buildReasons(args: {
   if (listing.bidCount >= 20) warnings.push('crowded auction')
   if (levelAgePenalty(listing.prospect) > 0.2) warnings.push('age-to-level drag')
   if (listing.marketPrice < 35) warnings.push('low-dollar noise')
-  if (!listing.listingUrl) warnings.push('missing eBay link')
+  if (!listing.listingUrl) warnings.push('missing listing link')
 
   if (listing.serialDenominator && listing.serialDenominator <= 99) tags.push(`/${listing.serialDenominator}`)
   if (listing.isEligibleGraded && listing.gradingCompany && listing.gradeNumber !== null) tags.push(`${listing.gradingCompany} ${listing.gradeNumber}`)
