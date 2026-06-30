@@ -182,7 +182,7 @@ type QuickGradeKey =
   | 'sgc-10'
   | 'cgc-9'
   | 'cgc-10'
-type WorkMode = 'lookup' | 'deals' | 'beta'
+type WorkMode = 'lookup' | 'price' | 'deals' | 'beta'
 type FreshnessTone = 'fresh' | 'watch' | 'stale' | 'empty' | 'offline'
 type BinVariationOption = {
   key: string
@@ -1343,7 +1343,7 @@ function WorkflowCommand({
   listingCount: number
   modelReady: boolean
 }) {
-  const modeTitle = mode === 'lookup' ? 'Value Board' : mode === 'deals' ? 'Live Scanner' : 'Beta Lab'
+  const modeTitle = mode === 'lookup' ? 'Value Board' : mode === 'price' ? 'Price My Card' : mode === 'deals' ? 'Live Scanner' : 'Beta Lab'
   return (
     <section className="workflow-command" aria-label="Bowman auto desk">
       <div className="workflow-command-copy">
@@ -1358,7 +1358,7 @@ function WorkflowCommand({
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
           <span>{pricedRows.toLocaleString()} players</span>
-          <span>{mode === 'lookup' ? 'Value first' : `Top base ${money(topBase)}`}</span>
+          <span>{mode === 'lookup' ? 'Value first' : mode === 'price' ? 'Calculator' : `Top base ${money(topBase)}`}</span>
         </div>
       </div>
 
@@ -1381,6 +1381,23 @@ function WorkflowCommand({
         </button>
 
         <button
+          className={`workflow-mode-card ${mode === 'price' ? 'active' : ''}`}
+          type="button"
+          onClick={() => onModeChange('price')}
+          aria-pressed={mode === 'price'}
+        >
+          <span className="workflow-icon">
+            <Calculator size={19} />
+          </span>
+          <span className="workflow-card-copy">
+            <span>Step 2</span>
+            <strong>Price my card</strong>
+            <small>Player, variation, grade, all-in</small>
+          </span>
+          <span className="workflow-value">{money(topBase)}</span>
+        </button>
+
+        <button
           className={`workflow-mode-card ${mode === 'deals' ? 'active' : ''}`}
           type="button"
           onClick={() => onModeChange('deals')}
@@ -1390,7 +1407,7 @@ function WorkflowCommand({
             <Radio size={19} />
           </span>
           <span className="workflow-card-copy">
-            <span>Step 2</span>
+            <span>Step 3</span>
             <strong>Live scanner</strong>
             <small>{listingCount.toLocaleString()} active listings checked</small>
           </span>
@@ -5174,7 +5191,6 @@ function App() {
   const [sortMode, setSortMode] = useState<SortMode>('dynasty-value')
   const [selectedRowId, setSelectedRowId] = useState<string | undefined>()
   const [workMode, setWorkMode] = useState<WorkMode>('lookup')
-  const [calculatorOpen, setCalculatorOpen] = useState(false)
   const [ebayStatus, setEbayStatus] = useState<EbayStatus | null>(null)
   const [binListings, setBinListings] = useState<ProspectPulseListing[]>([])
   const [binLoading, setBinLoading] = useState(false)
@@ -5219,22 +5235,11 @@ function App() {
   const salesCacheRequestRef = useRef<AbortController | null>(null)
   const activeSalesCacheRequestRef = useRef<AbortController | null>(null)
   const dealResultsRef = useRef<HTMLDivElement | null>(null)
-  const calculatorRef = useRef<HTMLDivElement | null>(null)
 
   const revealDealResults = useCallback(() => {
     if (typeof window === 'undefined') return
     window.setTimeout(() => {
       const target = dealResultsRef.current
-      if (!target) return
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      target.focus({ preventScroll: true })
-    }, 120)
-  }, [])
-
-  const revealCalculator = useCallback(() => {
-    if (typeof window === 'undefined') return
-    window.setTimeout(() => {
-      const target = calculatorRef.current
       if (!target) return
       target.scrollIntoView({ behavior: 'smooth', block: 'start' })
       target.focus({ preventScroll: true })
@@ -6593,20 +6598,12 @@ function App() {
                   {selectedTeamOption ? 'Scan Team' : 'Scan Board Now'}
                 </button>
                 <button
-                  className={`ghost-button calculator-toggle-button ${calculatorOpen ? 'active' : ''}`}
+                  className="ghost-button calculator-toggle-button"
                   type="button"
-                  onClick={() => {
-                    setCalculatorOpen((open) => {
-                      const next = !open
-                      if (next) revealCalculator()
-                      return next
-                    })
-                  }}
-                  aria-expanded={calculatorOpen}
-                  aria-controls="quick-price-calculator"
+                  onClick={() => setWorkMode('price')}
                 >
                   <Calculator size={15} />
-                  Price a Card
+                  Price My Card
                 </button>
                 <button className="ghost-button board-radar-button" type="button" onClick={() => setWorkMode('deals')}>
                   <SlidersHorizontal size={15} />
@@ -6680,18 +6677,6 @@ function App() {
               onSelect={setSelectedRowId}
               onScanPlayer={scanBinsForLookupRow}
             />
-
-            {calculatorOpen ? (
-              <div className="calculator-anchor" id="quick-price-calculator" ref={calculatorRef} tabIndex={-1}>
-                <QuickPriceModule
-                  row={effectiveSelectedRow}
-                  onScanPlayer={scanBinsForLookupRow}
-                  pickerRows={quickPickerRows}
-                  onPickRow={setSelectedRowId}
-                  className="lookup-calculator-strip"
-                />
-              </div>
-            ) : null}
 
             <div className="toolbar valuation-toolbar">
               <label className="filter-select">
@@ -6868,6 +6853,48 @@ function App() {
               </>
             </aside>
           ) : null}
+        </section>
+      ) : workMode === 'price' ? (
+        <section className="price-workflow" aria-label="Price my card">
+          <div className="price-workflow-shell">
+            <div className="price-workflow-intro">
+              <span className="workflow-kicker">
+                <Calculator size={14} />
+                Price My Card
+              </span>
+              <strong>{effectiveSelectedRow ? effectiveSelectedRow.playerName : 'Choose a player'}</strong>
+              <small>
+                Pick a player, variation, grade, and all-in price. The calculator shows the model, target price, and live-search path without leaving the app.
+              </small>
+              <label className="price-workflow-search">
+                <Search size={18} />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search player, team, set, or variation"
+                  aria-label="Search player, team, set, or variation for card pricing"
+                />
+              </label>
+              <div className="price-workflow-actions">
+                <button className="ghost-button" type="button" onClick={() => setWorkMode('lookup')}>
+                  <Search size={15} />
+                  Value Board
+                </button>
+                <button className="ghost-button" type="button" onClick={() => setWorkMode('deals')}>
+                  <Radio size={15} />
+                  Live Scanner
+                </button>
+              </div>
+            </div>
+
+            <QuickPriceModule
+              row={effectiveSelectedRow}
+              onScanPlayer={scanBinsForLookupRow}
+              pickerRows={quickPickerRows}
+              onPickRow={setSelectedRowId}
+              className="price-page-calculator"
+            />
+          </div>
         </section>
       ) : workMode === 'deals' ? (
         <section className="deal-workflow" aria-label="Deal finder">
