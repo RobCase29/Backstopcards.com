@@ -720,7 +720,11 @@ async function fetchJsonWithTimeout(url: URL, description: string) {
     if (!response.ok) throw new Error(`${description} request failed: ${response.status} ${response.statusText}`)
     return (await response.json()) as unknown
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') throw new Error(`${description} request timed out`, { cause: error })
+    if (error instanceof Error && error.name === 'AbortError') {
+      const timeoutError = new Error(`${description} request timed out`)
+      timeoutError.cause = error
+      throw timeoutError
+    }
     throw error
   } finally {
     clearTimeout(timer)
