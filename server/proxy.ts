@@ -541,6 +541,23 @@ function cardHedgeUsagePayload(db: SqliteDatabase, env: ServerEnv, now = new Dat
   }
 }
 
+function cardHedgeUsageFallback(env: ServerEnv, now = new Date()) {
+  const limits = cardHedgeRateConfig(env)
+  const minuteStart = new Date(now.getTime() - 60_000).toISOString()
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString()
+  return {
+    limits,
+    usage: {
+      minute: 0,
+      day: 0,
+      remainingMinute: limits.perMinute,
+      remainingDay: limits.perDay,
+      minuteWindowStart: minuteStart,
+      dayWindowStart: dayStart,
+    },
+  }
+}
+
 function recordCardHedgeCall(db: SqliteDatabase, route: string, endpoint: string, statusCode: number, now = new Date()) {
   const requestedAt = now.toISOString()
   const callId = `${requestedAt}:${route}:${Math.random().toString(36).slice(2, 10)}`
@@ -2620,23 +2637,36 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
 
   let db: SqliteDatabase | null = null
   try {
-    const opened = await openWritableMarketDb(env)
-    db = opened.db
-    ensureCardHedgeUsageSchema(db)
-
     const configured = Boolean(env.CARD_HEDGE_API_KEY)
     const plan = String(env.CARD_HEDGE_PLAN ?? '').trim().toLowerCase()
     const eliteAccessExpected = /^(elite|enterprise)$/i.test(plan)
 
     if (route === 'status') {
       if (request.method !== 'GET') return new Response(null, { status: 404 })
+      const opened = await openOptionalWritableMarketDb(env)
+      db = opened.db
+      let usageTracking = false
+      let usagePayload = cardHedgeUsageFallback(env)
+      if (db) {
+        try {
+          ensureCardHedgeUsageSchema(db)
+          usagePayload = cardHedgeUsagePayload(db, env)
+          usageTracking = true
+        } catch {
+          db.close()
+          db = null
+        }
+      }
+
       return jsonResponse(200, {
         connected: configured,
         configured,
         plan: plan || 'unknown',
         eliteAccessExpected,
         baseUrl: CARD_HEDGE_API_BASE,
-        ...cardHedgeUsagePayload(db, env),
+        dbName: basename(opened.dbPath),
+        usageTracking,
+        ...usagePayload,
         endpoints: {
           search: '/api/card-hedge/search',
           match: '/api/card-hedge/match',
@@ -2652,6 +2682,10 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
         message: configured ? 'Card Hedge API configured' : 'Set CARD_HEDGE_API_KEY in environment variables',
       })
     }
+
+    const opened = await openWritableMarketDb(env)
+    db = opened.db
+    ensureCardHedgeUsageSchema(db)
 
     if (!configured) return jsonResponse(401, { error: 'Set CARD_HEDGE_API_KEY in environment variables' })
 
@@ -2732,8 +2766,39 @@ export async function handleLiveMarketRoute(route: string, request: Request, env
       if (unsafePost) return unsafePost
     }
 
-    const opened = await openWritableMarketDb(env)
+    const opened = await openOptionalWritableMarketDb(env)
     db = opened.db
+    if (!db) {
+      const message = 'Live market cache is unavailable in this environment; scans still run without saved snapshots.'
+      if (route === 'status') {
+        return jsonResponse(200, {
+          available: false,
+          dbName: basename(opened.dbPath),
+          freshSnapshots: 0,
+          freshListings: 0,
+          freshOpportunities: 0,
+          latestObservedAt: '',
+          nextExpiresAt: '',
+          byType: [],
+          byMarketplace: [],
+          message,
+        })
+      }
+      if (route === 'latest') {
+        return jsonResponse(200, {
+          available: false,
+          message,
+          listings: [],
+        })
+      }
+      return jsonResponse(200, {
+        available: false,
+        message,
+        listingCount: 0,
+        opportunityCount: 0,
+      })
+    }
+
     ensureLiveMarketSchema(db)
     const now = new Date()
     const nowIso = now.toISOString()
