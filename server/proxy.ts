@@ -2389,7 +2389,7 @@ type FanaticsCollectQueryMeta = {
 }
 
 type FanaticsCollectSearchPayload = {
-  queries?: FanaticsCollectQueryMeta[]
+  queries?: Array<FanaticsCollectQueryMeta | string>
   minPrice?: number | string
   limit?: number | string
 }
@@ -2405,21 +2405,36 @@ function fanaticsCollectNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function fanaticsCollectQueryFrom(value: FanaticsCollectQueryMeta | string) {
+  if (typeof value === 'string') {
+    return {
+      q: fanaticsCollectString(value).replace(/\s+/g, ' ').slice(0, MAX_EBAY_QUERY_LENGTH),
+      playerName: '',
+      release: '',
+      category: '',
+      variationTerm: '',
+      baseAutoOnly: false,
+      lowSerialNonAuto: false,
+    }
+  }
+  return {
+    q: fanaticsCollectString(value.q).replace(/\s+/g, ' ').slice(0, MAX_EBAY_QUERY_LENGTH),
+    playerName: fanaticsCollectString(value.playerName),
+    release: fanaticsCollectString(value.release),
+    releaseYear: fanaticsCollectNumber(value.releaseYear, 0) || undefined,
+    category: fanaticsCollectString(value.category),
+    variationTerm: fanaticsCollectString(value.variationTerm),
+    baseAutoOnly: Boolean(value.baseAutoOnly),
+    lowSerialNonAuto: Boolean(value.lowSerialNonAuto),
+    serialDenominator: fanaticsCollectNumber(value.serialDenominator, 0) || undefined,
+  }
+}
+
 function sanitizeFanaticsCollectQueries(payload: FanaticsCollectSearchPayload) {
   const rawQueries = Array.isArray(payload.queries) ? payload.queries : []
   const queries = rawQueries
-    .map((query) => ({
-      q: fanaticsCollectString(query.q).replace(/\s+/g, ' ').slice(0, MAX_EBAY_QUERY_LENGTH),
-      playerName: fanaticsCollectString(query.playerName),
-      release: fanaticsCollectString(query.release),
-      releaseYear: fanaticsCollectNumber(query.releaseYear, 0) || undefined,
-      category: fanaticsCollectString(query.category),
-      variationTerm: fanaticsCollectString(query.variationTerm),
-      baseAutoOnly: Boolean(query.baseAutoOnly),
-      lowSerialNonAuto: Boolean(query.lowSerialNonAuto),
-      serialDenominator: fanaticsCollectNumber(query.serialDenominator, 0) || undefined,
-    }))
-    .filter((query) => query.q && query.playerName)
+    .map(fanaticsCollectQueryFrom)
+    .filter((query) => query.q)
     .slice(0, MAX_EBAY_QUERIES)
 
   if (queries.length === 0) throw new ProxyRequestError(400, 'At least one Fanatics Collect query is required')

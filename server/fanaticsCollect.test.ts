@@ -93,4 +93,49 @@ describe('Fanatics Collect proxy', () => {
     expect(algoliaBatchSizes).toEqual([25, 2])
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
+
+  it('accepts metadata-light query strings instead of failing the provider', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlString = String(url)
+      if (urlString === 'https://fanatics.test/graphql') {
+        return new Response(JSON.stringify({ data: { collectSearchKey: 'test-search-key' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      const body = JSON.parse(String(init?.body)) as { requests: Array<{ query: string }> }
+      expect(body.requests.map((request) => request.query)).toEqual(['Aiva Arquette 2026 Bowman Chrome Auto'])
+      return new Response(
+        JSON.stringify({
+          results: [
+            {
+              nbHits: 1,
+              hits: [
+                {
+                  objectID: 'aiva-light-query',
+                  title: 'Aiva Arquette 2026 Bowman Chrome Auto',
+                  listingUuid: 'aiva-light-query',
+                  askingPrice: 50,
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await handleFanaticsCollectRoute(
+      'search',
+      postJson({ queries: ['Aiva Arquette 2026 Bowman Chrome Auto'], minPrice: 25 }),
+      fanaticsEnv(),
+    )
+    const payload = (await response.json()) as { items: unknown[]; stats: { queriesRun: number } }
+
+    expect(response.status).toBe(200)
+    expect(payload.items).toHaveLength(1)
+    expect(payload.stats.queriesRun).toBe(1)
+  })
 })
