@@ -722,7 +722,7 @@ async function fetchJsonWithTimeout(url: URL, description: string) {
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       const timeoutError = new Error(`${description} request timed out`)
-      timeoutError.cause = error
+      ;(timeoutError as Error & { cause?: unknown }).cause = error
       throw timeoutError
     }
     throw error
