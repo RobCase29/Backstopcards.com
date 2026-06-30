@@ -25,6 +25,7 @@ const FANATICS_COLLECT_MARKETPLACE_URL = 'https://www.fanaticscollect.com/market
 const FANATICS_COLLECT_ALGOLIA_APP_ID = '3XT9C4X62I'
 const FANATICS_COLLECT_ALGOLIA_INDEX = 'prod_item_state_v1'
 const FANATICS_COLLECT_SEARCH_KEY_TTL_MS = 10 * 60 * 1000
+const FANATICS_COLLECT_QUERY_BATCH_SIZE = 25
 const RANKINGS_RUNTIME_CACHE_NAMESPACE = 'backstop-rankings-v1'
 const RANKINGS_RUNTIME_CACHE_KEY = 'sts-ranking-csv-bundle'
 const RANKINGS_RUNTIME_CACHE_TTL_SECONDS = 36 * 60 * 60
@@ -2424,7 +2425,9 @@ async function fetchFanaticsCollectSearchKey(graphqlUrl: string) {
       Accept: 'application/json',
       Origin: 'https://www.fanaticscollect.com',
       Referer: FANATICS_COLLECT_MARKETPLACE_URL,
-      'User-Agent': 'Backstop Card Finder Fanatics Collect search',
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'x-apollo-operation-name': 'webSearchKeyQuery',
     },
     body: JSON.stringify({
       operationName: 'webSearchKeyQuery',
@@ -2467,8 +2470,8 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
   const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
   const appId = env.FANATICS_COLLECT_ALGOLIA_APP_ID?.trim() || FANATICS_COLLECT_ALGOLIA_APP_ID
   const indexName = env.FANATICS_COLLECT_ALGOLIA_INDEX?.trim() || FANATICS_COLLECT_ALGOLIA_INDEX
-  const searchKey = await fetchFanaticsCollectSearchKey(graphqlUrl)
   const queries = sanitizeFanaticsCollectQueries(payload)
+  const searchKey = await fetchFanaticsCollectSearchKey(graphqlUrl)
   const minPrice = Math.max(0, fanaticsCollectNumber(payload.minPrice, 0))
   const limit = clampInt(payload.limit, 40, 1, 100)
   const filters = 'marketplace:FIXED AND status:Live AND marketplaceSource:bo'
@@ -2497,29 +2500,34 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
     ],
     attributesToHighlight: [],
   }))
+  const resultBatches: Array<{ hits?: Array<Record<string, unknown>>; nbHits?: number; error?: string }> = []
+  for (let index = 0; index < requests.length; index += FANATICS_COLLECT_QUERY_BATCH_SIZE) {
+    const batch = requests.slice(index, index + FANATICS_COLLECT_QUERY_BATCH_SIZE)
+    const upstream = await fetch(`https://${appId}-dsn.algolia.net/1/indexes/*/queries`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Algolia-API-Key': searchKey,
+        'X-Algolia-Application-Id': appId,
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      },
+      body: JSON.stringify({ requests: batch }),
+      signal: AbortSignal.timeout(10_000),
+    })
 
-  const upstream = await fetch(`https://${appId}-dsn.algolia.net/1/indexes/*/queries`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      'X-Algolia-API-Key': searchKey,
-      'X-Algolia-Application-Id': appId,
-      'User-Agent': 'Backstop Card Finder Fanatics Collect search',
-    },
-    body: JSON.stringify({ requests }),
-    signal: AbortSignal.timeout(10_000),
-  })
-
-  const algoliaPayload = (await upstream.json().catch(() => null)) as
-    | { results?: Array<{ hits?: Array<Record<string, unknown>>; nbHits?: number; error?: string }> ; message?: string }
-    | null
-  if (!upstream.ok) {
-    const message = algoliaPayload?.message ?? `${upstream.status} ${upstream.statusText}`.trim()
-    throw new ProxyRequestError(upstream.status || 502, `Fanatics Collect search failed: ${message}`)
+    const algoliaPayload = (await upstream.json().catch(() => null)) as
+      | { results?: Array<{ hits?: Array<Record<string, unknown>>; nbHits?: number; error?: string }> ; message?: string }
+      | null
+    if (!upstream.ok) {
+      const message = algoliaPayload?.message ?? `${upstream.status} ${upstream.statusText}`.trim()
+      throw new ProxyRequestError(upstream.status || 502, `Fanatics Collect search failed: ${message}`)
+    }
+    if (Array.isArray(algoliaPayload?.results)) resultBatches.push(...algoliaPayload.results)
   }
 
-  const results = Array.isArray(algoliaPayload?.results) ? algoliaPayload.results : []
+  const results = resultBatches
   const errors: Array<{ query?: string; error: string }> = []
   const items = dedupeFanaticsCollectHits(
     results.flatMap((result, index) => {
@@ -2552,7 +2560,7 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
       cacheSkips: 0,
       runtimeCacheHits: 0,
       sqliteCacheHits: 0,
-      upstreamPagesFetched: results.length,
+      upstreamPagesFetched: Math.ceil(requests.length / FANATICS_COLLECT_QUERY_BATCH_SIZE),
     },
   }
 }
@@ -2596,6 +2604,11 @@ export async function handleFanaticsCollectRoute(route: string, request: Request
       message,
     })
   } catch (error) {
+    console.warn('[fanatics-collect] route failed', {
+      route,
+      status: routeErrorStatus(error),
+      error: routeErrorMessage(error, 'Fanatics Collect request failed'),
+    })
     return jsonResponse(routeErrorStatus(error), {
       error: routeErrorMessage(error, 'Fanatics Collect request failed'),
     })
