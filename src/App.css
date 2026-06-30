@@ -12172,3 +12172,166 @@ button.sales-bucket-tile {
     min-width: 0;
   }
 }
+
+/* Product trust layer: compact evidence and next action on the daily board. */
+.valuation-app .board-trust-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.valuation-app .board-trust-strip span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid rgba(8, 127, 140, 0.12);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(159, 216, 207, 0.14), transparent 56%),
+    rgba(255, 253, 247, 0.82);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  line-height: 1.22;
+  text-transform: uppercase;
+}
+
+.valuation-app .board-trust-strip strong {
+  color: var(--text-strong);
+  font-size: 0.72rem;
+}
+
+.valuation-app .lookup-board-market-grid .leaderboard-head,
+.valuation-app .lookup-board-market-grid .leaderboard-row {
+  grid-template-columns: 42px minmax(142px, 1.04fr) minmax(76px, 0.34fr) minmax(128px, 0.54fr) minmax(148px, 0.62fr);
+}
+
+.valuation-app .model-trust-cell {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding-left: 9px;
+  border-left: 1px solid rgba(12, 16, 20, 0.08);
+}
+
+.valuation-app .model-trust-cell strong {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #087f8c;
+  font-size: 0.72rem;
+  font-weight: 950;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.valuation-app .model-trust-cell strong svg {
+  flex: 0 0 auto;
+}
+
+.valuation-app .model-trust-cell small {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 850;
+  line-height: 1.2;
+  text-transform: uppercase;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.valuation-app .model-trust-cell em {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #082321;
+  background: rgba(159, 216, 207, 0.48);
+  font-size: 0.56rem;
+  font-style: normal;
+  font-weight: 950;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.valuation-app .model-trust-cell.strong strong,
+.valuation-app .model-trust-cell.solid strong {
+  color: #087f8c;
+}
+
+.valuation-app .model-trust-cell.strong em {
+  background: rgba(142, 255, 206, 0.58);
+}
+
+.valuation-app .model-trust-cell.solid em {
+  background: rgba(159, 216, 207, 0.48);
+}
+
+.valuation-app .model-trust-cell.watch strong {
+  color: #a56f18;
+}
+
+.valuation-app .model-trust-cell.watch em {
+  color: #412d0b;
+  background: rgba(245, 194, 87, 0.44);
+}
+
+.valuation-app .model-trust-cell.thin strong {
+  color: #a04738;
+}
+
+.valuation-app .model-trust-cell.thin em {
+  color: #4a1c14;
+  background: rgba(208, 95, 73, 0.18);
+}
+
+@media (max-width: 1460px) {
+  .valuation-app .lookup-board-market-grid .leaderboard-head,
+  .valuation-app .lookup-board-market-grid .leaderboard-row {
+    grid-template-columns: 42px minmax(160px, 1fr) minmax(82px, 0.36fr) minmax(142px, 0.52fr) minmax(168px, 0.58fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .valuation-app .board-trust-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-head,
+  .valuation-app .lookup-board-market-grid .leaderboard-row {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .valuation-app .lookup-board-market-grid .money-chip,
+  .valuation-app .lookup-board-market-grid .value-signal-cell,
+  .valuation-app .lookup-board-market-grid .model-trust-cell {
+    grid-column: 2;
+  }
+
+  .valuation-app .model-trust-cell {
+    padding: 8px 0 0;
+    border-left: 0;
+    border-top: 1px solid rgba(12, 16, 20, 0.07);
+  }
+}
+
+@media (max-width: 720px) {
+  .valuation-app .board-trust-strip {
+    display: none;
+  }
+
+  .valuation-app .model-trust-cell small {
+    -webkit-line-clamp: 3;
+  }
+
+  .valuation-app .model-trust-cell em {
+    font-size: 0.58rem;
+  }
+}

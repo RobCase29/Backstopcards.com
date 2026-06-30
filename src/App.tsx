@@ -825,6 +825,88 @@ function ageLabel(value?: string | null, now = Date.now()) {
   return `${days.toLocaleString()}d ago`
 }
 
+type ModelTrustTone = 'strong' | 'solid' | 'watch' | 'thin'
+
+function modelTrustSignal(row: PricingRow) {
+  const source = row.baseMethod.toLowerCase().includes('sold comp')
+    ? 'sold-comp'
+    : row.basePriceSource
+  const sourceWeight =
+    source === 'sold-comp'
+      ? 36
+      : source === 'weighted-sales'
+        ? 32
+        : source === 'blended-sales'
+          ? 24
+          : source === 'variation-implied'
+            ? 14
+            : 6
+  const compDepth = Math.min(22, Math.log1p(Math.max(0, row.rawBaseSales)) * 7)
+  const confidence = clampNumber(row.baseConfidence, 0, 1) * 24
+  const freshness =
+    row.baseSales30 >= 3
+      ? 12
+      : row.baseSales90 >= 5
+        ? 9
+        : numericTimestamp(row.latestBaseSaleAt) !== null
+          ? freshnessTone(row.latestBaseSaleAt, 72, 360) === 'fresh'
+            ? 8
+            : 4
+          : 0
+  const rankSignal = row.stsProspectRank !== null ? 8 : row.stsRank !== null ? 5 : 0
+  const score = Math.round(clampNumber(sourceWeight + compDepth + confidence + freshness + rankSignal, 0, 100))
+  const valueScore = scoreDynastyValueOpportunity(row)
+  const tone: ModelTrustTone =
+    score >= 78 && row.rawBaseSales >= 8
+      ? 'strong'
+      : score >= 58 && row.rawBaseSales >= 3
+        ? 'solid'
+        : score >= 36 || row.basePriceSource === 'variation-implied'
+          ? 'watch'
+          : 'thin'
+  const label =
+    tone === 'strong'
+      ? 'Strong comps'
+      : tone === 'solid'
+        ? 'Comp backed'
+        : row.basePriceSource === 'variation-implied'
+          ? 'Implied base'
+          : 'Thin base'
+  const sourceLabel =
+    source === 'sold-comp'
+      ? 'sold lane'
+      : row.basePriceSource === 'weighted-sales'
+        ? 'recent sales'
+        : row.basePriceSource === 'blended-sales'
+          ? 'blended sales'
+          : row.basePriceSource === 'variation-implied'
+            ? 'variation anchors'
+            : 'baseline'
+  const salesLabel =
+    row.rawBaseSales > 0
+      ? `${row.rawBaseSales.toLocaleString()} comp${row.rawBaseSales === 1 ? '' : 's'}`
+      : row.baseEffectiveSales > 0
+        ? `${row.baseEffectiveSales.toFixed(1)} effective`
+        : 'no direct comps'
+  const rankLabel = primaryRankLabel(row) ?? (row.stsRank !== null ? `Rank #${row.stsRank.toLocaleString()}` : 'no rank')
+  const action =
+    valueScore >= 45 && (tone === 'strong' || tone === 'solid')
+      ? 'Scan now'
+      : valueScore >= 25 && tone !== 'thin'
+        ? 'Scan next'
+        : tone === 'thin'
+          ? 'Verify base'
+          : 'Watch'
+
+  return {
+    score,
+    tone,
+    label,
+    action,
+    detail: `${sourceLabel} / ${salesLabel} / ${ageLabel(row.latestBaseSaleAt)} / ${rankLabel}`,
+  }
+}
+
 function freshnessTone(value?: string | null, freshHours = 24, staleHours = 168): FreshnessTone {
   const time = numericTimestamp(value)
   if (!time) return 'empty'
@@ -1339,7 +1421,7 @@ function WorkflowCommand({
 }) {
   const modeTitle =
     mode === 'lookup'
-      ? 'Value Board'
+      ? 'Daily Value Board'
       : mode === 'deals'
         ? 'Live Deals'
         : mode === 'price'
@@ -1356,7 +1438,7 @@ function WorkflowCommand({
         </span>
         <h2>{modeTitle}</h2>
         <p>
-          Start with the value board, scan live listings when a target is worth attention, or price a card directly.
+          Start with the daily board, scan live listings when a target stands out, or price a card directly.
         </p>
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
@@ -1377,7 +1459,7 @@ function WorkflowCommand({
           </span>
           <span className="workflow-card-copy">
             <span>Home</span>
-            <strong>Value Board</strong>
+            <strong>Daily Board</strong>
             <small>Ranked players and teams</small>
           </span>
           <span className="workflow-value">{pricedRows.toLocaleString()}</span>
@@ -1676,6 +1758,7 @@ function Leaderboard({
         <span>Player</span>
         <span>Base Auto</span>
         <span>Value Signal</span>
+        <span>Model Trust</span>
       </div>
       <div className="leaderboard-list">
         {rows.map((row, index) => {
@@ -1689,6 +1772,7 @@ function Leaderboard({
             valueMultiple > 0 ? `${valueMultiple.toFixed(valueMultiple >= 10 ? 1 : 2)}x` : null,
             valueGapPct !== null ? `${valueGapPct >= 0 ? '+' : ''}${Math.round(valueGapPct * 100)}% gap` : null,
           ].filter(Boolean)
+          const trustSignal = modelTrustSignal(row)
           return (
             <article
               className={`leaderboard-row ${selectedId === row.id ? 'selected' : ''}`}
@@ -1736,6 +1820,14 @@ function Leaderboard({
               <span className="value-signal-cell">
                 <strong>{valueScore > 0 ? `${valueScore.toFixed(0)} value` : '--'}</strong>
                 <small>{valueDetails.length > 0 ? valueDetails.join(' / ') : 'ranking unavailable'}</small>
+              </span>
+              <span className={`model-trust-cell ${trustSignal.tone}`}>
+                <strong>
+                  <ShieldCheck size={13} />
+                  {trustSignal.label}
+                </strong>
+                <small>{trustSignal.detail}</small>
+                <em>{trustSignal.action}</em>
               </span>
             </article>
           )
@@ -6427,12 +6519,12 @@ function App() {
           <div className="valuation-workspace">
             <div className="lookup-intent-bar">
               <div className="lookup-intent-copy">
-                <span>Value Board</span>
+                <span>Daily Value Board</span>
                 <strong>{effectiveSelectedRow ? effectiveSelectedRow.playerName : trimmedQuery ? 'No modeled player selected' : 'Value board'}</strong>
                 <small>
                   {effectiveSelectedRow
                     ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} / ${effectiveSelectedRow.currentTeamName ?? 'team unknown'} / ${money(effectiveSelectedRow.baseTwmaPrice)} base auto / ${formatStsLine(effectiveSelectedRow) || 'no rank signal'}`
-                    : 'Start with the ranked board, then narrow by player, current team, or set.'}
+                    : 'Ranked by price gap, rank signal, and base-auto quality.'}
                 </small>
               </div>
               <label className="lookup-primary-search">
@@ -6483,8 +6575,23 @@ function App() {
                 Value gap = rank price vs base
               </span>
               <span>
-                <Radio size={14} />
-                Scan finds live BINs and auctions
+                <ShieldCheck size={14} />
+                Trust shows model strength
+              </span>
+            </div>
+
+            <div className="board-trust-strip" aria-label="Daily board signals">
+              <span>
+                <strong>Value gap</strong>
+                Rank-implied base vs current base auto
+              </span>
+              <span>
+                <strong>Model trust</strong>
+                Comp depth, freshness, and source quality
+              </span>
+              <span>
+                <strong>Scan deals</strong>
+                Active BINs and auctions vs modeled price
               </span>
             </div>
 
@@ -6650,7 +6757,7 @@ function App() {
               <div className="price-workflow-actions">
                 <button className="ghost-button" type="button" onClick={() => setWorkMode('lookup')}>
                   <Search size={15} />
-                  Value Board
+                  Daily Board
                 </button>
                 <button className="ghost-button" type="button" onClick={() => setWorkMode('deals')}>
                   <Radio size={15} />
