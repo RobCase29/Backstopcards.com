@@ -93,6 +93,8 @@ export interface ProspectPulseListing {
   base_color?: string | null
   serial_denominator?: number | string | null
   is_hand_signed?: boolean | null
+  checklist_match?: boolean | null
+  checklist_first_bowman?: boolean | null
   is_graded?: boolean | null
   grader?: string | null
   grade?: string | number | null

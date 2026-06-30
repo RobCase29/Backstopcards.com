@@ -366,6 +366,8 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
     variation: inferredVariation,
     serial_denominator: serialDenominator,
     is_hand_signed: isHandSigned,
+    checklist_match: true,
+    checklist_first_bowman: !meta?.lowSerialNonAuto,
     comps: [],
     prospect: {
       name: playerName,

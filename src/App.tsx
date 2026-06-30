@@ -542,7 +542,13 @@ function binScanErrorSummary(scan: EbayBinScanResult) {
   if (scan.errors.some((error) => ebayRateLimitMessage(error.error))) {
     return 'eBay throttled some queries; showing successful results. Wait a minute before another broad scan.'
   }
-  return `${scan.errors.length.toLocaleString()} marketplace quer${scan.errors.length === 1 ? 'y' : 'ies'} failed; ranked successful results.`
+  const providers = new Set(
+    scan.errors
+      .map((error) => String(error.query ?? '').split('/').at(-1)?.trim())
+      .filter(Boolean),
+  )
+  const providerLabel = providers.size > 0 ? ` (${[...providers].join(', ')})` : ''
+  return `${scan.errors.length.toLocaleString()} marketplace quer${scan.errors.length === 1 ? 'y' : 'ies'} failed${providerLabel}; ranked successful results.`
 }
 
 function listingMarketplaceLabel(listing: Pick<NormalizedListing, 'marketplace' | 'marketplaceLabel'>) {

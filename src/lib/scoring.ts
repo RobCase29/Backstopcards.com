@@ -375,9 +375,10 @@ function detectUniverse(listing: ProspectPulseListing, serialDenominator?: numbe
   const nonAuto = /\b(non[-\s]?auto|no\s+auto|unsigned|facsimile|reprint)\b/.test(text)
   const isAutograph =
     !nonAuto && /\b(auto|autos|autograph|autographed|autographs|signed|signature)\b/.test(text)
-  const hasFirstMarker = /\b(1st|first)\b/.test(text)
+  const hasChecklistFirstEvidence = Boolean(listing.checklist_match && listing.checklist_first_bowman)
+  const hasFirstMarker = hasChecklistFirstEvidence || /\b(1st|first)\b/.test(text)
   const isFirstEditionOnly = /\bfirst\s+edition\b/.test(text) && !/\b(1st|first)\s+bowman\b/.test(text)
-  const isFirstBowman = isBowman && hasFirstMarker && !isFirstEditionOnly
+  const isFirstBowman = isBowman && (hasChecklistFirstEvidence || (hasFirstMarker && !isFirstEditionOnly))
   const serial = serialDenominator ?? positiveNumberValue(listing.serial_denominator)
   const isLowSerialNonAuto = Boolean(isBowman && isFirstBowman && !isAutograph && !isHandSigned && serial && serial <= 99)
 

@@ -214,6 +214,44 @@ describe('normalizeListing', () => {
     expect(opportunities[0]?.fairValue).toBe(86)
   })
 
+  it('accepts checklist-sourced Fanatics auto rows that omit literal 1st Bowman wording', () => {
+    const fanaticsListing = listing({
+      item_id: 'fanatics-base-auto',
+      title: '2026 Bowman Chrome Eli Willits PROSPECT AUTO #CPA-EW',
+      current_price: 75,
+      shipping_cost: 0,
+      variation: 'Base Auto',
+      serial_denominator: null,
+      marketplace: 'fanatics-collect',
+      marketplace_label: 'Fanatics Collect',
+      checklist_match: true,
+      checklist_first_bowman: true,
+      comps: [],
+    })
+
+    expect(normalizeListing(fanaticsListing).isTargetAuto).toBe(true)
+
+    const opportunities = rankOpportunities([fanaticsListing], DEFAULT_SETTINGS, model)
+
+    expect(opportunities).toHaveLength(1)
+    expect(opportunities[0]?.listing.marketplaceLabel).toBe('Fanatics Collect')
+    expect(opportunities[0]?.matchedVariation).toBe('Base Auto')
+  })
+
+  it('still rejects non-checklist auto rows when 1st Bowman evidence is missing', () => {
+    const normalized = normalizeListing(
+      listing({
+        title: '2026 Bowman Chrome Eli Willits PROSPECT AUTO #CPA-EW',
+        variation: 'Base Auto',
+        serial_denominator: null,
+        checklist_match: false,
+        checklist_first_bowman: false,
+      }),
+    )
+
+    expect(normalized.isTargetAuto).toBe(false)
+  })
+
   it('routes IP and hand-signed base cards into a separate lower-value lane', () => {
     const normalized = normalizeListing(
       listing({
