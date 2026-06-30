@@ -10,7 +10,6 @@ import {
   ExternalLink,
   Gem,
   KeyRound,
-  LogOut,
   Radio,
   RefreshCw,
   Search,
@@ -22,19 +21,12 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react'
-import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
-  clearPulseSession,
   fetchChecklistCatalog,
   fetchChecklistModel,
-  getPulseStatus,
-  getStoredPulseSession,
-  isPulseAuthError,
-  loginProspectPulse,
-  savePulseSession,
-  type PulseAuthMode,
 } from './lib/prospectPulse'
 import {
   fetchEbayAuctionListings,
@@ -45,6 +37,7 @@ import {
   type EbayBinSearchMode,
   type EbayStatus,
 } from './lib/ebay'
+import { fetchFanaticsCollectBinListings } from './lib/fanaticsCollect'
 import { impliedDynastyBasePrice, scoreDynastyValueOpportunity } from './lib/dynastyValue'
 import {
   capLiveMarketOpportunities,
@@ -68,10 +61,17 @@ import {
   type SalesCacheSale,
   type SalesCacheStatus,
 } from './lib/salesCache'
-import { findStsRanking, getStsLeaderboard, primaryStsRank, primaryStsRankLabel, scoreStsMomentum } from './lib/stsRankings'
+import {
+  findStsRanking,
+  getStsLeaderboard,
+  hydrateStsLeaderboard,
+  primaryStsRank,
+  primaryStsRankLabel,
+  scoreStsMomentum,
+} from './lib/stsRankings'
 import { compareTeamLabels, normalizeTeamCode, teamDisplayName } from './lib/teams'
 import { fetchCardHedgeStatus, type CardHedgeStatus } from './lib/cardHedge'
-import { fetchRankingsStatus, refreshRankings, type RankingsStatus } from './lib/rankings'
+import { fetchRankingsData, fetchRankingsStatus, refreshRankings, type RankingsData, type RankingsStatus } from './lib/rankings'
 import {
   CRYSTALLIZED_CHECKLIST,
   buildCaseHitAutoEquivalent,
@@ -141,7 +141,7 @@ import {
   variationLabelWithSerial,
 } from './lib/salesLab'
 import { summarizeProximityMultiplier } from './lib/proximityMultiples'
-import type { ChecklistModel, GradingCompany, Opportunity, ProspectPulseListing, ScoreSettings } from './types'
+import type { ChecklistModel, GradingCompany, NormalizedListing, Opportunity, ProspectPulseListing, ScoreSettings } from './types'
 
 type CategoryFilter = 'all' | ChecklistModel['category']
 type BaseSourceFilter = 'all' | BasePriceSource
@@ -542,7 +542,15 @@ function binScanErrorSummary(scan: EbayBinScanResult) {
   if (scan.errors.some((error) => ebayRateLimitMessage(error.error))) {
     return 'eBay throttled some queries; showing successful results. Wait a minute before another broad scan.'
   }
-  return `${scan.errors.length.toLocaleString()} eBay quer${scan.errors.length === 1 ? 'y' : 'ies'} failed; ranked successful results.`
+  return `${scan.errors.length.toLocaleString()} marketplace quer${scan.errors.length === 1 ? 'y' : 'ies'} failed; ranked successful results.`
+}
+
+function listingMarketplaceLabel(listing: Pick<NormalizedListing, 'marketplace' | 'marketplaceLabel'>) {
+  if (listing.marketplaceLabel) return listing.marketplaceLabel
+  if (listing.marketplace === 'fanatics-collect') return 'Fanatics Collect'
+  if (listing.marketplace === 'comc') return 'COMC'
+  if (listing.marketplace === 'ebay') return 'eBay'
+  return 'Listing'
 }
 
 function compactVariation(label: string) {
@@ -1119,6 +1127,13 @@ function mergeBinScans(results: EbayBinScanResult[], failedErrors: Array<{ query
         dedupedItems: stats.dedupedItems + result.stats.dedupedItems,
         mappedListings: stats.mappedListings + result.stats.mappedListings,
         rejectedPlayerMismatches: stats.rejectedPlayerMismatches + result.stats.rejectedPlayerMismatches,
+        cacheHits: stats.cacheHits + result.stats.cacheHits,
+        cacheMisses: stats.cacheMisses + result.stats.cacheMisses,
+        cacheWrites: stats.cacheWrites + result.stats.cacheWrites,
+        cacheSkips: stats.cacheSkips + result.stats.cacheSkips,
+        runtimeCacheHits: stats.runtimeCacheHits + result.stats.runtimeCacheHits,
+        sqliteCacheHits: stats.sqliteCacheHits + result.stats.sqliteCacheHits,
+        upstreamPagesFetched: stats.upstreamPagesFetched + result.stats.upstreamPagesFetched,
       }),
       {
         queriesRun: 0,
@@ -1129,6 +1144,13 @@ function mergeBinScans(results: EbayBinScanResult[], failedErrors: Array<{ query
         dedupedItems: 0,
         mappedListings: 0,
         rejectedPlayerMismatches: 0,
+        cacheHits: 0,
+        cacheMisses: 0,
+        cacheWrites: 0,
+        cacheSkips: 0,
+        runtimeCacheHits: 0,
+        sqliteCacheHits: 0,
+        upstreamPagesFetched: 0,
       },
     ),
   }
@@ -3254,8 +3276,8 @@ function ModelStatus({
         : '--'
   const sourceLabel = error
     ? error
-    : models.some((model) => model.source === 'authenticated-player-model')
-      ? `Player base data loaded: ${loadedPlayers.toLocaleString()}`
+    : loadedPlayers > 0
+      ? `Canonical checklist loaded: ${loadedPlayers.toLocaleString()} players`
     : totalPlayers
         ? `Set curves only; ${totalPlayers.toLocaleString()} players need base prices`
         : 'Waiting for checklist model'
@@ -3283,7 +3305,7 @@ function ModelStatus({
           <strong>{variationCount ? variationCount.toLocaleString() : '--'}</strong>
         </div>
       </div>
-      <div className={`model-source ${models.some((model) => model.source === 'authenticated-player-model') ? 'connected' : ''}`}>
+      <div className={`model-source ${loadedPlayers > 0 ? 'connected' : ''}`}>
         <Brain size={16} />
         <span>{sourceLabel}</span>
       </div>
@@ -3291,71 +3313,117 @@ function ModelStatus({
   )
 }
 
-function ProspectPulsePanel({
-  liveConnected,
-  authMode,
-  authEmail,
-  authPassword,
-  authBusy,
-  onEmailChange,
-  onPasswordChange,
-  onConnect,
-  onDisconnect,
+function SourceStackPanel({
+  snapshot,
+  ebayStatus,
+  releaseCount,
+  modelCount,
+  pricedPlayers,
 }: {
-  liveConnected: boolean
-  authMode: PulseAuthMode
-  authEmail: string
-  authPassword: string
-  authBusy: boolean
-  onEmailChange: (value: string) => void
-  onPasswordChange: (value: string) => void
-  onConnect: (event: FormEvent<HTMLFormElement>) => void | Promise<void>
-  onDisconnect: () => void
+  snapshot: ObservabilitySnapshot | null
+  ebayStatus: EbayStatus | null
+  releaseCount: number
+  modelCount: number
+  pricedPlayers: number
 }) {
-  const isServerManaged = liveConnected && authMode === 'server'
-  const connectedLabel = isServerManaged ? 'Managed data session' : 'Connected'
-  const connectedIdentity = isServerManaged ? 'Private market feed' : authEmail || 'Local browser session'
+  const checklist = snapshot?.checklist
+  const sales = snapshot?.salesCache
+  const cardHedge = snapshot?.cardHedge
+  const ranking = snapshot?.ranking
+  const confirmedFirstPlayers = checklist?.firstStatuses?.find((row) => row.status === 'confirmed_1st')?.players ?? 0
+  const sourceRows = [
+    {
+      key: 'universe',
+      label: 'Checklist universe',
+      value: checklist?.available ? `${(checklist.universe?.total ?? checklist.cards?.total ?? pricedPlayers).toLocaleString()} cards` : `${releaseCount.toLocaleString()} releases`,
+      detail: `${confirmedFirstPlayers.toLocaleString()} confirmed 1sts / ${modelCount.toLocaleString()} loaded models`,
+      tone: checklist?.available || modelCount > 0 ? 'fresh' : 'watch',
+      role: 'Official checklists and 1st-list evidence define what exists.',
+    },
+    {
+      key: 'pricing',
+      label: 'Pricing model',
+      value: sales?.available ? `${(sales.canonical?.summarizedSales ?? sales.modeledSales ?? 0).toLocaleString()} comps` : `${pricedPlayers.toLocaleString()} priced`,
+      detail: sales?.canonical?.updatedAt ? `canonical cache updated ${new Date(sales.canonical.updatedAt).toLocaleDateString()}` : 'local/canonical model first',
+      tone: sales?.available || pricedPlayers > 0 ? 'fresh' : 'watch',
+      role: 'Canonical sold comps anchor base autos and variation lanes.',
+    },
+    {
+      key: 'card-hedge',
+      label: 'Comp API',
+      value: cardHedge?.configured ? `${(cardHedge.usage?.remainingDay ?? 0).toLocaleString()} left` : 'Optional',
+      detail: cardHedge?.configured ? `${cardHedge.plan || 'plan'} / ${cardHedge.usage?.day?.toLocaleString() ?? 0} used today` : 'use only when refreshing comp cache',
+      tone: cardHedge?.configured ? 'fresh' : 'watch',
+      role: 'Card Hedge feeds new sold comps into the canonical cache.',
+    },
+    {
+      key: 'live',
+      label: 'Live market',
+      value: ebayStatus?.configured ? 'eBay live' : 'Offline',
+      detail: ebayStatus?.cache?.enabled ? `Browse cache on / ${ebayStatus.cache.fixedPriceTtlSeconds / 3600}h BIN TTL` : 'set eBay keys to scan active listings',
+      tone: ebayStatus?.configured ? 'fresh' : 'offline',
+      role: 'eBay Browse finds active asks and bids; cached pages protect rate limits.',
+    },
+    {
+      key: 'rankings',
+      label: 'Player signal',
+      value: ranking?.rows ? `${ranking.matchedRows.toLocaleString()} matched` : 'Bundled',
+      detail: ranking?.latestUpdated ? `rankings updated ${new Date(ranking.latestUpdated).toLocaleDateString()}` : 'Formulated Consensus snapshots',
+      tone: ranking?.rows ? 'fresh' : 'watch',
+      role: 'Consensus rank, trend, and coverage drive the value board.',
+    },
+    {
+      key: 'legacy',
+      label: 'Legacy feed',
+      value: 'Fallback only',
+      detail: 'not part of normal pricing or live scans',
+      tone: 'neutral',
+      role: 'Keep as temporary checklist/multiplier backup until local coverage is complete.',
+    },
+  ] satisfies Array<{
+    key: string
+    label: string
+    value: string
+    detail: string
+    tone: 'fresh' | 'watch' | 'offline' | 'neutral'
+    role: string
+  }>
 
   return (
-    <section className="detail-card connection-card source-card">
-      <div className="section-title">
-        <KeyRound size={18} />
-        <h2>Market Data</h2>
-      </div>
-      {liveConnected ? (
-        <div className={`connected-box ${isServerManaged ? 'managed' : ''}`}>
-          <span>{connectedLabel}</span>
-          <strong>{connectedIdentity}</strong>
-          <p>{isServerManaged ? 'Credentials stay on the server; every approved user gets live checklist data.' : 'Stored only in this browser.'}</p>
-          {!isServerManaged && (
-            <button className="ghost-button" type="button" onClick={onDisconnect}>
-              <LogOut size={16} />
-              Disconnect
-            </button>
-          )}
+    <section className="source-stack-card">
+      <div className="source-stack-head">
+        <div>
+          <span>
+            <Database size={15} />
+            Source stack
+          </span>
+          <strong>Canonical first, live market second</strong>
+          <small>What each subscription or cache is responsible for right now.</small>
         </div>
-      ) : (
-        <form className="connect-form" onSubmit={(event) => void onConnect(event)}>
-          <label>
-            <span>Email</span>
-            <input type="email" autoComplete="username" value={authEmail} onChange={(event) => onEmailChange(event.target.value)} required />
-          </label>
-          <label>
-            <span>Password</span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={authPassword}
-              onChange={(event) => onPasswordChange(event.target.value)}
-              required
-            />
-          </label>
-          <button className="primary-button" type="submit" disabled={authBusy}>
-            <RefreshCw size={16} className={authBusy ? 'spin' : undefined} />
-            Connect
-          </button>
-        </form>
-      )}
+      </div>
+      <div className="source-stack-flow">
+        <span>Checklist</span>
+        <span>Sold comps</span>
+        <span>Fair value</span>
+        <span>Live scans</span>
+        <span>Review loop</span>
+      </div>
+      <div className="source-stack-grid">
+        {sourceRows.map((row) => (
+          <article className={`source-stack-item ${row.tone}`} key={row.key}>
+            <div>
+              <span>{row.label}</span>
+              <strong>{row.value}</strong>
+              <small>{row.detail}</small>
+            </div>
+            <p>{row.role}</p>
+          </article>
+        ))}
+      </div>
+      <div className="source-stack-footer">
+        <ShieldCheck size={15} />
+        <span>Decision: keep Card Hedge and eBay active; Market Movers and the legacy checklist feed are validation/fallback surfaces, not the default architecture.</span>
+      </div>
     </section>
   )
 }
@@ -3482,6 +3550,13 @@ function BinRadar({
     searchMode === 'player' ||
     scopedPlayerCount > 0
   const rateLimited = ebayRateLimitMessage(error)
+  const browseCacheHours = Math.round((ebayStatus?.cache?.fixedPriceTtlSeconds ?? 0) / 3600)
+  const browseCacheLabel =
+    ebayStatus?.cache?.enabled && browseCacheHours > 0
+      ? `${browseCacheHours}h Browse cache`
+      : ebayStatus?.cache?.enabled
+        ? 'Browse cache on'
+        : 'Browse cache off'
   const busy = loading || auctionLoading
   const canScan = configured && setCount > 0 && hasPlayerUniverse && hasFocus && hasTargetQueue && !busy && !modelLoading
   const canScanBaseAutos = configured && setCount > 0 && hasPlayerUniverse && hasTargetQueue && !busy && !modelLoading
@@ -3557,6 +3632,7 @@ function BinRadar({
             {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
             {configured ? 'eBay live' : 'eBay keys needed'}
           </span>
+          {configured ? <span className={ebayStatus?.cache?.enabled ? 'connected' : 'offline'}>{browseCacheLabel}</span> : null}
           <span className={hasPlayerUniverse ? 'connected' : 'offline'}>{readinessLabel}</span>
           <span>Raw + 9+ slabs</span>
           <span>{selectedSetPill}</span>
@@ -3753,7 +3829,8 @@ function BinRadar({
             <div className="bin-scan-stats">
               <strong>{scan.stats.queriesSucceeded.toLocaleString()}</strong>
               <span>
-                queries / {scan.stats.pagesFetched.toLocaleString()} pages /{' '}
+                queries / {scan.stats.upstreamPagesFetched.toLocaleString()} live pages /{' '}
+                {scan.stats.cacheHits.toLocaleString()} cached /{' '}
                 {scan.stats.rejectedPlayerMismatches.toLocaleString()} rejects
               </span>
             </div>
@@ -3939,7 +4016,7 @@ function BinRadar({
                   {opportunity.listing.listingUrl ? (
                     <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
                       <ExternalLink size={14} />
-                      eBay
+                      {listingMarketplaceLabel(opportunity.listing)}
                     </a>
                   ) : null}
                   <button
@@ -4053,7 +4130,7 @@ function BinRadar({
                       {opportunity.listing.listingUrl ? (
                         <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
                           <ExternalLink size={14} />
-                          eBay
+                          {listingMarketplaceLabel(opportunity.listing)}
                         </a>
                       ) : null}
                       <button
@@ -4614,7 +4691,7 @@ function LiveMarketMap({
                           #{index + 1} {money(opportunity.edgeDollars)}
                         </strong>
                         <small>
-                          {type} · {opportunity.listing.playerName} · {money(opportunity.listing.allInPrice)} ask
+                      {type} · {opportunity.listing.playerName} · {money(opportunity.listing.allInPrice)} ask
                         </small>
                       </a>
                     ))}
@@ -4623,7 +4700,7 @@ function LiveMarketMap({
                 {best.listing.listingUrl ? (
                   <a className="primary-button live-map-ebay-link" href={best.listing.listingUrl} target="_blank" rel="noreferrer">
                     <ExternalLink size={15} />
-                    Open Top Dot
+                    Open Listing
                   </a>
                 ) : null}
               </>
@@ -4786,7 +4863,8 @@ function CaseHitLab({
           <div className="bin-scan-stats">
             <strong>{scan.stats.queriesSucceeded.toLocaleString()}</strong>
             <span>
-              queries / {scan.stats.pagesFetched.toLocaleString()} pages / {scan.stats.rejectedListings.toLocaleString()} rejects
+              queries / {scan.stats.upstreamPagesFetched.toLocaleString()} live pages / {scan.stats.cacheHits.toLocaleString()} cached /{' '}
+              {scan.stats.rejectedListings.toLocaleString()} rejects
             </span>
           </div>
         ) : null}
@@ -5029,11 +5107,6 @@ function CaseHitLab({
 }
 
 function App() {
-  const [liveConnected, setLiveConnected] = useState(false)
-  const [pulseAuthMode, setPulseAuthMode] = useState<PulseAuthMode>(() => (getStoredPulseSession()?.access_token ? 'local' : 'public'))
-  const [authEmail, setAuthEmail] = useState(() => getStoredPulseSession()?.user?.email ?? '')
-  const [authPassword, setAuthPassword] = useState('')
-  const [authBusy, setAuthBusy] = useState(false)
   const [releaseOptions, setReleaseOptions] = useState<ReleaseOption[]>(FALLBACK_RELEASE_OPTIONS)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState<string | null>(null)
@@ -5086,6 +5159,7 @@ function App() {
   const [observabilityLoading, setObservabilityLoading] = useState(false)
   const [observabilityError, setObservabilityError] = useState<string | null>(null)
   const [rankingsRefreshing, setRankingsRefreshing] = useState(false)
+  const [rankingsDatasetVersion, setRankingsDatasetVersion] = useState(0)
   const checklistRequestRef = useRef<AbortController | null>(null)
   const checklistRequestIdRef = useRef(0)
   const binRequestRef = useRef<AbortController | null>(null)
@@ -5094,11 +5168,22 @@ function App() {
   const salesCacheRequestRef = useRef<AbortController | null>(null)
   const activeSalesCacheRequestRef = useRef<AbortController | null>(null)
   const dealResultsRef = useRef<HTMLDivElement | null>(null)
+  const calculatorRef = useRef<HTMLDivElement | null>(null)
 
   const revealDealResults = useCallback(() => {
     if (typeof window === 'undefined') return
     window.setTimeout(() => {
       const target = dealResultsRef.current
+      if (!target) return
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      target.focus({ preventScroll: true })
+    }, 120)
+  }, [])
+
+  const revealCalculator = useCallback(() => {
+    if (typeof window === 'undefined') return
+    window.setTimeout(() => {
+      const target = calculatorRef.current
       if (!target) return
       target.scrollIntoView({ behavior: 'smooth', block: 'start' })
       target.focus({ preventScroll: true })
@@ -5189,6 +5274,13 @@ function App() {
     }
   }, [])
 
+  const applyRankingsData = useCallback((ranking: RankingsData) => {
+    const csvInputs = ranking.sources.map((source) => source.csv).filter((csv) => csv.trim())
+    if (!hydrateStsLeaderboard(csvInputs)) return false
+    setRankingsDatasetVersion((version) => version + 1)
+    return true
+  }, [])
+
   const refreshObservability = useCallback(async (signal?: AbortSignal) => {
     setObservabilityLoading(true)
     setObservabilityError(null)
@@ -5227,6 +5319,7 @@ function App() {
     setObservabilityError(null)
     try {
       const ranking = await refreshRankings()
+      applyRankingsData(ranking)
       setObservability((current) =>
         current
           ? {
@@ -5242,7 +5335,7 @@ function App() {
     } finally {
       setRankingsRefreshing(false)
     }
-  }, [refreshObservability])
+  }, [applyRankingsData, refreshObservability])
 
   useEffect(() => {
     let active = true
@@ -5250,17 +5343,7 @@ function App() {
     const ebayController = new AbortController()
     const liveMarketController = new AbortController()
     const observabilityController = new AbortController()
-    getPulseStatus()
-      .then((status) => {
-        if (!active) return
-        setLiveConnected(status.connected)
-        setPulseAuthMode(status.authMode)
-      })
-      .catch(() => {
-        if (!active) return
-        setLiveConnected(false)
-        setPulseAuthMode(getStoredPulseSession()?.access_token ? 'local' : 'public')
-      })
+    const rankingsController = new AbortController()
     fetchEbayStatus(ebayController.signal)
       .then((status) => {
         if (active) setEbayStatus(status)
@@ -5290,6 +5373,23 @@ function App() {
       .catch(() => {
         if (active && !liveMarketController.signal.aborted) setCachedLiveMarket(null)
       })
+    fetchRankingsData(rankingsController.signal)
+      .then((ranking) => {
+        if (!active || rankingsController.signal.aborted) return
+        applyRankingsData(ranking)
+        setObservability((current) =>
+          current
+            ? {
+                ...current,
+                checkedAt: new Date().toISOString(),
+                ranking,
+              }
+            : current,
+        )
+      })
+      .catch(() => {
+        // Bundled ranking data remains active if the live ranking bundle is unavailable.
+      })
     const modelTimer = window.setTimeout(() => {
       void (async () => {
         const catalog = await loadChecklistCatalog(catalogController.signal)
@@ -5306,10 +5406,11 @@ function App() {
       ebayController.abort()
       liveMarketController.abort()
       observabilityController.abort()
+      rankingsController.abort()
       window.clearTimeout(modelTimer)
       window.clearTimeout(observabilityTimer)
     }
-  }, [loadChecklistCatalog, loadChecklistModel, refreshObservability])
+  }, [applyRankingsData, loadChecklistCatalog, loadChecklistModel, refreshObservability])
 
   useEffect(() => {
     return () => {
@@ -5322,7 +5423,10 @@ function App() {
     }
   }, [])
 
-  const matrix = useMemo(() => buildPricingMatrix(checklistModels), [checklistModels])
+  const matrix = useMemo(() => {
+    void rankingsDatasetVersion
+    return buildPricingMatrix(checklistModels)
+  }, [checklistModels, rankingsDatasetVersion])
   const teamOptions = useMemo(() => buildTeamOptions(matrix.rows), [matrix.rows])
   const selectedTeamOption = useMemo(() => {
     if (teamFilter === 'all') return null
@@ -5637,54 +5741,11 @@ function App() {
         ? `${matrix.missingBaseRows.toLocaleString()} base gaps / ${matrix.unresolvedMultipliers.toLocaleString()} multiplier gaps`
         : 'Math clean'
   const showModelHealth = Boolean(checklistProgress || catalogError || checklistError || matrix.totalResolvedCells === 0)
-  const pulseSourceLabel =
-    pulseAuthMode === 'server'
-      ? 'Market data managed'
-      : liveConnected
-        ? 'Market data connected'
-        : 'Set curves only'
+  const canonicalSourceReady = matrix.totalPricedPlayers > 0
 
   async function refreshChecklistUniverse() {
     const catalog = await loadChecklistCatalog()
     await loadChecklistModel(catalog)
-  }
-
-  async function connectProspectPulse(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setAuthBusy(true)
-    setChecklistError(null)
-    let sessionSaved = false
-
-    try {
-      const session = await loginProspectPulse(authEmail.trim(), authPassword)
-      savePulseSession(session)
-      sessionSaved = true
-      setLiveConnected(true)
-      setPulseAuthMode('local')
-      setAuthEmail(session.user?.email ?? authEmail.trim())
-      setAuthPassword('')
-      await loadChecklistModel(releaseOptions)
-    } catch (connectError) {
-      setLiveConnected(sessionSaved && !isPulseAuthError(connectError))
-      setPulseAuthMode(sessionSaved && !isPulseAuthError(connectError) ? 'local' : 'public')
-      setChecklistError(connectError instanceof Error ? cleanModelLanguage(connectError.message) : 'Could not connect market data')
-    } finally {
-      setAuthBusy(false)
-    }
-  }
-
-  async function disconnectProspectPulse() {
-    clearPulseSession()
-    setAuthPassword('')
-    try {
-      const status = await getPulseStatus()
-      setLiveConnected(status.connected)
-      setPulseAuthMode(status.authMode)
-    } catch {
-      setLiveConnected(false)
-      setPulseAuthMode('public')
-    }
-    await loadChecklistModel(releaseOptions)
   }
 
   function resetBinScan() {
@@ -6082,7 +6143,7 @@ function App() {
               ? targetRows.map((row) => row.playerName)
               : undefined
         try {
-          const value = await fetchEbayBinListings({
+          const providerOptions = {
             model,
             minPrice: activeMinPrice,
             playerLimit: activePlayerScope === 'top-40' ? 40 : null,
@@ -6090,8 +6151,33 @@ function App() {
             searchMode: activeSearchMode,
             searchTerm: activeSearchTerm,
             signal: controller.signal,
-          })
-          return { status: 'fulfilled' as const, value }
+          }
+          const providerScans = await Promise.allSettled([
+            fetchEbayBinListings(providerOptions),
+            fetchFanaticsCollectBinListings(providerOptions),
+          ])
+          const successfulProviderScans = providerScans.flatMap((providerResult) =>
+            providerResult.status === 'fulfilled' ? [providerResult.value] : [],
+          )
+          const providerErrors = providerScans.flatMap((providerResult, providerIndex) =>
+            providerResult.status === 'rejected'
+              ? [
+                  {
+                    query: `${checklistModelLabel(model)} / ${providerIndex === 0 ? 'eBay' : 'Fanatics Collect'}`,
+                    error:
+                      providerResult.reason instanceof Error
+                        ? providerResult.reason.message
+                        : providerIndex === 0
+                          ? 'eBay BIN scan failed'
+                          : 'Fanatics Collect scan failed',
+                  },
+                ]
+              : [],
+          )
+          if (successfulProviderScans.length === 0) {
+            throw new Error(providerErrors[0]?.error ?? 'Marketplace BIN scan failed')
+          }
+          return { status: 'fulfilled' as const, value: mergeBinScans(successfulProviderScans, providerErrors) }
         } catch (reason) {
           return {
             status: 'rejected' as const,
@@ -6402,9 +6488,9 @@ function App() {
 
       {showModelHealth ? (
         <section className="status-strip valuation-status" aria-label="Model health">
-          <span className={`source-chip ${liveConnected ? 'connected' : 'offline'}`}>
-            {liveConnected ? <Wifi size={14} /> : <WifiOff size={14} />}
-            {pulseSourceLabel}
+          <span className={`source-chip ${canonicalSourceReady ? 'connected' : 'offline'}`}>
+            <Database size={14} />
+            {canonicalSourceReady ? 'Canonical model active' : 'Loading canonical model'}
           </span>
           <span>{matrix.totalPricedPlayers.toLocaleString()} players priced</span>
           <span>{matrix.totalResolvedCells.toLocaleString()} card values</span>
@@ -6458,8 +6544,15 @@ function App() {
                 <button
                   className={`ghost-button calculator-toggle-button ${calculatorOpen ? 'active' : ''}`}
                   type="button"
-                  onClick={() => setCalculatorOpen((open) => !open)}
+                  onClick={() => {
+                    setCalculatorOpen((open) => {
+                      const next = !open
+                      if (next) revealCalculator()
+                      return next
+                    })
+                  }}
                   aria-expanded={calculatorOpen}
+                  aria-controls="quick-price-calculator"
                 >
                   <Calculator size={15} />
                   Price a Card
@@ -6538,13 +6631,15 @@ function App() {
             />
 
             {calculatorOpen ? (
-              <QuickPriceModule
-                row={effectiveSelectedRow}
-                onScanPlayer={scanBinsForLookupRow}
-                pickerRows={quickPickerRows}
-                onPickRow={setSelectedRowId}
-                className="lookup-calculator-strip"
-              />
+              <div className="calculator-anchor" id="quick-price-calculator" ref={calculatorRef} tabIndex={-1}>
+                <QuickPriceModule
+                  row={effectiveSelectedRow}
+                  onScanPlayer={scanBinsForLookupRow}
+                  pickerRows={quickPickerRows}
+                  onPickRow={setSelectedRowId}
+                  className="lookup-calculator-strip"
+                />
+              </div>
             ) : null}
 
             <div className="toolbar valuation-toolbar">
@@ -6559,7 +6654,18 @@ function App() {
                   ))}
                 </select>
               </label>
-              <label className="filter-select">
+              <label className="filter-select team-filter">
+                <span>Current team</span>
+                <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value as TeamFilter)}>
+                  <option value="all">All teams</option>
+                  {teamOptions.map((team) => (
+                    <option value={team.code} key={team.code}>
+                      {team.label} ({team.count.toLocaleString()})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="filter-select family-filter">
                 <span>Family</span>
                 <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as CategoryFilter)}>
                   <option value="all">All families</option>
@@ -6570,7 +6676,7 @@ function App() {
                   ))}
                 </select>
               </label>
-              <label className="filter-select">
+              <label className="filter-select base-source-filter">
                 <span>Base</span>
                 <select value={baseSourceFilter} onChange={(event) => setBaseSourceFilter(event.target.value as BaseSourceFilter)}>
                   <option value="all">All sources</option>
@@ -6815,16 +6921,12 @@ function App() {
         </summary>
         <section className="model-support-dock" aria-label="Data access">
           <div className="model-support-grid">
-            <ProspectPulsePanel
-              liveConnected={liveConnected}
-              authMode={pulseAuthMode}
-              authEmail={authEmail}
-              authPassword={authPassword}
-              authBusy={authBusy}
-              onEmailChange={setAuthEmail}
-              onPasswordChange={setAuthPassword}
-              onConnect={connectProspectPulse}
-              onDisconnect={disconnectProspectPulse}
+            <SourceStackPanel
+              snapshot={observability}
+              ebayStatus={ebayStatus}
+              releaseCount={releaseOptions.length}
+              modelCount={checklistModels.length}
+              pricedPlayers={matrix.totalPricedPlayers}
             />
           </div>
         </section>

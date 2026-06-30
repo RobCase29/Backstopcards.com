@@ -4,6 +4,7 @@ import {
   handleCardHedgeNodeRequest,
   handleChecklistNodeRequest,
   handleEbayNodeRequest,
+  handleFanaticsCollectNodeRequest,
   handleLiveMarketNodeRequest,
   handleProspectPulseNodeRequest,
   handleRankingsNodeRequest,
@@ -31,6 +32,23 @@ function ebayProxy(): Plugin {
 
       server.middlewares.use('/api/ebay', async (request, response) => {
         await handleEbayNodeRequest(request, response, env)
+      })
+    },
+  }
+}
+
+function fanaticsCollectProxy(): Plugin {
+  return {
+    name: 'fanatics-collect-local-proxy',
+    configureServer(server) {
+      const env = loadEnv(server.config.mode, process.cwd(), '')
+
+      server.middlewares.use(async (request, response, next) => {
+        if (!request.url?.startsWith('/api/fanatics-collect')) {
+          next()
+          return
+        }
+        await handleFanaticsCollectNodeRequest(request, response, env)
       })
     },
   }
@@ -105,6 +123,7 @@ export default defineConfig({
     react(),
     prospectPulseProxy(),
     ebayProxy(),
+    fanaticsCollectProxy(),
     cardHedgeProxy(),
     salesCacheProxy(),
     checklistProxy(),

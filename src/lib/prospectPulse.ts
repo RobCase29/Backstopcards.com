@@ -817,10 +817,17 @@ export async function fetchChecklistModel(options: {
   signal?: AbortSignal
 } = {}): Promise<ChecklistModel> {
   const category = options.category ?? 'bowman'
+  const requestedReleaseYear = options.year ?? 2026
+  const requestedRelease =
+    options.release ??
+    `${requestedReleaseYear}-${category === 'draft' ? 'Bowman-Draft' : category === 'chrome' ? 'Bowman-Chrome' : 'Bowman'}`
+  const localFirstModel = await fetchLocalChecklistModel(requestedRelease, options.signal).catch(() => null)
+  if (localFirstModel?.players?.length) return localFirstModel
+
   let remoteModel: ChecklistModel | null = null
   let remoteError: unknown = null
-  let release = options.release ?? ''
-  let releaseYear = options.year ?? 2026
+  let release = requestedRelease
+  let releaseYear = requestedReleaseYear
 
   try {
     const needsOverview =
@@ -868,7 +875,7 @@ export async function fetchChecklistModel(options: {
     remoteError = error
   }
 
-  const localModel = await fetchLocalChecklistModel(release || `${releaseYear}-Bowman`, options.signal).catch(() => null)
+  const localModel = localFirstModel ?? (await fetchLocalChecklistModel(release || requestedRelease, options.signal).catch(() => null))
   const merged = mergeChecklistModels(remoteModel, localModel)
   if (merged) return merged
   if (remoteError) throw remoteError
@@ -882,19 +889,23 @@ export async function fetchChecklistCatalog(options: {
 } = {}) {
   const categories = options.categories ?? ['bowman', 'chrome', 'draft']
   const minYear = options.minYear ?? 2018
-  const [remoteOverviews, localCatalog] = await Promise.all([
-    Promise.allSettled(
-      categories.map(async (category) => {
-        const overview = await callProspectPulse<CategoryOverviewResponse>(
-          'api-checklists',
-          { action: 'getCategoryOverview', category },
-          options.signal,
-        )
-        return { category, label: overview.label ?? category, years: overview.years ?? [] }
-      }),
-    ),
-    fetchLocalChecklistCatalog(minYear, options.signal).catch(() => []),
-  ])
+  const localCatalog = await fetchLocalChecklistCatalog(minYear, options.signal).catch(() => [])
+  if (localCatalog.length > 0) {
+    return localCatalog.sort(
+      (left, right) => right.year - left.year || left.category.localeCompare(right.category) || left.release.localeCompare(right.release),
+    )
+  }
+
+  const remoteOverviews = await Promise.allSettled(
+    categories.map(async (category) => {
+      const overview = await callProspectPulse<CategoryOverviewResponse>(
+        'api-checklists',
+        { action: 'getCategoryOverview', category },
+        options.signal,
+      )
+      return { category, label: overview.label ?? category, years: overview.years ?? [] }
+    }),
+  )
 
   const remoteCatalog: ChecklistCatalogRelease[] = remoteOverviews
     .flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))

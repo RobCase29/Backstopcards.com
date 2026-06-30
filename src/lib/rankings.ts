@@ -9,6 +9,11 @@ export type RankingSourceStatus = {
   fileUpdatedAt: string
 }
 
+export type RankingDataSource = RankingSourceStatus & {
+  type?: string
+  csv: string
+}
+
 export type RankingsStatus = {
   available: boolean
   source: string
@@ -23,6 +28,11 @@ export type RankingsStatus = {
   output?: string
   message?: string
   sources?: RankingSourceStatus[]
+  cache?: string
+}
+
+export type RankingsData = Omit<RankingsStatus, 'sources'> & {
+  sources: RankingDataSource[]
 }
 
 async function parseRankingsResponse(response: Response) {
@@ -51,5 +61,14 @@ export async function refreshRankings(signal?: AbortSignal) {
     body: '{}',
     signal,
   })
-  return parseRankingsResponse(response)
+  return parseRankingsResponse(response) as Promise<RankingsData>
+}
+
+export async function fetchRankingsData(signal?: AbortSignal) {
+  const response = await fetch('/api/rankings/data', {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  return parseRankingsResponse(response) as Promise<RankingsData>
 }

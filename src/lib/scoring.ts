@@ -463,6 +463,8 @@ export function normalizeListing(listing: ProspectPulseListing): NormalizedListi
     status,
     isSold: status === 'sold',
     listingUrl: listing.listing_url ?? listing.url,
+    marketplace: listing.marketplace ?? 'unknown',
+    marketplaceLabel: listing.marketplace_label ?? undefined,
     imageUrl: imageUrl(listing),
     sellerName: listing.seller_username ?? null,
     sellerFeedbackScore: positiveNumberValue(listing.seller_feedback_score),

@@ -1,6 +1,6 @@
 /// <reference types="node" />
 
-import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { basename, dirname, resolve } from 'node:path'
@@ -18,6 +18,21 @@ const EBAY_RATE_LIMIT_MESSAGE =
   'eBay is rate-limiting Browse API requests right now. Wait a minute, then retry with a smaller player scope or single-player scan.'
 const EBAY_RATE_LIMIT_DEFAULT_MS = 60_000
 const EBAY_RATE_LIMIT_RETRY_CAP_MS = 4_000
+const EBAY_QUERY_CACHE_VERSION = 1
+const EBAY_QUERY_CACHE_NAMESPACE = 'backstop-ebay-query-v1'
+const FANATICS_COLLECT_GRAPHQL_URL = 'https://app.fanaticscollect.com/graphql'
+const FANATICS_COLLECT_MARKETPLACE_URL = 'https://www.fanaticscollect.com/marketplace?type=FIXED&category=Sports+Cards+%3E+Baseball'
+const FANATICS_COLLECT_ALGOLIA_APP_ID = '3XT9C4X62I'
+const FANATICS_COLLECT_ALGOLIA_INDEX = 'prod_item_state_v1'
+const FANATICS_COLLECT_SEARCH_KEY_TTL_MS = 10 * 60 * 1000
+const RANKINGS_RUNTIME_CACHE_NAMESPACE = 'backstop-rankings-v1'
+const RANKINGS_RUNTIME_CACHE_KEY = 'sts-ranking-csv-bundle'
+const RANKINGS_RUNTIME_CACHE_TTL_SECONDS = 36 * 60 * 60
+const EBAY_BIN_QUERY_CACHE_TTL_SECONDS = 24 * 60 * 60
+const EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS = 10 * 60
+const EBAY_SOLD_QUERY_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+const EBAY_AUCTION_CACHE_BUCKET_MS = 5 * 60 * 1_000
+const EBAY_QUERY_CACHE_MAX_BYTES = 1_800_000
 const MAX_JSON_BODY_BYTES = 1_000_000
 const MAX_EBAY_BODY_BYTES = 256_000
 const MAX_CARD_HEDGE_BODY_BYTES = 128_000
@@ -26,6 +41,7 @@ const MAX_EBAY_QUERIES = 140
 const MAX_EBAY_QUERY_LENGTH = 140
 const PROSPECTPULSE_FUNCTION_ROUTES = new Set(['api-checklists', 'api-listings'])
 const EBAY_ROUTES = new Set(['search', 'sold'])
+const FANATICS_COLLECT_ROUTES = new Set(['status', 'search'])
 const CARD_HEDGE_ROUTES = new Set([
   'status',
   'search',
@@ -43,7 +59,7 @@ const SALES_CACHE_ROUTES = new Set(['status', 'player', 'players', 'flag-sale', 
 const SALES_CACHE_WRITE_ROUTES = new Set(['flag-sale', 'merge-bucket'])
 const CHECKLIST_ROUTES = new Set(['status', 'universe', 'catalog', 'model'])
 const LIVE_MARKET_ROUTES = new Set(['status', 'snapshot', 'latest', 'prune'])
-const RANKINGS_ROUTES = new Set(['status', 'refresh'])
+const RANKINGS_ROUTES = new Set(['status', 'refresh', 'data'])
 const MAX_SALES_CACHE_PLAYER_LENGTH = 100
 const MAX_SALES_CACHE_BUCKETS = 72
 const MAX_SALES_CACHE_SALES = 3_000
@@ -57,10 +73,22 @@ const LIVE_MARKET_AUCTION_TTL_SECONDS = 10 * 60
 const LIVE_MARKET_MAX_TTL_SECONDS = 6 * 60 * 60
 const RANKINGS_REFRESH_TIMEOUT_MS = 90_000
 const RANKINGS_FILES = [
-  { population: 'hitter', file: 'src/data/sts_formulated_consensus_hitters.csv' },
-  { population: 'pitcher', file: 'src/data/sts_formulated_consensus_pitchers.csv' },
-  { population: 'mlb', file: 'src/data/sts_oopsy_peak_mlb.csv' },
+  { population: 'hitter', type: 'hitting', file: 'src/data/sts_formulated_consensus_hitters.csv' },
+  { population: 'pitcher', type: 'pitching', file: 'src/data/sts_formulated_consensus_pitchers.csv' },
+  { population: 'mlb', type: 'oopsy-peak-mlb', file: 'src/data/sts_oopsy_peak_mlb.csv' },
 ]
+const STS_CONSENSUS_API_BASE = 'https://scoutthestatline.com/wp-json/sts/v1/get-consensus'
+const STS_OOPSY_PEAK_API_BASE = 'https://scoutthestatline.com/wp-json/sts/v1/get-leaderboard'
+const STS_SOURCE_COLUMNS = [
+  ['rank_bags', 'BaGS'],
+  ['rank_fscore', 'FScore'],
+  ['rank_pgplus', 'PG+'],
+  ['rank_pl', 'PLFR'],
+  ['rank_sts', 'OOPSY Peak'],
+  ['rank_pars', 'PARS'],
+  ['rank_ptilt', 'P.Tilt'],
+  ['rank_colossus', 'Colossus'],
+] as const
 
 type ServerEnv = Record<string, string | undefined>
 type SqliteValue = string | number | bigint | null
@@ -119,9 +147,41 @@ type EbaySearchPayload = {
   marketplaceId?: string
 }
 
+type EbayQueryCacheValue = {
+  version: number
+  route: 'search' | 'sold'
+  buyingOption: string
+  query: string
+  page: number
+  total: number
+  pagesFetched: number
+  items: Array<Record<string, unknown>>
+  observedAt: string
+  expiresAt: string
+}
+
+type EbayQueryCacheStats = {
+  cacheHits: number
+  cacheMisses: number
+  cacheWrites: number
+  cacheSkips: number
+  runtimeCacheHits: number
+  sqliteCacheHits: number
+  upstreamPagesFetched: number
+}
+
+type EbaySearchJobResult = {
+  items: Array<Record<string, unknown>>
+  pagesFetched: number
+  total: number
+  cache: EbayQueryCacheStats
+}
+
 type LiveMarketListingPayload = {
   itemId?: string
   listingKind?: string
+  marketplace?: string
+  marketplaceLabel?: string
   playerName?: string
   title?: string
   listingUrl?: string
@@ -157,12 +217,19 @@ type LiveMarketSnapshotPayload = {
   ttlSeconds?: number
   request?: unknown
   stats?: unknown
+  marketplaces?: string[]
   listings?: LiveMarketListingPayload[]
 }
 
 type EbayTokenCache = {
   cacheKey: string
   accessToken: string
+  expiresAt: number
+}
+
+type FanaticsCollectSearchKeyCache = {
+  cacheKey: string
+  searchKey: string
   expiresAt: number
 }
 
@@ -175,6 +242,7 @@ type PulseTokenCache = {
 
 let ebayTokenCache: EbayTokenCache | null = null
 let pulseTokenCache: PulseTokenCache | null = null
+let fanaticsCollectSearchKeyCache: FanaticsCollectSearchKeyCache | null = null
 let ebayRateLimitedUntil = 0
 
 function jsonResponse(statusCode: number, payload: unknown) {
@@ -275,6 +343,39 @@ async function openWritableMarketDb(env: ServerEnv) {
   return { db: new sqlite.DatabaseSync(dbPath), dbPath }
 }
 
+async function openOptionalWritableMarketDb(env: ServerEnv) {
+  try {
+    return await openWritableMarketDb(env)
+  } catch {
+    return { db: null, dbPath: salesCacheDbPath(env) }
+  }
+}
+
+function ensureEbayQueryCacheSchema(db: SqliteDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ebay_query_cache (
+      cache_key TEXT PRIMARY KEY,
+      route TEXT NOT NULL,
+      buying_option TEXT NOT NULL,
+      query TEXT NOT NULL,
+      request_fingerprint TEXT NOT NULL,
+      page INTEGER NOT NULL,
+      observed_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      total INTEGER NOT NULL,
+      pages_fetched INTEGER NOT NULL,
+      response_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ebay_query_cache_fresh
+      ON ebay_query_cache(route, buying_option, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_ebay_query_cache_query
+      ON ebay_query_cache(query, expires_at);
+  `)
+}
+
 function ensureLiveMarketSchema(db: SqliteDatabase) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS live_market_snapshots (
@@ -297,6 +398,8 @@ function ensureLiveMarketSchema(db: SqliteDatabase) {
       snapshot_id TEXT NOT NULL,
       item_id TEXT NOT NULL,
       listing_kind TEXT NOT NULL,
+      marketplace TEXT NOT NULL DEFAULT 'ebay',
+      marketplace_label TEXT NOT NULL DEFAULT 'eBay',
       player_name TEXT,
       title TEXT,
       listing_url TEXT,
@@ -333,6 +436,8 @@ function ensureLiveMarketSchema(db: SqliteDatabase) {
     CREATE INDEX IF NOT EXISTS idx_live_market_listings_player
       ON live_market_listings(player_name, variation_label, expires_at);
   `)
+  ensureSqliteColumn(db, 'live_market_listings', 'marketplace', "TEXT NOT NULL DEFAULT 'ebay'")
+  ensureSqliteColumn(db, 'live_market_listings', 'marketplace_label', "TEXT NOT NULL DEFAULT 'eBay'")
 }
 
 function ensureCardHedgeUsageSchema(db: SqliteDatabase) {
@@ -541,13 +646,266 @@ function rankingFreshWithin24Hours(value: string) {
   return time !== null && Date.now() - time <= 24 * 3_600_000
 }
 
-function localRankingStatus() {
+type RankingFileSpec = (typeof RANKINGS_FILES)[number]
+type RankingCsvSource = RankingFileSpec & {
+  available: boolean
+  csv: string
+  fileUpdatedAt: string
+}
+type RankingRuntimeCacheValue = {
+  version: 1
+  refreshedAt: string
+  expiresAt: string
+  sources: RankingCsvSource[]
+}
+
+function csvCell(value: unknown) {
+  if (value === null || value === undefined) return ''
+  const text = String(value)
+  if (!/[",\n\r]/.test(text)) return text
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+function apiString(value: unknown) {
+  return value === null || value === undefined ? '' : String(value)
+}
+
+function apiNumber(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const parsed = Number(String(value ?? '').replace(/[$,%\s,]/g, ''))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function stsSourceAverage(player: Record<string, unknown>) {
+  const values = STS_SOURCE_COLUMNS.map(([key]) => apiNumber(player[key])).filter((value): value is number => value !== null)
+  if (!values.length) return Number.POSITIVE_INFINITY
+  return values.reduce((total, value) => total + value, 0) / values.length
+}
+
+function sortStsConsensusPlayers(left: Record<string, unknown>, right: Record<string, unknown>) {
+  const leftAvg = apiNumber(left.avg_rank) ?? stsSourceAverage(left)
+  const rightAvg = apiNumber(right.avg_rank) ?? stsSourceAverage(right)
+  return leftAvg - rightAvg || apiString(left.name).localeCompare(apiString(right.name))
+}
+
+async function fetchJsonWithTimeout(url: URL, description: string) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), RANKINGS_REFRESH_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: 'application/json',
+        'user-agent': 'Backstop Card Finder rankings refresh',
+      },
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`${description} request failed: ${response.status} ${response.statusText}`)
+    return (await response.json()) as unknown
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw new Error(`${description} request timed out`, { cause: error })
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function consensusCsv(population: string, updated: string, players: Array<Record<string, unknown>>) {
+  const headers = [
+    'Population',
+    '#',
+    'FgId',
+    'Name',
+    'Age',
+    'Level',
+    'Team',
+    'Pos',
+    'Avg Rank',
+    'Coverage',
+    'In Sts',
+    ...STS_SOURCE_COLUMNS.map(([, label]) => label),
+    'Updated',
+  ]
+  const rows = players.map((player, index) => [
+    population,
+    index + 1,
+    player.fg_id ?? '',
+    player.name ?? '',
+    player.age ?? '',
+    player.level ?? '',
+    player.team ?? '',
+    player.position ?? '',
+    player.avg_rank ?? '',
+    player.coverage ?? '',
+    player.in_sts ?? '',
+    ...STS_SOURCE_COLUMNS.map(([key]) => player[key] ?? ''),
+    updated,
+  ])
+  return `${headers.map(csvCell).join(',')}\n${rows.map((row) => row.map(csvCell).join(',')).join('\n')}\n`
+}
+
+function oopsyPeakMlbCsv(updated: string, players: Array<Record<string, unknown>>) {
+  const headers = [
+    'Source',
+    '#',
+    'PlayerId',
+    'Name',
+    'Age',
+    'Level',
+    'Team',
+    'Pos',
+    'Rank',
+    'Prospect Rank',
+    '1 Day Change',
+    '3 Day Change',
+    '7 Day Change',
+    '14 Day Change',
+    '30 Day Change',
+    'WAR',
+    'Summary',
+    'Updated',
+  ]
+  const rows = players.map((player, index) => [
+    'OOPSY Peak MLB',
+    index + 1,
+    player.player_id ?? player.id ?? '',
+    player.player ?? player.name ?? '',
+    player.age ?? '',
+    player.highest_level ?? '',
+    player.team_update ?? '',
+    player.sp_rp ?? '',
+    player.rank ?? '',
+    player.prospect_rank ?? '',
+    player.c_1_day_change ?? '',
+    player.c_3_day_change ?? '',
+    player.c_7_day_change ?? '',
+    player.c_14_day_change ?? '',
+    player.c_30_day_change ?? '',
+    player.war ?? '',
+    player.summary ?? '',
+    updated,
+  ])
+  return `${headers.map(csvCell).join(',')}\n${rows.map((row) => row.map(csvCell).join(',')).join('\n')}\n`
+}
+
+async function fetchStsRankingSource(spec: RankingFileSpec): Promise<RankingCsvSource> {
+  const refreshedAt = new Date().toISOString()
+  if (spec.type === 'oopsy-peak-mlb') {
+    const url = new URL(STS_OOPSY_PEAK_API_BASE)
+    url.searchParams.set('type', 'combined')
+    const payload = await fetchJsonWithTimeout(url, 'OOPSY Peak MLB')
+    const payloadRecord = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
+    const players = (Array.isArray(payload) ? payload : Array.isArray(payloadRecord.players) ? payloadRecord.players : [])
+      .filter((player): player is Record<string, unknown> => Boolean(player && typeof player === 'object'))
+      .filter((player) => apiString(player.highest_level ?? player.level).toUpperCase() === 'MLB')
+      .sort((left, right) => (apiNumber(left.rank) ?? Number.POSITIVE_INFINITY) - (apiNumber(right.rank) ?? Number.POSITIVE_INFINITY))
+    if (!players.length) throw new Error('OOPSY Peak MLB request returned no MLB players')
+    return { ...spec, available: true, csv: oopsyPeakMlbCsv(refreshedAt, players), fileUpdatedAt: refreshedAt }
+  }
+
+  const url = new URL(STS_CONSENSUS_API_BASE)
+  url.searchParams.set('type', spec.type)
+  url.searchParams.set('show_low', '1')
+  const payload = await fetchJsonWithTimeout(url, `Consensus ${spec.type}`)
+  const payloadRecord = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
+  const players = (Array.isArray(payloadRecord.players) ? payloadRecord.players : Array.isArray(payload) ? payload : [])
+    .filter((player): player is Record<string, unknown> => Boolean(player && typeof player === 'object'))
+    .sort(sortStsConsensusPlayers)
+  if (!players.length) throw new Error(`Consensus ${spec.type} request returned no players`)
+  const updated = apiString(payloadRecord.updated) || refreshedAt
+  return { ...spec, available: true, csv: consensusCsv(spec.population, updated, players), fileUpdatedAt: refreshedAt }
+}
+
+async function refreshStsRankingSources() {
+  return Promise.all(RANKINGS_FILES.map(fetchStsRankingSource))
+}
+
+async function readRuntimeRankingSources() {
+  const cache = await getVercelRuntimeCache(RANKINGS_RUNTIME_CACHE_NAMESPACE)
+  if (!cache) return null
+  try {
+    const value = await cache.get<RankingRuntimeCacheValue>(RANKINGS_RUNTIME_CACHE_KEY)
+    if (
+      value?.version === 1 &&
+      Array.isArray(value.sources) &&
+      value.sources.every((source) => typeof source.csv === 'string' && source.csv.trim()) &&
+      Date.parse(value.expiresAt) > Date.now()
+    ) {
+      return value.sources
+    }
+  } catch {
+    // Runtime Cache is an optimization; bundled data or live STS fetch can still answer.
+  }
+  return null
+}
+
+async function writeRuntimeRankingSources(sources: RankingCsvSource[]) {
+  const cache = await getVercelRuntimeCache(RANKINGS_RUNTIME_CACHE_NAMESPACE)
+  if (!cache) return false
+  const refreshedAt = new Date().toISOString()
+  const value: RankingRuntimeCacheValue = {
+    version: 1,
+    refreshedAt,
+    expiresAt: new Date(Date.now() + RANKINGS_RUNTIME_CACHE_TTL_SECONDS * 1000).toISOString(),
+    sources,
+  }
+  try {
+    await cache.set(RANKINGS_RUNTIME_CACHE_KEY, value, {
+      ttl: RANKINGS_RUNTIME_CACHE_TTL_SECONDS,
+      tags: ['rankings', 'sts'],
+      name: 'Scout the Statline rankings',
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function readBundledRankingSources(): RankingCsvSource[] {
   const root = process.cwd()
-  const sources = RANKINGS_FILES.map((source) => {
+  return RANKINGS_FILES.map((source) => {
     const target = resolve(root, source.file)
     if (!existsSync(target)) {
       return {
         ...source,
+        available: false,
+        csv: '',
+        fileUpdatedAt: '',
+      }
+    }
+
+    const stats = statSync(target)
+    return {
+      ...source,
+      available: true,
+      csv: readFileSync(target, 'utf8'),
+      fileUpdatedAt: stats.mtime.toISOString(),
+    }
+  })
+}
+
+async function currentRankingSources(options: { allowLiveRefresh: boolean }) {
+  const cached = await readRuntimeRankingSources()
+  if (cached?.length) return { sources: cached, cache: 'runtime' as const }
+
+  if (options.allowLiveRefresh) {
+    try {
+      const fresh = await refreshStsRankingSources()
+      const cachedFresh = await writeRuntimeRankingSources(fresh)
+      return { sources: fresh, cache: cachedFresh ? ('runtime-write' as const) : ('live' as const) }
+    } catch {
+      // Fall through to bundled CSVs so the app remains usable if STS is unavailable.
+    }
+  }
+
+  return { sources: readBundledRankingSources(), cache: 'bundled' as const }
+}
+
+function rankingStatusFromSources(sources: RankingCsvSource[]) {
+  const summarizedSources = sources.map((source) => {
+    if (!source.available || !source.csv.trim()) {
+      return {
+        population: source.population,
+        file: source.file,
         available: false,
         rows: 0,
         matchedRows: 0,
@@ -557,7 +915,7 @@ function localRankingStatus() {
       }
     }
 
-    const csvRows = parseCsvRows(readFileSync(target, 'utf8'))
+    const csvRows = parseCsvRows(source.csv)
     const headers = csvRows[0] ?? []
     const headerIndex = new Map(headers.map((header, index) => [header.trim(), index]))
     const updatedIndex = headerIndex.get('Updated') ?? -1
@@ -575,35 +933,35 @@ function localRankingStatus() {
       const avgRank = parseRankingNumber(row[avgRankIndex])
       return coverage !== null && coverage > 0 && (coverage < 3 || avgRank === null)
     }).length
-    const stats = statSync(target)
 
     return {
-      ...source,
+      population: source.population,
+      file: source.file,
       available: true,
       rows: bodyRows.length,
       matchedRows: bodyRows.filter((row) => parseRankingNumber(row[rankIndex]) !== null).length,
       lowCoverageRows,
       latestUpdated: latestUpdatedTime ? new Date(latestUpdatedTime).toISOString() : '',
-      fileUpdatedAt: stats.mtime.toISOString(),
+      fileUpdatedAt: source.fileUpdatedAt,
     }
   })
 
-  const latestUpdatedTime = Math.max(0, ...sources.map((source) => parseRankingTimestamp(source.latestUpdated) ?? 0))
-  const fileUpdatedTime = Math.max(0, ...sources.map((source) => parseRankingTimestamp(source.fileUpdatedAt) ?? 0))
-  const rows = sources.reduce((total, source) => total + source.rows, 0)
-  const missing = sources.filter((source) => !source.available)
+  const latestUpdatedTime = Math.max(0, ...summarizedSources.map((source) => parseRankingTimestamp(source.latestUpdated) ?? 0))
+  const fileUpdatedTime = Math.max(0, ...summarizedSources.map((source) => parseRankingTimestamp(source.fileUpdatedAt) ?? 0))
+  const rows = summarizedSources.reduce((total, source) => total + source.rows, 0)
+  const missing = summarizedSources.filter((source) => !source.available)
 
   return {
     available: missing.length === 0 && rows > 0,
     source: 'Scout the Statline formulated consensus + OOPSY Peak MLB',
     rows,
-    matchedRows: sources.reduce((total, source) => total + source.matchedRows, 0),
-    lowCoverageRows: sources.reduce((total, source) => total + source.lowCoverageRows, 0),
+    matchedRows: summarizedSources.reduce((total, source) => total + source.matchedRows, 0),
+    lowCoverageRows: summarizedSources.reduce((total, source) => total + source.lowCoverageRows, 0),
     latestUpdated: latestUpdatedTime ? new Date(latestUpdatedTime).toISOString() : '',
     fileUpdatedAt: fileUpdatedTime ? new Date(fileUpdatedTime).toISOString() : '',
     freshWithin24h: latestUpdatedTime ? rankingFreshWithin24Hours(new Date(latestUpdatedTime).toISOString()) : false,
-    refreshable: existsSync(resolve(root, 'scripts/refresh-sts-consensus.mjs')),
-    sources,
+    refreshable: true,
+    sources: summarizedSources,
     message: missing.length ? `${missing.length} rankings file${missing.length === 1 ? '' : 's'} missing` : '',
   }
 }
@@ -643,6 +1001,244 @@ function parseJsonText(value: string, fallback: unknown) {
   } catch {
     return fallback
   }
+}
+
+type VercelRuntimeCache = {
+  get: <T>(key: string) => Promise<T | undefined>
+  set: <T>(key: string, value: T, options: { ttl: number; tags?: string[]; name?: string }) => Promise<void>
+}
+
+type EbayQueryCacheContext = {
+  db: SqliteDatabase | null
+  env: ServerEnv
+}
+
+const runtimeCachePromises = new Map<string, Promise<VercelRuntimeCache | null>>()
+
+async function getVercelRuntimeCache(namespace = EBAY_QUERY_CACHE_NAMESPACE) {
+  if (!process.env.VERCEL && !process.env.VERCEL_ENV) return null
+  const existing = runtimeCachePromises.get(namespace)
+  if (existing) return existing
+  const nextPromise = (async () => {
+    try {
+      const specifier = '@vercel/functions'
+      const module = (await import(specifier)) as {
+        getCache?: (options?: { namespace?: string; namespaceSeparator?: string }) => VercelRuntimeCache
+      }
+      return module.getCache?.({ namespace, namespaceSeparator: ':' }) ?? null
+    } catch {
+      return null
+    }
+  })()
+  runtimeCachePromises.set(namespace, nextPromise)
+  return nextPromise
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+    return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJson(entryValue)}`).join(',')}}`
+  }
+  return JSON.stringify(value ?? null)
+}
+
+function sha256(value: string) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function emptyEbayQueryCacheStats(): EbayQueryCacheStats {
+  return {
+    cacheHits: 0,
+    cacheMisses: 0,
+    cacheWrites: 0,
+    cacheSkips: 0,
+    runtimeCacheHits: 0,
+    sqliteCacheHits: 0,
+    upstreamPagesFetched: 0,
+  }
+}
+
+function ebayQueryCacheConfig(env: ServerEnv, route: 'search' | 'sold', payload: EbaySearchPayload) {
+  const buyingOption = route === 'sold' ? 'SOLD' : safeBuyingOption(payload.buyingOption)
+  const ttlDefault =
+    route === 'sold'
+      ? EBAY_SOLD_QUERY_CACHE_TTL_SECONDS
+      : buyingOption === 'AUCTION'
+        ? EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS
+        : EBAY_BIN_QUERY_CACHE_TTL_SECONDS
+  const ttlEnvKey =
+    route === 'sold'
+      ? 'EBAY_SOLD_QUERY_CACHE_TTL_SECONDS'
+      : buyingOption === 'AUCTION'
+        ? 'EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS'
+        : 'EBAY_BIN_QUERY_CACHE_TTL_SECONDS'
+  const ttlSeconds = clampInt(env[ttlEnvKey], ttlDefault, 0, route === 'sold' ? 30 * 24 * 60 * 60 : 24 * 60 * 60)
+  const enabled = ttlSeconds > 0 && !/^(0|false|off|no)$/i.test(String(env.EBAY_QUERY_CACHE_ENABLED ?? 'true'))
+  return { enabled, buyingOption, ttlSeconds }
+}
+
+function ebayCacheAnchorDate(payload: EbaySearchPayload) {
+  if (safeBuyingOption(payload.buyingOption) !== 'AUCTION') return new Date()
+  return new Date(Math.floor(Date.now() / EBAY_AUCTION_CACHE_BUCKET_MS) * EBAY_AUCTION_CACHE_BUCKET_MS)
+}
+
+function ebayQueryFingerprint(options: {
+  route: 'search' | 'sold'
+  sandbox: boolean
+  marketplaceId: string
+  defaultZipCode?: string
+  url: URL
+}) {
+  return stableJson({
+    version: EBAY_QUERY_CACHE_VERSION,
+    route: options.route,
+    sandbox: options.sandbox,
+    marketplaceId: options.marketplaceId,
+    zipCode: options.defaultZipCode || '',
+    url: `${options.url.origin}${options.url.pathname}?${options.url.searchParams.toString()}`,
+  })
+}
+
+function sqliteEbayQueryCacheRead(db: SqliteDatabase, cacheKey: string, nowIso: string) {
+  const row = db
+    .prepare(
+      `
+        SELECT response_json AS responseJson
+        FROM ebay_query_cache
+        WHERE cache_key = ? AND expires_at > ?
+        LIMIT 1
+      `,
+    )
+    .get(cacheKey, nowIso)
+  if (!row) return null
+  const value = parseJsonText(rowString(row, 'responseJson'), null) as EbayQueryCacheValue | null
+  return validEbayQueryCacheValue(value, nowIso) ? value : null
+}
+
+function sqliteEbayQueryCacheWrite(db: SqliteDatabase, cacheKey: string, fingerprint: string, value: EbayQueryCacheValue, nowIso: string) {
+  db.prepare(
+    `
+      INSERT INTO ebay_query_cache (
+        cache_key, route, buying_option, query, request_fingerprint, page,
+        observed_at, expires_at, total, pages_fetched, response_json, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cache_key) DO UPDATE SET
+        route = excluded.route,
+        buying_option = excluded.buying_option,
+        query = excluded.query,
+        request_fingerprint = excluded.request_fingerprint,
+        page = excluded.page,
+        observed_at = excluded.observed_at,
+        expires_at = excluded.expires_at,
+        total = excluded.total,
+        pages_fetched = excluded.pages_fetched,
+        response_json = excluded.response_json,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    cacheKey,
+    value.route,
+    value.buyingOption,
+    value.query,
+    fingerprint,
+    value.page,
+    value.observedAt,
+    value.expiresAt,
+    value.total,
+    value.pagesFetched,
+    jsonText(value),
+    nowIso,
+    nowIso,
+  )
+}
+
+function validEbayQueryCacheValue(value: EbayQueryCacheValue | null, nowIso: string) {
+  return Boolean(
+    value &&
+      value.version === EBAY_QUERY_CACHE_VERSION &&
+      Array.isArray(value.items) &&
+      Date.parse(value.expiresAt) > Date.parse(nowIso),
+  )
+}
+
+async function readEbayQueryCache(options: {
+  cache: EbayQueryCacheContext | null
+  cacheKey: string
+  nowIso: string
+}) {
+  const runtimeCache = await getVercelRuntimeCache()
+  if (runtimeCache) {
+    try {
+      const runtimeValue = await runtimeCache.get<EbayQueryCacheValue>(options.cacheKey)
+      if (validEbayQueryCacheValue(runtimeValue ?? null, options.nowIso)) {
+        return { value: runtimeValue as EbayQueryCacheValue, source: 'runtime' as const }
+      }
+    } catch {
+      // Runtime Cache is opportunistic; fall through to SQLite or upstream.
+    }
+  }
+
+  if (options.cache?.db) {
+    try {
+      const sqliteValue = sqliteEbayQueryCacheRead(options.cache.db, options.cacheKey, options.nowIso)
+      if (sqliteValue) return { value: sqliteValue, source: 'sqlite' as const }
+    } catch {
+      // Local SQLite is a dev/fallback cache; upstream can still answer.
+    }
+  }
+
+  return { value: null, source: null }
+}
+
+async function writeEbayQueryCache(options: {
+  cache: EbayQueryCacheContext | null
+  cacheKey: string
+  fingerprint: string
+  value: EbayQueryCacheValue
+  ttlSeconds: number
+  nowIso: string
+}) {
+  const serialized = jsonText(options.value)
+  if (new TextEncoder().encode(serialized).byteLength > EBAY_QUERY_CACHE_MAX_BYTES) {
+    return { written: false, skipped: true }
+  }
+
+  let written = false
+  const runtimeCache = await getVercelRuntimeCache()
+  if (runtimeCache) {
+    try {
+      await runtimeCache.set(options.cacheKey, options.value, {
+        ttl: options.ttlSeconds,
+        tags: ['ebay-query-cache', `ebay:${options.value.buyingOption.toLowerCase()}`],
+        name: 'eBay query page',
+      })
+      written = true
+    } catch {
+      // Keep going; SQLite may still save the page locally.
+    }
+  }
+
+  if (options.cache?.db) {
+    try {
+      sqliteEbayQueryCacheWrite(options.cache.db, options.cacheKey, options.fingerprint, options.value, options.nowIso)
+      written = true
+    } catch {
+      // Cache write failures should never block a live scan.
+    }
+  }
+
+  return { written, skipped: !written }
+}
+
+function decorateEbayItems(items: Array<Record<string, unknown>>, job: EbaySearchJob) {
+  return items.map((item) => ({
+    ...item,
+    _bowmanTraderQuery: job,
+  }))
 }
 
 function safeIsoDate(value: unknown, fallback = new Date()) {
@@ -713,6 +1309,8 @@ function mapLiveMarketListing(row: SqliteRow) {
     snapshotId: rowString(row, 'snapshotId'),
     itemId: rowString(row, 'itemId'),
     listingKind: rowString(row, 'listingKind'),
+    marketplace: rowString(row, 'marketplace') || 'unknown',
+    marketplaceLabel: rowString(row, 'marketplaceLabel') || rowString(row, 'marketplace') || 'Unknown',
     playerName: rowString(row, 'playerName'),
     title: rowString(row, 'title'),
     listingUrl: rowString(row, 'listingUrl'),
@@ -1207,7 +1805,7 @@ function ebayDate(value: Date) {
   return value.toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
-function ebayFilter(payload: EbaySearchPayload) {
+function ebayFilter(payload: EbaySearchPayload, anchorDate = new Date()) {
   const buyingOption = safeBuyingOption(payload.buyingOption)
   const filters = [`buyingOptions:{${buyingOption}}`]
   const minPrice = Number(payload.minPrice)
@@ -1216,7 +1814,7 @@ function ebayFilter(payload: EbaySearchPayload) {
   }
   const maxHoursToClose = Number(payload.maxHoursToClose)
   if (buyingOption === 'AUCTION' && Number.isFinite(maxHoursToClose) && maxHoursToClose > 0) {
-    const start = new Date()
+    const start = anchorDate
     const end = new Date(start.getTime() + Math.min(maxHoursToClose, 168) * 60 * 60 * 1_000)
     filters.push(`itemEndDate:[${ebayDate(start)}..${ebayDate(end)}]`)
   }
@@ -1247,32 +1845,62 @@ async function searchEbayJob(options: {
   defaultCategoryId?: string
   defaultMarketplaceId: string
   defaultZipCode?: string
-}) {
-  const { accessToken, sandbox, job, payload, defaultCategoryId, defaultMarketplaceId, defaultZipCode } = options
+  cache?: EbayQueryCacheContext | null
+}): Promise<EbaySearchJobResult> {
+  const { accessToken, sandbox, job, payload, defaultCategoryId, defaultMarketplaceId, defaultZipCode, cache } = options
   const query = String(job.q ?? '').trim()
-  if (!query) return { items: [] as Array<Record<string, unknown>>, pagesFetched: 0, total: 0 }
+  if (!query) return { items: [] as Array<Record<string, unknown>>, pagesFetched: 0, total: 0, cache: emptyEbayQueryCacheStats() }
 
   const limit = clampInt(payload.limit, 100, 1, 200)
   const maxPages = clampInt(payload.maxPages, 1, 1, 3)
   const marketplaceId = String(defaultMarketplaceId || 'EBAY_US')
   const categoryId = String(defaultCategoryId || '').trim()
   const allItems: Array<Record<string, unknown>> = []
+  const cacheConfig = ebayQueryCacheConfig(cache?.env ?? {}, 'search', payload)
+  const cacheStats = emptyEbayQueryCacheStats()
+  const filterAnchor = ebayCacheAnchorDate(payload)
   let total = 0
   let pagesFetched = 0
 
   for (let page = 0; page < maxPages; page += 1) {
-    if (ebayRateLimitedUntil > Date.now()) {
-      throw new EbayUpstreamError(EBAY_RATE_LIMIT_MESSAGE, 429, ebayRateLimitedUntil - Date.now())
-    }
-
     const offset = page * limit
     const url = new URL(`${ebayHost(sandbox)}/buy/browse/v1/item_summary/search`)
     url.searchParams.set('q', query)
     url.searchParams.set('limit', String(limit))
     url.searchParams.set('offset', String(offset))
-    url.searchParams.set('filter', ebayFilter(payload))
+    url.searchParams.set('filter', ebayFilter(payload, filterAnchor))
     if (payload.sort) url.searchParams.set('sort', String(payload.sort))
     if (categoryId) url.searchParams.set('category_ids', categoryId)
+
+    const fingerprint = ebayQueryFingerprint({
+      route: 'search',
+      sandbox,
+      marketplaceId,
+      defaultZipCode,
+      url,
+    })
+    const cacheKey = `ebay-query:${sha256(fingerprint)}`
+    const nowIso = new Date().toISOString()
+
+    if (cacheConfig.enabled) {
+      const cached = await readEbayQueryCache({ cache: cache ?? null, cacheKey, nowIso })
+      if (cached.value) {
+        cacheStats.cacheHits += 1
+        if (cached.source === 'runtime') cacheStats.runtimeCacheHits += 1
+        if (cached.source === 'sqlite') cacheStats.sqliteCacheHits += 1
+        const items = cached.value.items ?? []
+        total = Number(cached.value.total ?? total) || total
+        pagesFetched += 1
+        allItems.push(...decorateEbayItems(items, job))
+        if (items.length < limit || offset + limit >= Math.min(total || 0, 10_000)) break
+        continue
+      }
+      cacheStats.cacheMisses += 1
+    }
+
+    if (ebayRateLimitedUntil > Date.now()) {
+      throw new EbayUpstreamError(EBAY_RATE_LIMIT_MESSAGE, 429, ebayRateLimitedUntil - Date.now())
+    }
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -1306,17 +1934,40 @@ async function searchEbayJob(options: {
     const items = data.itemSummaries ?? []
     total = Number(data.total ?? total) || total
     pagesFetched += 1
-    allItems.push(
-      ...items.map((item) => ({
-        ...item,
-        _bowmanTraderQuery: job,
-      })),
-    )
+    cacheStats.upstreamPagesFetched += 1
+
+    if (cacheConfig.enabled) {
+      const observedAt = new Date().toISOString()
+      const expiresAt = new Date(Date.parse(observedAt) + cacheConfig.ttlSeconds * 1_000).toISOString()
+      const write = await writeEbayQueryCache({
+        cache: cache ?? null,
+        cacheKey,
+        fingerprint,
+        ttlSeconds: cacheConfig.ttlSeconds,
+        nowIso: observedAt,
+        value: {
+          version: EBAY_QUERY_CACHE_VERSION,
+          route: 'search',
+          buyingOption: cacheConfig.buyingOption,
+          query,
+          page,
+          total,
+          pagesFetched: 1,
+          items,
+          observedAt,
+          expiresAt,
+        },
+      })
+      if (write.written) cacheStats.cacheWrites += 1
+      if (write.skipped) cacheStats.cacheSkips += 1
+    }
+
+    allItems.push(...decorateEbayItems(items, job))
 
     if (items.length < limit || offset + limit >= Math.min(total || 0, 10_000)) break
   }
 
-  return { items: allItems, pagesFetched, total }
+  return { items: allItems, pagesFetched, total, cache: cacheStats }
 }
 
 async function searchEbaySoldJob(options: {
@@ -1326,24 +1977,23 @@ async function searchEbaySoldJob(options: {
   payload: EbaySearchPayload
   defaultCategoryId?: string
   defaultMarketplaceId: string
-}) {
-  const { accessToken, sandbox, job, payload, defaultCategoryId, defaultMarketplaceId } = options
+  cache?: EbayQueryCacheContext | null
+}): Promise<EbaySearchJobResult> {
+  const { accessToken, sandbox, job, payload, defaultCategoryId, defaultMarketplaceId, cache } = options
   const query = String(job.q ?? '').trim()
-  if (!query) return { items: [] as Array<Record<string, unknown>>, pagesFetched: 0, total: 0 }
+  if (!query) return { items: [] as Array<Record<string, unknown>>, pagesFetched: 0, total: 0, cache: emptyEbayQueryCacheStats() }
 
   const limit = clampInt(payload.limit, 100, 1, 200)
   const maxPages = clampInt(payload.maxPages, 1, 1, 3)
   const marketplaceId = String(defaultMarketplaceId || 'EBAY_US')
   const categoryId = String(defaultCategoryId || '').trim()
   const allItems: Array<Record<string, unknown>> = []
+  const cacheConfig = ebayQueryCacheConfig(cache?.env ?? {}, 'sold', payload)
+  const cacheStats = emptyEbayQueryCacheStats()
   let total = 0
   let pagesFetched = 0
 
   for (let page = 0; page < maxPages; page += 1) {
-    if (ebayRateLimitedUntil > Date.now()) {
-      throw new EbayUpstreamError(EBAY_RATE_LIMIT_MESSAGE, 429, ebayRateLimitedUntil - Date.now())
-    }
-
     const offset = page * limit
     const url = new URL(`${ebayHost(sandbox)}/buy/marketplace_insights/v1_beta/item_sales/search`)
     url.searchParams.set('q', query)
@@ -1351,6 +2001,35 @@ async function searchEbaySoldJob(options: {
     url.searchParams.set('offset', String(offset))
     if (payload.sort) url.searchParams.set('sort', String(payload.sort))
     if (categoryId) url.searchParams.set('category_ids', categoryId)
+
+    const fingerprint = ebayQueryFingerprint({
+      route: 'sold',
+      sandbox,
+      marketplaceId,
+      url,
+    })
+    const cacheKey = `ebay-query:${sha256(fingerprint)}`
+    const nowIso = new Date().toISOString()
+
+    if (cacheConfig.enabled) {
+      const cached = await readEbayQueryCache({ cache: cache ?? null, cacheKey, nowIso })
+      if (cached.value) {
+        cacheStats.cacheHits += 1
+        if (cached.source === 'runtime') cacheStats.runtimeCacheHits += 1
+        if (cached.source === 'sqlite') cacheStats.sqliteCacheHits += 1
+        const items = cached.value.items ?? []
+        total = Number(cached.value.total ?? total) || total
+        pagesFetched += 1
+        allItems.push(...decorateEbayItems(items, job))
+        if (items.length < limit || offset + limit >= Math.min(total || 0, 10_000)) break
+        continue
+      }
+      cacheStats.cacheMisses += 1
+    }
+
+    if (ebayRateLimitedUntil > Date.now()) {
+      throw new EbayUpstreamError(EBAY_RATE_LIMIT_MESSAGE, 429, ebayRateLimitedUntil - Date.now())
+    }
 
     const headers = {
       Accept: 'application/json',
@@ -1385,17 +2064,40 @@ async function searchEbaySoldJob(options: {
     const items = data.itemSales ?? data.itemSummaries ?? data.items ?? []
     total = Number(data.total ?? total) || total
     pagesFetched += 1
-    allItems.push(
-      ...items.map((item) => ({
-        ...item,
-        _bowmanTraderQuery: job,
-      })),
-    )
+    cacheStats.upstreamPagesFetched += 1
+
+    if (cacheConfig.enabled) {
+      const observedAt = new Date().toISOString()
+      const expiresAt = new Date(Date.parse(observedAt) + cacheConfig.ttlSeconds * 1_000).toISOString()
+      const write = await writeEbayQueryCache({
+        cache: cache ?? null,
+        cacheKey,
+        fingerprint,
+        ttlSeconds: cacheConfig.ttlSeconds,
+        nowIso: observedAt,
+        value: {
+          version: EBAY_QUERY_CACHE_VERSION,
+          route: 'sold',
+          buyingOption: cacheConfig.buyingOption,
+          query,
+          page,
+          total,
+          pagesFetched: 1,
+          items,
+          observedAt,
+          expiresAt,
+        },
+      })
+      if (write.written) cacheStats.cacheWrites += 1
+      if (write.skipped) cacheStats.cacheSkips += 1
+    }
+
+    allItems.push(...decorateEbayItems(items, job))
 
     if (items.length < limit || offset + limit >= Math.min(total || 0, 10_000)) break
   }
 
-  return { items: allItems, pagesFetched, total }
+  return { items: allItems, pagesFetched, total, cache: cacheStats }
 }
 
 function canUsePublicChecklist(body: string) {
@@ -1537,11 +2239,20 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
   const configured = Boolean(env.EBAY_CLIENT_ID && env.EBAY_CLIENT_SECRET)
 
   if (request.method === 'GET' && route === 'status') {
+    const runtimeCache = await getVercelRuntimeCache()
     return jsonResponse(200, {
       configured,
       environment: sandbox ? 'sandbox' : 'production',
       marketplaceId: env.EBAY_MARKETPLACE_ID || 'EBAY_US',
       hasCategoryId: Boolean(env.EBAY_CATEGORY_ID),
+      cache: {
+        enabled: !/^(0|false|off|no)$/i.test(String(env.EBAY_QUERY_CACHE_ENABLED ?? 'true')),
+        fixedPriceTtlSeconds: clampInt(env.EBAY_BIN_QUERY_CACHE_TTL_SECONDS, EBAY_BIN_QUERY_CACHE_TTL_SECONDS, 0, 24 * 60 * 60),
+        auctionTtlSeconds: clampInt(env.EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS, EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS, 0, 24 * 60 * 60),
+        soldTtlSeconds: clampInt(env.EBAY_SOLD_QUERY_CACHE_TTL_SECONDS, EBAY_SOLD_QUERY_CACHE_TTL_SECONDS, 0, 30 * 24 * 60 * 60),
+        runtimeCache: Boolean(runtimeCache),
+        localCache: true,
+      },
       message: configured ? 'eBay Browse API configured' : 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in Vercel environment variables',
     })
   }
@@ -1553,11 +2264,17 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
 
   if (!configured) return jsonResponse(401, { error: 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in Vercel environment variables' })
 
+  let cacheDb: SqliteDatabase | null = null
   try {
     const payload = await readJsonBody<EbaySearchPayload>(request, MAX_EBAY_BODY_BYTES)
     const queries = safeEbayQueries(payload)
 
     if (queries.length === 0) return jsonResponse(400, { error: 'At least one eBay query is required' })
+
+    const opened = await openOptionalWritableMarketDb(env)
+    cacheDb = opened.db
+    if (cacheDb) ensureEbayQueryCacheSchema(cacheDb)
+    const cacheContext = { db: cacheDb, env }
 
     const accessToken = await getEbayAccessToken(
       env,
@@ -1576,6 +2293,7 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
                 payload,
                 defaultCategoryId: env.EBAY_CATEGORY_ID,
                 defaultMarketplaceId: env.EBAY_MARKETPLACE_ID || 'EBAY_US',
+                cache: cacheContext,
               })
             : await searchEbayJob({
                 accessToken,
@@ -1585,6 +2303,7 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
                 defaultCategoryId: env.EBAY_CATEGORY_ID,
                 defaultMarketplaceId: env.EBAY_MARKETPLACE_ID || 'EBAY_US',
                 defaultZipCode: env.EBAY_ZIP_CODE,
+                cache: cacheContext,
               })
         return {
           status: 'fulfilled' as const,
@@ -1620,12 +2339,265 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
         pagesFetched: fulfilled.reduce((total, result) => total + result.value.pagesFetched, 0),
         upstreamTotal: fulfilled.reduce((total, result) => total + result.value.total, 0),
         dedupedItems: items.length,
+        cacheHits: fulfilled.reduce((total, result) => total + result.value.cache.cacheHits, 0),
+        cacheMisses: fulfilled.reduce((total, result) => total + result.value.cache.cacheMisses, 0),
+        cacheWrites: fulfilled.reduce((total, result) => total + result.value.cache.cacheWrites, 0),
+        cacheSkips: fulfilled.reduce((total, result) => total + result.value.cache.cacheSkips, 0),
+        runtimeCacheHits: fulfilled.reduce((total, result) => total + result.value.cache.runtimeCacheHits, 0),
+        sqliteCacheHits: fulfilled.reduce((total, result) => total + result.value.cache.sqliteCacheHits, 0),
+        upstreamPagesFetched: fulfilled.reduce((total, result) => total + result.value.cache.upstreamPagesFetched, 0),
       },
     })
   } catch (error) {
     const message = ebayRouteErrorMessage(route, error instanceof Error ? error.message : 'eBay proxy request failed')
     return jsonResponse(error instanceof EbayUpstreamError && error.upstreamStatus === 429 ? 429 : routeErrorStatus(error), {
       error: message,
+    })
+  } finally {
+    cacheDb?.close()
+  }
+}
+
+type FanaticsCollectQueryMeta = {
+  q?: string
+  playerName?: string
+  release?: string
+  releaseYear?: number
+  category?: string
+  variationTerm?: string
+  baseAutoOnly?: boolean
+  lowSerialNonAuto?: boolean
+  serialDenominator?: number
+}
+
+type FanaticsCollectSearchPayload = {
+  queries?: FanaticsCollectQueryMeta[]
+  minPrice?: number | string
+  limit?: number | string
+}
+
+function fanaticsCollectString(value: unknown, fallback = '') {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim()
+  return trimmed || fallback
+}
+
+function fanaticsCollectNumber(value: unknown, fallback = 0) {
+  const parsed = Number(String(value ?? '').replace(/[$,%\s,]/g, ''))
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function sanitizeFanaticsCollectQueries(payload: FanaticsCollectSearchPayload) {
+  const rawQueries = Array.isArray(payload.queries) ? payload.queries : []
+  const queries = rawQueries
+    .map((query) => ({
+      q: fanaticsCollectString(query.q).replace(/\s+/g, ' ').slice(0, MAX_EBAY_QUERY_LENGTH),
+      playerName: fanaticsCollectString(query.playerName),
+      release: fanaticsCollectString(query.release),
+      releaseYear: fanaticsCollectNumber(query.releaseYear, 0) || undefined,
+      category: fanaticsCollectString(query.category),
+      variationTerm: fanaticsCollectString(query.variationTerm),
+      baseAutoOnly: Boolean(query.baseAutoOnly),
+      lowSerialNonAuto: Boolean(query.lowSerialNonAuto),
+      serialDenominator: fanaticsCollectNumber(query.serialDenominator, 0) || undefined,
+    }))
+    .filter((query) => query.q && query.playerName)
+    .slice(0, MAX_EBAY_QUERIES)
+
+  if (queries.length === 0) throw new ProxyRequestError(400, 'At least one Fanatics Collect query is required')
+  return queries
+}
+
+async function fetchFanaticsCollectSearchKey(graphqlUrl: string) {
+  const cacheKey = graphqlUrl
+  if (
+    fanaticsCollectSearchKeyCache?.cacheKey === cacheKey &&
+    fanaticsCollectSearchKeyCache.expiresAt > Date.now() + 60_000
+  ) {
+    return fanaticsCollectSearchKeyCache.searchKey
+  }
+
+  const upstream = await fetch(graphqlUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Origin: 'https://www.fanaticscollect.com',
+      Referer: FANATICS_COLLECT_MARKETPLACE_URL,
+      'User-Agent': 'Backstop Card Finder Fanatics Collect search',
+    },
+    body: JSON.stringify({
+      operationName: 'webSearchKeyQuery',
+      variables: {},
+      query: 'query webSearchKeyQuery { collectSearchKey }',
+    }),
+    signal: AbortSignal.timeout(5_000),
+  })
+
+  const payload = (await upstream.json().catch(() => null)) as
+    | { data?: { collectSearchKey?: string }; errors?: Array<{ message?: string }> }
+    | null
+  const searchKey = fanaticsCollectString(payload?.data?.collectSearchKey)
+  if (!upstream.ok || !searchKey) {
+    const message = payload?.errors?.[0]?.message ?? `${upstream.status} ${upstream.statusText}`.trim()
+    throw new ProxyRequestError(upstream.status || 502, `Fanatics Collect search key request failed: ${message}`)
+  }
+
+  fanaticsCollectSearchKeyCache = {
+    cacheKey,
+    searchKey,
+    expiresAt: Date.now() + FANATICS_COLLECT_SEARCH_KEY_TTL_MS,
+  }
+  return searchKey
+}
+
+function dedupeFanaticsCollectHits(items: Array<Record<string, unknown>>) {
+  const seen = new Set<string>()
+  const deduped: Array<Record<string, unknown>> = []
+  for (const item of items) {
+    const key = fanaticsCollectString(item.objectID) || fanaticsCollectString(item.listingUuid) || fanaticsCollectString(item.title)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    deduped.push(item)
+  }
+  return deduped
+}
+
+async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env: ServerEnv) {
+  const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
+  const appId = env.FANATICS_COLLECT_ALGOLIA_APP_ID?.trim() || FANATICS_COLLECT_ALGOLIA_APP_ID
+  const indexName = env.FANATICS_COLLECT_ALGOLIA_INDEX?.trim() || FANATICS_COLLECT_ALGOLIA_INDEX
+  const searchKey = await fetchFanaticsCollectSearchKey(graphqlUrl)
+  const queries = sanitizeFanaticsCollectQueries(payload)
+  const minPrice = Math.max(0, fanaticsCollectNumber(payload.minPrice, 0))
+  const limit = clampInt(payload.limit, 40, 1, 100)
+  const filters = 'marketplace:FIXED AND status:Live AND marketplaceSource:bo'
+  const requests = queries.map((query) => ({
+    indexName,
+    query: query.q,
+    hitsPerPage: limit,
+    page: 0,
+    filters,
+    numericFilters: minPrice > 0 ? [`askingPrice>=${minPrice}`] : [],
+    attributesToRetrieve: [
+      'title',
+      'listingUuid',
+      'slug',
+      'marketplace',
+      'marketplaceSource',
+      'status',
+      'askingPrice',
+      'currentPrice',
+      'buyNowPrice',
+      'price',
+      'imageSets',
+      'images',
+      'allowOffers',
+      'quantityAvailable',
+    ],
+    attributesToHighlight: [],
+  }))
+
+  const upstream = await fetch(`https://${appId}-dsn.algolia.net/1/indexes/*/queries`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'X-Algolia-API-Key': searchKey,
+      'X-Algolia-Application-Id': appId,
+      'User-Agent': 'Backstop Card Finder Fanatics Collect search',
+    },
+    body: JSON.stringify({ requests }),
+    signal: AbortSignal.timeout(10_000),
+  })
+
+  const algoliaPayload = (await upstream.json().catch(() => null)) as
+    | { results?: Array<{ hits?: Array<Record<string, unknown>>; nbHits?: number; error?: string }> ; message?: string }
+    | null
+  if (!upstream.ok) {
+    const message = algoliaPayload?.message ?? `${upstream.status} ${upstream.statusText}`.trim()
+    throw new ProxyRequestError(upstream.status || 502, `Fanatics Collect search failed: ${message}`)
+  }
+
+  const results = Array.isArray(algoliaPayload?.results) ? algoliaPayload.results : []
+  const errors: Array<{ query?: string; error: string }> = []
+  const items = dedupeFanaticsCollectHits(
+    results.flatMap((result, index) => {
+      const query = queries[index]
+      if (result?.error) {
+        errors.push({ query: query?.q, error: result.error })
+        return []
+      }
+      return (Array.isArray(result?.hits) ? result.hits : []).map((hit) => ({
+        ...hit,
+        _backstopQuery: query,
+      }))
+    }),
+  )
+
+  return {
+    items,
+    errors,
+    fetchedAt: new Date().toISOString(),
+    stats: {
+      queriesRun: queries.length,
+      queriesSucceeded: Math.max(0, results.length - errors.length),
+      queriesFailed: errors.length,
+      pagesFetched: results.length,
+      upstreamTotal: results.reduce((total, result) => total + fanaticsCollectNumber(result?.nbHits, 0), 0),
+      dedupedItems: items.length,
+      cacheHits: 0,
+      cacheMisses: 0,
+      cacheWrites: 0,
+      cacheSkips: 0,
+      runtimeCacheHits: 0,
+      sqliteCacheHits: 0,
+      upstreamPagesFetched: results.length,
+    },
+  }
+}
+
+export async function handleFanaticsCollectRoute(route: string, request: Request, env: ServerEnv) {
+  if (!FANATICS_COLLECT_ROUTES.has(route)) return new Response(null, { status: 404 })
+  if (route === 'status' && request.method !== 'GET') return new Response(null, { status: 404 })
+  if (route === 'search' && request.method !== 'POST') return new Response(null, { status: 404 })
+
+  try {
+    if (route === 'search') {
+      const unsafePost = rejectUnsafePost(request)
+      if (unsafePost) return unsafePost
+      const payload = await readJsonBody<FanaticsCollectSearchPayload>(request, MAX_EBAY_BODY_BYTES)
+      const search = await searchFanaticsCollect(payload, env)
+      return jsonResponse(200, search)
+    }
+
+    const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
+    const appId = env.FANATICS_COLLECT_ALGOLIA_APP_ID?.trim() || FANATICS_COLLECT_ALGOLIA_APP_ID
+    const indexName = env.FANATICS_COLLECT_ALGOLIA_INDEX?.trim() || FANATICS_COLLECT_ALGOLIA_INDEX
+    let reachable = false
+    let message = 'Fanatics Collect public search is ready.'
+    try {
+      await fetchFanaticsCollectSearchKey(graphqlUrl)
+      reachable = true
+    } catch (error) {
+      message = error instanceof Error ? error.message : 'Fanatics Collect public search is unavailable.'
+    }
+
+    return jsonResponse(200, {
+      provider: 'fanatics-collect',
+      label: 'Fanatics Collect',
+      configured: reachable,
+      reachable,
+      mode: reachable ? 'public-algolia-search' : 'offline',
+      graphqlUrl,
+      marketplaceUrl: FANATICS_COLLECT_MARKETPLACE_URL,
+      algoliaAppId: appId,
+      algoliaIndex: indexName,
+      message,
+    })
+  } catch (error) {
+    return jsonResponse(routeErrorStatus(error), {
+      error: routeErrorMessage(error, 'Fanatics Collect request failed'),
     })
   }
 }
@@ -1778,6 +2750,17 @@ export async function handleLiveMarketRoute(route: string, request: Request, env
         GROUP BY scan_type
         ORDER BY scan_type
       `).all(nowIso)
+      const byMarketplace = db.prepare(`
+        SELECT
+          marketplace,
+          COALESCE(NULLIF(marketplace_label, ''), marketplace) AS marketplaceLabel,
+          COUNT(DISTINCT snapshot_id) AS snapshotCount,
+          COUNT(*) AS listingCount
+        FROM live_market_listings
+        WHERE expires_at > ?
+        GROUP BY marketplace, marketplace_label
+        ORDER BY listingCount DESC, marketplace
+      `).all(nowIso)
 
       return jsonResponse(200, {
         available: true,
@@ -1789,6 +2772,12 @@ export async function handleLiveMarketRoute(route: string, request: Request, env
         nextExpiresAt: rowString(stats, 'nextExpiresAt'),
         byType: byType.map((row) => ({
           scanType: rowString(row, 'scanType'),
+          snapshots: rowNumber(row, 'snapshotCount'),
+          listings: rowNumber(row, 'listingCount'),
+        })),
+        byMarketplace: byMarketplace.map((row) => ({
+          marketplace: rowString(row, 'marketplace'),
+          label: rowString(row, 'marketplaceLabel'),
           snapshots: rowNumber(row, 'snapshotCount'),
           listings: rowNumber(row, 'listingCount'),
         })),
@@ -1836,6 +2825,8 @@ export async function handleLiveMarketRoute(route: string, request: Request, env
           snapshot_id AS snapshotId,
           item_id AS itemId,
           listing_kind AS listingKind,
+          marketplace,
+          marketplace_label AS marketplaceLabel,
           player_name AS playerName,
           title,
           listing_url AS listingUrl,
@@ -1915,12 +2906,12 @@ export async function handleLiveMarketRoute(route: string, request: Request, env
 
     const insertListing = db.prepare(`
       INSERT INTO live_market_listings (
-        snapshot_id, item_id, listing_kind, player_name, title, listing_url, image_url,
+        snapshot_id, item_id, listing_kind, marketplace, marketplace_label, player_name, title, listing_url, image_url,
         current_price, shipping_cost, all_in_price, model_price, fair_value, edge_dollars,
         expected_roi_pct, action, lane, grade, variation_label, matched_variation, valuation_source,
         trust_score, score, bid_count, listing_status, end_time, observed_at, expires_at, raw_json
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     listings.forEach((listing, index) => {
@@ -1930,6 +2921,8 @@ export async function handleLiveMarketRoute(route: string, request: Request, env
         snapshotId,
         itemId,
         String(listing.listingKind ?? scanType),
+        String(listing.marketplace ?? 'unknown'),
+        String(listing.marketplaceLabel ?? listing.marketplace ?? 'Unknown'),
         String(listing.playerName ?? ''),
         String(listing.title ?? ''),
         String(listing.listingUrl ?? ''),
@@ -1979,44 +2972,54 @@ export async function handleRankingsRoute(route: string, request: Request) {
   if (!RANKINGS_ROUTES.has(route)) return new Response(null, { status: 404 })
   if (route === 'status') {
     if (request.method !== 'GET') return new Response(null, { status: 404 })
-    return jsonResponse(200, localRankingStatus())
+    const { sources, cache } = await currentRankingSources({ allowLiveRefresh: false })
+    return jsonResponse(200, { ...rankingStatusFromSources(sources), cache })
+  }
+  if (route === 'data') {
+    if (request.method !== 'GET') return new Response(null, { status: 404 })
+    const { sources, cache } = await currentRankingSources({ allowLiveRefresh: true })
+    return jsonResponse(200, {
+      ...rankingStatusFromSources(sources),
+      cache,
+      sources: sources.map((source) => ({
+        ...source,
+        ...rankingStatusFromSources([source]).sources[0],
+      })),
+    })
   }
   if (route === 'refresh') {
-    if (request.method !== 'POST') return new Response(null, { status: 404 })
-    const unsafePost = rejectUnsafePost(request)
-    if (unsafePost) return unsafePost
-
-    const scriptPath = resolve(process.cwd(), 'scripts/refresh-sts-consensus.mjs')
-    if (!existsSync(scriptPath)) return jsonResponse(404, { error: 'Rankings refresh script was not found in this checkout' })
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      timeout: RANKINGS_REFRESH_TIMEOUT_MS,
-      env: process.env,
-      maxBuffer: 512_000,
-    })
-
-    if (result.error) {
-      return jsonResponse(500, {
-        error:
-          result.error.name === 'ETIMEDOUT'
-            ? 'Rankings refresh timed out before Scout the Statline responded'
-            : result.error.message,
-      })
+    if (request.method === 'GET') {
+      const secret = process.env.CRON_SECRET
+      const authHeader = request.headers.get('authorization')
+      if (!secret || authHeader !== `Bearer ${secret}`) {
+        return jsonResponse(401, { error: 'Unauthorized rankings refresh' })
+      }
+    } else if (request.method === 'POST') {
+      const unsafePost = rejectUnsafePost(request)
+      if (unsafePost) return unsafePost
+    } else {
+      return new Response(null, { status: 404 })
     }
 
-    if (result.status !== 0) {
+    try {
+      const sources = await refreshStsRankingSources()
+      const cached = await writeRuntimeRankingSources(sources)
+      const status = rankingStatusFromSources(sources)
+      return jsonResponse(200, {
+        ...status,
+        cache: cached ? 'runtime-write' : 'live',
+        refreshedAt: new Date().toISOString(),
+        output: `Refreshed ${status.rows.toLocaleString()} Scout the Statline ranking rows`,
+        sources: sources.map((source) => ({
+          ...source,
+          ...rankingStatusFromSources([source]).sources[0],
+        })),
+      })
+    } catch (error) {
       return jsonResponse(502, {
-        error: result.stderr?.trim() || result.stdout?.trim() || 'Rankings refresh failed',
+        error: error instanceof Error ? error.message : 'Rankings refresh failed',
       })
     }
-
-    return jsonResponse(200, {
-      ...localRankingStatus(),
-      refreshedAt: new Date().toISOString(),
-      output: result.stdout.trim(),
-    })
   }
   return new Response(null, { status: 404 })
 }
@@ -2178,7 +3181,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
         ],
         players,
         fetchedAt: new Date().toISOString(),
-        source: 'market-movers-sold-model',
+        source: 'canonical-sold-model',
         coverage: {
           pricedPlayers: pricedPlayers.length,
           unpricedPlayers: Math.max(0, players.length - pricedPlayers.length),
@@ -3069,6 +4072,14 @@ function nodeRoute(request: IncomingMessage) {
   return (request.url ?? '').replace(/^\/+/, '').split('?')[0]
 }
 
+function prefixedNodeRoute(request: IncomingMessage, prefix: string) {
+  const route = nodeRoute(request)
+  const normalizedPrefix = prefix.replace(/^\/+|\/+$/g, '')
+  if (route === normalizedPrefix) return ''
+  if (route.startsWith(`${normalizedPrefix}/`)) return route.slice(normalizedPrefix.length + 1)
+  return route
+}
+
 function nodeHeaders(request: IncomingMessage) {
   const headers = new Headers()
   for (const [key, value] of Object.entries(request.headers)) {
@@ -3114,6 +4125,14 @@ export async function handleProspectPulseNodeRequest(request: IncomingMessage, r
 export async function handleEbayNodeRequest(request: IncomingMessage, response: ServerResponse, env: ServerEnv) {
   const fetchRequest = await nodeToFetchRequest(request)
   await writeNodeResponse(response, await handleEbayRoute(nodeRoute(request), fetchRequest, env))
+}
+
+export async function handleFanaticsCollectNodeRequest(request: IncomingMessage, response: ServerResponse, env: ServerEnv) {
+  const fetchRequest = await nodeToFetchRequest(request)
+  await writeNodeResponse(
+    response,
+    await handleFanaticsCollectRoute(prefixedNodeRoute(request, '/api/fanatics-collect'), fetchRequest, env),
+  )
 }
 
 export async function handleCardHedgeNodeRequest(request: IncomingMessage, response: ServerResponse, env: ServerEnv) {

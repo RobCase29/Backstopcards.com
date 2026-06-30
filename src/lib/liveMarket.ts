@@ -6,6 +6,8 @@ export type LiveMarketScanType = 'bin' | 'auction'
 export type LiveMarketListingPayload = {
   itemId: string
   listingKind: string
+  marketplace: string
+  marketplaceLabel: string
   playerName: string
   title: string
   listingUrl: string
@@ -41,6 +43,7 @@ export type LiveMarketSnapshotPayload = {
   ttlSeconds?: number
   request: Record<string, unknown>
   stats?: EbayScanStats
+  marketplaces?: string[]
   listings: LiveMarketListingPayload[]
 }
 
@@ -81,6 +84,7 @@ export type LiveMarketStatus = {
   latestObservedAt: string
   nextExpiresAt: string
   byType: Array<{ scanType: LiveMarketScanType; snapshots: number; listings: number }>
+  byMarketplace?: Array<{ marketplace: string; label: string; snapshots: number; listings: number }>
 }
 
 async function parseLiveMarketResponse<T>(response: Response): Promise<T> {
@@ -117,6 +121,8 @@ export function opportunityToLiveMarketListing(opportunity: Opportunity): LiveMa
   return {
     itemId: listing.id,
     listingKind: listing.kind,
+    marketplace: listing.marketplace ?? 'unknown',
+    marketplaceLabel: listing.marketplaceLabel ?? 'Unknown',
     playerName: listing.playerName,
     title: listing.title,
     listingUrl: listing.listingUrl ?? '',
@@ -149,6 +155,8 @@ export function opportunityToLiveMarketListing(opportunity: Opportunity): LiveMa
       isGraded: listing.isGraded,
       gradingCompany: listing.gradingCompany ?? null,
       gradeNumber: listing.gradeNumber ?? null,
+      marketplace: listing.marketplace ?? 'unknown',
+      marketplaceLabel: listing.marketplaceLabel ?? 'Unknown',
     },
   }
 }
@@ -219,6 +227,8 @@ export function liveMarketListingToOpportunity(record: LiveMarketListingRecord):
     status: liveMarketListingStatus(record.listingStatus),
     isSold: false,
     listingUrl: record.listingUrl,
+    marketplace: record.marketplace ?? 'unknown',
+    marketplaceLabel: record.marketplaceLabel ?? undefined,
     imageUrl: record.imageUrl,
     watchCount: 0,
     endTime: record.endTime,

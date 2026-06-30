@@ -1687,7 +1687,7 @@ thead .matrix-player-col span,
 }
 
 .valuation-toolbar {
-  grid-template-columns: repeat(5, minmax(112px, 1fr)) minmax(122px, auto);
+  grid-template-columns: repeat(6, minmax(112px, 1fr)) minmax(122px, auto);
   min-width: 0;
 }
 
@@ -2687,6 +2687,15 @@ thead .matrix-player-col span,
 .quick-price-card {
   display: grid;
   gap: 12px;
+}
+
+.calculator-anchor {
+  min-width: 0;
+  scroll-margin-top: 12px;
+}
+
+.calculator-anchor:focus {
+  outline: none;
 }
 
 .lookup-calculator-strip {
@@ -5479,6 +5488,164 @@ button.sales-bucket-tile {
   min-height: 100%;
 }
 
+.source-stack-card {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid rgba(159, 216, 207, 0.2);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(159, 216, 207, 0.12), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 250, 240, 0.86)),
+    var(--panel);
+  box-shadow:
+    0 18px 46px rgba(7, 10, 14, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.source-stack-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.source-stack-head span,
+.source-stack-item span,
+.source-stack-footer {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.source-stack-head span,
+.source-stack-footer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-stack-head strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-strong);
+  font-size: 1.18rem;
+  line-height: 1.08;
+}
+
+.source-stack-head small {
+  display: block;
+  margin-top: 4px;
+}
+
+.source-stack-flow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.source-stack-flow span {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border: 1px solid rgba(8, 127, 140, 0.18);
+  border-radius: 999px;
+  background: rgba(8, 127, 140, 0.07);
+  color: var(--text-strong);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.source-stack-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.source-stack-item {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(12, 16, 20, 0.08);
+  border-radius: 10px;
+  background:
+    linear-gradient(145deg, rgba(142, 215, 255, 0.08), transparent 42%),
+    rgba(255, 250, 240, 0.74);
+}
+
+.source-stack-item.fresh {
+  border-color: rgba(15, 159, 95, 0.22);
+}
+
+.source-stack-item.watch {
+  border-color: rgba(205, 155, 59, 0.28);
+}
+
+.source-stack-item.offline {
+  border-color: rgba(193, 79, 53, 0.22);
+}
+
+.source-stack-item.neutral {
+  border-color: rgba(14, 47, 46, 0.12);
+  opacity: 0.9;
+}
+
+.source-stack-item strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-stack-item small {
+  display: block;
+  margin-top: 4px;
+}
+
+.source-stack-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.source-stack-footer {
+  min-height: 38px;
+  padding: 9px 11px;
+  border: 1px solid rgba(8, 127, 140, 0.18);
+  border-radius: 10px;
+  background: rgba(8, 127, 140, 0.065);
+  color: var(--text-strong);
+  line-height: 1.35;
+  text-transform: none;
+}
+
+@media (max-width: 720px) {
+  .source-stack-flow,
+  .source-stack-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .source-stack-flow span {
+    justify-content: flex-start;
+  }
+}
+
 .valuation-app .metric-grid {
   gap: 12px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5487,6 +5654,10 @@ button.sales-bucket-tile {
 @media (max-width: 1180px) {
   .valuation-app .metric-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .source-stack-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -9350,18 +9521,23 @@ button.sales-bucket-tile {
     border-radius: 12px;
   }
 
+  .calculator-anchor {
+    order: 3;
+    scroll-margin-top: 10px;
+  }
+
   .lookup-calculator-strip {
-    order: 6;
+    order: initial;
     gap: 10px;
     padding: 12px;
   }
 
-  .lookup-calculator-strip .quick-price-heading {
+  .lookup-calculator-strip .quick-price-title {
     grid-template-columns: 1fr auto;
     align-items: start;
   }
 
-  .lookup-calculator-strip .quick-price-heading strong {
+  .lookup-calculator-strip .quick-price-title h2 {
     font-size: clamp(1.55rem, 9vw, 2.1rem);
   }
 
@@ -9381,7 +9557,7 @@ button.sales-bucket-tile {
     border-radius: 10px;
   }
 
-  .lookup-calculator-strip .quick-price-source-strip {
+  .lookup-calculator-strip .quick-source-strip {
     display: flex;
     gap: 7px;
     overflow-x: auto;
@@ -9389,7 +9565,7 @@ button.sales-bucket-tile {
     -webkit-overflow-scrolling: touch;
   }
 
-  .lookup-calculator-strip .quick-price-source-strip::-webkit-scrollbar {
+  .lookup-calculator-strip .quick-source-strip::-webkit-scrollbar {
     display: none;
   }
 
@@ -9399,12 +9575,11 @@ button.sales-bucket-tile {
     gap: 8px;
   }
 
-  .valuation-toolbar .filter-select:nth-of-type(2),
-  .valuation-toolbar .filter-select:nth-of-type(4) {
+  .valuation-toolbar .family-filter,
+  .valuation-toolbar .base-source-filter {
     display: none;
   }
 
-  .valuation-toolbar .team-filter,
   .valuation-toolbar .row-counts {
     grid-column: 1 / -1;
   }
@@ -9881,9 +10056,24 @@ button.sales-bucket-tile {
     padding: 10px;
   }
 
+  .observability-grid {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+    overflow: visible;
+    scroll-snap-type: none;
+  }
+
+  .observability-grid > * {
+    flex: initial;
+    scroll-snap-align: none;
+  }
+
   .observability-card {
+    width: 100%;
     flex-basis: 236px;
     min-height: 74px;
+    grid-template-columns: minmax(0, 1fr) minmax(76px, 96px);
     border-radius: 10px;
   }
 }
@@ -9909,7 +10099,6 @@ button.sales-bucket-tile {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .valuation-toolbar .team-filter,
   .valuation-toolbar .row-counts {
     grid-column: 1 / -1;
   }
@@ -10270,7 +10459,7 @@ button.sales-bucket-tile {
 
 .valuation-app .toolbar.valuation-toolbar {
   display: grid;
-  grid-template-columns: repeat(5, minmax(160px, 1fr)) auto;
+  grid-template-columns: repeat(6, minmax(140px, 1fr)) auto;
   gap: 10px;
   align-items: stretch;
   padding: 0;
@@ -10641,7 +10830,7 @@ button.sales-bucket-tile {
   }
 
   .valuation-app .lookup-action-stack {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .valuation-app .board-scan-button,
@@ -10649,6 +10838,10 @@ button.sales-bucket-tile {
   .valuation-app .board-radar-button {
     width: 100%;
     min-height: 48px;
+  }
+
+  .valuation-app .board-scan-button {
+    grid-column: 1 / -1;
   }
 
   .valuation-app .lookup-action-stack .ghost-button {
@@ -10680,10 +10873,39 @@ button.sales-bucket-tile {
   }
 
   .valuation-app .mobile-start-guide {
-    display: grid;
+    order: 2;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .valuation-app .mobile-start-guide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .mobile-start-guide span {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
+  .valuation-app .calculator-anchor {
+    order: 3;
+    scroll-margin-top: 10px;
+  }
+
+  .valuation-app .calculator-anchor .lookup-calculator-strip {
+    order: initial;
+    margin-bottom: 0;
+    border-radius: 14px;
+    box-shadow: 0 16px 34px rgba(19, 32, 31, 0.14);
   }
 
   .valuation-app .team-scan-panel {
+    order: 4;
+    display: none;
     grid-template-columns: 1fr;
   }
 
@@ -10692,14 +10914,25 @@ button.sales-bucket-tile {
   }
 
   .valuation-app .toolbar.valuation-toolbar {
+    order: 5;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .family-filter,
+  .valuation-app .toolbar.valuation-toolbar .base-source-filter {
+    display: none;
   }
 
   .valuation-app .toolbar.valuation-toolbar .row-counts {
     grid-column: 1 / -1;
   }
 
+  .valuation-app .undervalued-callout {
+    display: none;
+  }
+
   .valuation-app .lookup-board-market-grid {
+    order: 6;
     grid-template-columns: 1fr;
   }
 

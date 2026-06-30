@@ -135,6 +135,8 @@ export interface CaseHitScanResult {
     dedupedItems: number
     mappedListings: number
     rejectedListings: number
+    cacheHits: number
+    upstreamPagesFetched: number
   }
 }
 
@@ -149,6 +151,8 @@ type EbaySearchResponse = {
     pagesFetched?: number
     upstreamTotal?: number
     dedupedItems?: number
+    cacheHits?: number
+    upstreamPagesFetched?: number
   }
   error?: string
 }
@@ -715,6 +719,8 @@ export async function fetchCrystallizedCaseHits(options: {
       dedupedItems: payload.stats?.dedupedItems ?? payload.items?.length ?? 0,
       mappedListings: listings.length,
       rejectedListings,
+      cacheHits: payload.stats?.cacheHits ?? 0,
+      upstreamPagesFetched: payload.stats?.upstreamPagesFetched ?? payload.stats?.pagesFetched ?? 0,
     },
   }
 }

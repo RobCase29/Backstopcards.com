@@ -374,10 +374,20 @@ type LeaderboardState = {
 }
 
 let cachedLeaderboard: LeaderboardState | null = null
+let activeCsvInputs = [consensusHittersCsv, consensusPitchersCsv, oopsyPeakMlbCsv]
+
+export function hydrateStsLeaderboard(csvInputs: string[]) {
+  const validInputs = csvInputs.filter((input) => input.trim())
+  if (validInputs.length < 2) return false
+  activeCsvInputs = validInputs
+  cachedLeaderboard = null
+  leaderboardState()
+  return true
+}
 
 function leaderboardState() {
   if (cachedLeaderboard) return cachedLeaderboard
-  const { rows, byName } = buildLeaderboard([consensusHittersCsv, consensusPitchersCsv, oopsyPeakMlbCsv])
+  const { rows, byName } = buildLeaderboard(activeCsvInputs)
   cachedLeaderboard = {
     rows,
     byName,

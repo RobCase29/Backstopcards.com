@@ -1,9 +1,10 @@
 import type { ChecklistModel, ProspectPulseListing } from '../types'
 import { titleEligibleForBowmanChromeAutoModel } from './cardTitleGuards'
+import type { EbayBinScanResult, EbayBinSearchMode } from './ebay'
 import { titleLooksHandSignedAuto } from './handSigned'
 import { findStsRanking } from './stsRankings'
 
-type EbayQueryMeta = {
+type FanaticsCollectQueryMeta = {
   q?: string
   playerName?: string
   release?: string
@@ -15,109 +16,42 @@ type EbayQueryMeta = {
   serialDenominator?: number
 }
 
-type EbayMoney = {
-  value?: string | number
-  currency?: string
-}
-
-type EbayImage = {
-  imageUrl?: string
-}
-
-type EbaySeller = {
-  username?: string
-  feedbackScore?: number
-}
-
-type EbayShippingOption = {
-  shippingCost?: EbayMoney
-}
-
-type EbayItemSummary = {
-  itemId?: string
-  legacyItemId?: string
+type FanaticsCollectHit = {
+  objectID?: string
   title?: string
-  itemWebUrl?: string
-  itemAffiliateWebUrl?: string
-  image?: EbayImage
-  thumbnailImages?: EbayImage[]
-  price?: EbayMoney
-  currentBidPrice?: EbayMoney
-  convertedCurrentBidPrice?: EbayMoney
-  buyingOptions?: string[]
-  seller?: EbaySeller
-  shippingOptions?: EbayShippingOption[]
-  itemCreationDate?: string
-  itemEndDate?: string
-  bidCount?: number
-  _bowmanTraderQuery?: EbayQueryMeta
+  listingUuid?: string
+  slug?: string
+  marketplace?: string
+  marketplaceSource?: string
+  status?: string
+  askingPrice?: number | string | null
+  currentPrice?: number | string | null
+  buyNowPrice?: number | string | null
+  price?: number | string | null
+  imageSets?: unknown
+  images?: unknown
+  allowOffers?: boolean
+  quantityAvailable?: number
+  _backstopQuery?: FanaticsCollectQueryMeta
 }
 
-export type EbayStatus = {
-  configured: boolean
-  environment: 'sandbox' | 'production'
-  marketplaceId: string
-  hasCategoryId: boolean
-  cache?: {
-    enabled: boolean
-    fixedPriceTtlSeconds: number
-    auctionTtlSeconds: number
-    soldTtlSeconds: number
-    runtimeCache: boolean
-    localCache: boolean
-  }
-  message: string
-}
-
-export type EbayScanStats = {
-  queriesRun: number
-  queriesSucceeded: number
-  queriesFailed: number
-  pagesFetched: number
-  upstreamTotal: number
-  dedupedItems: number
-  mappedListings: number
-  rejectedPlayerMismatches: number
-  cacheHits: number
-  cacheMisses: number
-  cacheWrites: number
-  cacheSkips: number
-  runtimeCacheHits: number
-  sqliteCacheHits: number
-  upstreamPagesFetched: number
-}
-
-export type EbayBinScanResult = {
-  listings: ProspectPulseListing[]
-  fetchedAt: string
-  errors: Array<{ query?: string; error: string }>
-  stats: EbayScanStats
-}
-
-export type EbayBinSearchMode = 'checklist' | 'player' | 'variation' | 'base-auto' | 'low-serial-non-auto'
-export type EbayListingMode = 'bin' | 'auction'
-
-export class EbayRateLimitError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'EbayRateLimitError'
-  }
-}
-
-type EbaySearchResponse = {
-  items?: EbayItemSummary[]
+type FanaticsCollectSearchResponse = {
+  items?: FanaticsCollectHit[]
   errors?: Array<{ query?: string; error: string }>
   fetchedAt?: string
-  stats?: Omit<EbayScanStats, 'mappedListings' | 'rejectedPlayerMismatches'>
+  stats?: Omit<EbayBinScanResult['stats'], 'mappedListings' | 'rejectedPlayerMismatches'>
   error?: string
 }
 
-function isEbayRateLimitMessage(message: string) {
-  return /(?:^|\D)429(?:\D|$)|rate.?limit|too many requests/i.test(message)
-}
-
-export function isEbayRateLimitError(error: unknown) {
-  return error instanceof EbayRateLimitError || (error instanceof Error && isEbayRateLimitMessage(error.message))
+type FetchFanaticsCollectListingsOptions = {
+  model: ChecklistModel
+  minPrice?: number
+  playerLimit?: number | null
+  playerNames?: string[]
+  limitPerPlayer?: number
+  searchMode?: EbayBinSearchMode
+  searchTerm?: string
+  signal?: AbortSignal
 }
 
 function numberValue(value: unknown, fallback = 0) {
@@ -168,11 +102,6 @@ function titleMatchesPlayer(title: string, playerName: string) {
   return playerWords.every((word) => titleWords.has(word))
 }
 
-function titleMatchesVariationTerm(title: string, variationTerm?: string) {
-  if (!variationTerm?.trim()) return true
-  return variationSearchAliases(variationTerm).some((alias) => matchesSearchTerm(title, alias))
-}
-
 function variationSearchAliases(variationTerm: string) {
   const term = variationTerm.trim()
   const normalized = normalizedKey(term)
@@ -184,6 +113,11 @@ function variationSearchAliases(variationTerm: string) {
   if (/\bb\s+w\b|\bblack\s+white\b/.test(normalized)) aliases.add('black white shimmer')
   if (/\bpackfractor\b/.test(normalized)) aliases.add('packfractor')
   return [...aliases]
+}
+
+function titleMatchesVariationTerm(title: string, variationTerm?: string) {
+  if (!variationTerm?.trim()) return true
+  return variationSearchAliases(variationTerm).some((alias) => matchesSearchTerm(title, alias))
 }
 
 function variationQueryTerm(variationTerm = '') {
@@ -198,6 +132,11 @@ const BASE_AUTO_EXCLUSION_PATTERN =
   /\b(?:superfractor|super\s+fractor|refractor|xfractor|x-fractor|logofractor|firefractor|packfractor|speckle|atomic|mini\s*diamond|shimmer|lava|wave|raywave|mojo|sapphire|image\s+variation|peanuts?|popcorn|sunflower|gum\s*ball|gumball|snack\s+pack)\b/i
 const BASE_AUTO_COLOR_PARALLEL_PATTERN =
   /\b(?:blue|green|aqua|purple|yellow|gold|orange|red|black|rose|fuchsia|teal|pink|silver|pearl)\s+(?:refractor|auto|parallel|lava|wave|shimmer)\b|\b(?:refractor|auto|parallel|lava|wave|shimmer)\s+(?:blue|green|aqua|purple|yellow|gold|orange|red|black|rose|fuchsia|teal|pink|silver|pearl)\b/i
+
+function serialDenominatorFromTitle(title: string) {
+  const match = title.match(/(?:\/|#\/|numbered\s+to\s+)(\d{1,3})\b/i)
+  return match ? Number(match[1]) : null
+}
 
 function titleLooksLikeBaseAuto(title: string) {
   if (serialDenominatorFromTitle(title)) return false
@@ -241,9 +180,9 @@ function lowSerialNonAutoVariationLabel(title: string, serialDenominator: number
                 ? 'Green'
                 : /\byellow\b/.test(normalized)
                   ? 'Yellow'
-                : /\bmini\s*diamond\b/.test(normalized)
-                  ? 'Mini Diamond'
-                  : 'Numbered'
+                  : /\bmini\s*diamond\b/.test(normalized)
+                    ? 'Mini Diamond'
+                    : 'Numbered'
   return serialDenominator ? `${parallel} /${serialDenominator}` : parallel
 }
 
@@ -264,17 +203,16 @@ function releaseQueryProduct(model: ChecklistModel) {
   return product.includes('chrome') ? product : `${product} chrome`
 }
 
-function buildPlayerQuery(model: ChecklistModel, playerName: string, variationTerm = '', baseAutoOnly = false): EbayQueryMeta {
+function buildPlayerQuery(model: ChecklistModel, playerName: string, variationTerm = '', baseAutoOnly = false): FanaticsCollectQueryMeta {
   const queryParts = [
     playerName,
     variationQueryTerm(variationTerm),
     String(model.releaseYear),
     releaseQueryProduct(model),
-    '1st auto',
+    'auto',
   ].filter(Boolean)
-  const queryCore = queryParts.join(' ')
   return {
-    q: compactQuery(queryCore),
+    q: compactQuery(queryParts.join(' ')),
     playerName,
     release: model.release,
     releaseYear: model.releaseYear,
@@ -286,7 +224,7 @@ function buildPlayerQuery(model: ChecklistModel, playerName: string, variationTe
 
 const LOW_SERIAL_NON_AUTO_DENOMINATORS = [99, 75, 50, 25, 10, 5, 1]
 
-function buildLowSerialNonAutoQueries(model: ChecklistModel, playerName: string): EbayQueryMeta[] {
+function buildLowSerialNonAutoQueries(model: ChecklistModel, playerName: string): FanaticsCollectQueryMeta[] {
   return LOW_SERIAL_NON_AUTO_DENOMINATORS.map((serialDenominator) => ({
     q: compactQuery(`${playerName} ${model.releaseYear} ${releaseQueryProduct(model)} 1st /${serialDenominator}`),
     playerName,
@@ -318,48 +256,73 @@ function selectedPlayers(options: {
   return players.slice(0, playerLimit)
 }
 
-function minShippingCost(item: EbayItemSummary) {
-  const costs = (item.shippingOptions ?? [])
-    .map((option) => numberValue(option.shippingCost?.value, Number.NaN))
-    .filter(Number.isFinite)
-  if (costs.length === 0) return 0
-  return Math.max(0, Math.min(...costs))
+function fanaticsCollectPrice(item: FanaticsCollectHit) {
+  return firstPositive([item.askingPrice, item.buyNowPrice, item.currentPrice, item.price])
 }
 
-function firstPositiveMoney(values: Array<EbayMoney | undefined>) {
+function firstPositive(values: unknown[]) {
   for (const value of values) {
-    const parsed = numberValue(value?.value, Number.NaN)
+    const parsed = numberValue(value, Number.NaN)
     if (Number.isFinite(parsed) && parsed > 0) return parsed
   }
   return 0
 }
 
-function currentListingPrice(item: EbayItemSummary, listingMode: EbayListingMode) {
-  if (listingMode === 'auction') {
-    return firstPositiveMoney([item.currentBidPrice, item.convertedCurrentBidPrice, item.price])
+function slugFromTitle(title: string) {
+  return title
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120)
+}
+
+function listingUuid(item: FanaticsCollectHit) {
+  const explicit = firstString([item.listingUuid])
+  if (explicit) return explicit
+  const objectId = firstString([item.objectID])
+  const match = objectId.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
+  return match?.[0] ?? ''
+}
+
+function fanaticsCollectListingUrl(item: FanaticsCollectHit, title: string) {
+  const uuid = listingUuid(item)
+  if (!uuid) return 'https://www.fanaticscollect.com/marketplace?type=FIXED'
+  const slug = firstString([item.slug], slugFromTitle(title))
+  return `https://www.fanaticscollect.com/buy-now/${uuid}/${slug || slugFromTitle(title)}`
+}
+
+function imageUrlFrom(value: unknown): string {
+  if (!value) return ''
+  if (typeof value === 'string') return /^https?:\/\//i.test(value) ? value : ''
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const url = imageUrlFrom(entry)
+      if (url) return url
+    }
+    return ''
   }
-  return firstPositiveMoney([item.price, item.currentBidPrice, item.convertedCurrentBidPrice])
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return (
+      imageUrlFrom(record.imageUrl) ||
+      imageUrlFrom(record.url) ||
+      imageUrlFrom(record.thumbnail) ||
+      imageUrlFrom(record.thumbnailUrl) ||
+      imageUrlFrom(record.small) ||
+      imageUrlFrom(record.medium) ||
+      imageUrlFrom(record.large) ||
+      imageUrlFrom(Object.values(record))
+    )
+  }
+  return ''
 }
 
-function itemImage(item: EbayItemSummary) {
-  return firstString(
-    [
-      item.image?.imageUrl,
-      ...(item.thumbnailImages ?? []).map((image) => image.imageUrl),
-    ],
-    '',
-  )
-}
-
-function serialDenominatorFromTitle(title: string) {
-  const match = title.match(/(?:\/|#\/|numbered\s+to\s+)(\d{1,3})\b/i)
-  return match ? Number(match[1]) : null
-}
-
-function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: string, listingMode: EbayListingMode): ProspectPulseListing | null {
-  const meta = item._bowmanTraderQuery
-  const playerName = firstString([meta?.playerName], '')
-  const title = firstString([item.title], '')
+function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleaseLabel: string): ProspectPulseListing | null {
+  const meta = item._backstopQuery
+  const playerName = firstString([meta?.playerName])
+  const title = firstString([item.title])
   if (!playerName || !title || !titleMatchesPlayer(title, playerName)) return null
   if (!titleMatchesVariationTerm(title, meta?.variationTerm)) return null
   if (meta?.lowSerialNonAuto) {
@@ -369,11 +332,9 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
     if (!titleEligibleForBowmanChromeAutoModel(title)) return null
   }
 
-  const buyingOptions = item.buyingOptions ?? []
-  const fixedPrice = listingMode === 'bin' || buyingOptions.includes('FIXED_PRICE')
-  const auction = listingMode === 'auction' || buyingOptions.includes('AUCTION')
-  const itemId = firstString([item.legacyItemId, item.itemId], title)
-  const price = currentListingPrice(item, listingMode)
+  const price = fanaticsCollectPrice(item)
+  if (price <= 0) return null
+
   const stsRanking = findStsRanking(playerName)
   const isHandSigned = titleLooksHandSignedAuto(title)
   const serialDenominator = isHandSigned || meta?.baseAutoOnly ? null : serialDenominatorFromTitle(title)
@@ -385,24 +346,20 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
         : meta?.baseAutoOnly || titleLooksLikeBaseAuto(title)
           ? 'Base Auto'
           : meta?.variationTerm ?? ''
+  const uuid = listingUuid(item)
 
   return {
-    item_id: itemId,
+    item_id: uuid || firstString([item.objectID], title),
     player_name: playerName,
     title,
     current_price: price,
-    shipping_cost: minShippingCost(item),
-    buying_format: auction && !fixedPrice ? 'Auction' : fixedPrice ? 'Buy It Now' : buyingOptions.join(', '),
+    shipping_cost: 0,
+    buying_format: 'Buy It Now',
     listing_status: 'active',
-    listing_url: firstString([item.itemAffiliateWebUrl, item.itemWebUrl], ''),
-    marketplace: 'ebay',
-    marketplace_label: 'eBay',
-    image_url: itemImage(item),
-    seller_username: item.seller?.username ?? null,
-    seller_feedback_score: item.seller?.feedbackScore ?? null,
-    created_at: item.itemCreationDate ?? null,
-    end_time: item.itemEndDate ?? null,
-    bid_count: item.bidCount ?? 0,
+    listing_url: fanaticsCollectListingUrl(item, title),
+    marketplace: 'fanatics-collect',
+    marketplace_label: 'Fanatics Collect',
+    image_url: imageUrlFrom(item.imageSets) || imageUrlFrom(item.images),
     release_year: meta?.releaseYear ?? null,
     product_type: fallbackReleaseLabel,
     release: meta?.release ?? fallbackReleaseLabel,
@@ -437,26 +394,7 @@ function dedupeListings(listings: ProspectPulseListing[]) {
   return deduped
 }
 
-export async function fetchEbayStatus(signal?: AbortSignal): Promise<EbayStatus> {
-  const response = await fetch('/api/ebay/status', { signal })
-  if (!response.ok) throw new Error('Could not read eBay status')
-  return response.json() as Promise<EbayStatus>
-}
-
-type FetchEbayListingsOptions = {
-  model: ChecklistModel
-  minPrice?: number
-  playerLimit?: number | null
-  playerNames?: string[]
-  limitPerPlayer?: number
-  maxPagesPerPlayer?: number
-  maxHoursToClose?: number
-  searchMode?: EbayBinSearchMode
-  searchTerm?: string
-  signal?: AbortSignal
-}
-
-async function fetchEbayListings(options: FetchEbayListingsOptions & { listingMode: EbayListingMode }): Promise<EbayBinScanResult> {
+export async function fetchFanaticsCollectBinListings(options: FetchFanaticsCollectListingsOptions): Promise<EbayBinScanResult> {
   const searchMode = options.searchMode ?? 'checklist'
   const searchTerm = options.searchTerm?.trim() ?? ''
   if ((searchMode === 'player' || searchMode === 'variation') && !searchTerm) {
@@ -487,47 +425,31 @@ async function fetchEbayListings(options: FetchEbayListingsOptions & { listingMo
           ),
         ],
   )
-  const response = await fetch('/api/ebay/search', {
+
+  const response = await fetch('/api/fanatics-collect/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     signal: options.signal,
     body: JSON.stringify({
       queries,
       minPrice: options.minPrice ?? 0,
-      limit: options.limitPerPlayer ?? 100,
-      maxPages: options.maxPagesPerPlayer ?? 1,
-      sort: options.listingMode === 'auction' ? 'endingSoonest' : 'price',
-      buyingOption: options.listingMode === 'auction' ? 'AUCTION' : 'FIXED_PRICE',
-      maxHoursToClose: options.listingMode === 'auction' ? options.maxHoursToClose ?? 24 : undefined,
+      limit: options.limitPerPlayer ?? 40,
     }),
   })
 
-  const payload = (await response.json()) as EbaySearchResponse
-  if (!response.ok) {
-    const message = payload.error ?? 'eBay search failed'
-    if (response.status === 429 || isEbayRateLimitMessage(message)) throw new EbayRateLimitError(message)
-    throw new Error(message)
-  }
+  const payload = (await response.json()) as FanaticsCollectSearchResponse
+  if (!response.ok) throw new Error(payload.error ?? 'Fanatics Collect search failed')
 
   const fallbackReleaseLabel = releaseProductLabel(options.model)
   let rejectedPlayerMismatches = 0
-  const maxHoursToClose = options.listingMode === 'auction' ? options.maxHoursToClose ?? 24 : null
   const listings = dedupeListings(
     (payload.items ?? []).flatMap((item) => {
-      const listing = mapEbayItemToListing(item, fallbackReleaseLabel, options.listingMode)
+      const listing = mapFanaticsCollectHitToListing(item, fallbackReleaseLabel)
       if (!listing) {
         rejectedPlayerMismatches += 1
         return []
       }
-      if (maxHoursToClose !== null) {
-        const endTime = listing.end_time ? new Date(listing.end_time).getTime() : Number.NaN
-        const hoursToClose = (endTime - Date.now()) / (1000 * 60 * 60)
-        if (!Number.isFinite(hoursToClose) || hoursToClose <= 0 || hoursToClose > maxHoursToClose) {
-          rejectedPlayerMismatches += 1
-          return []
-        }
-      }
-      return listing ? [listing] : []
+      return [listing]
     }),
   )
 
@@ -553,12 +475,4 @@ async function fetchEbayListings(options: FetchEbayListingsOptions & { listingMo
       upstreamPagesFetched: payload.stats?.upstreamPagesFetched ?? payload.stats?.pagesFetched ?? 0,
     },
   }
-}
-
-export async function fetchEbayBinListings(options: FetchEbayListingsOptions): Promise<EbayBinScanResult> {
-  return fetchEbayListings({ ...options, listingMode: 'bin' })
-}
-
-export async function fetchEbayAuctionListings(options: FetchEbayListingsOptions): Promise<EbayBinScanResult> {
-  return fetchEbayListings({ ...options, listingMode: 'auction', maxHoursToClose: options.maxHoursToClose ?? 24 })
 }

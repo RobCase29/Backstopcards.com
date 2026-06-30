@@ -1,5 +1,7 @@
 export type ListingKind = 'live' | 'bin' | 'sold'
 
+export type ListingMarketplace = 'ebay' | 'fanatics-collect' | 'comc' | 'unknown'
+
 export type MarketMode = 'raw' | 'graded' | 'raw-plus-graded'
 
 export type GradingCompany = 'PSA' | 'BGS' | 'SGC' | 'CGC'
@@ -71,6 +73,8 @@ export interface ProspectPulseListing {
   is_sold?: boolean | null
   listing_url?: string
   url?: string
+  marketplace?: ListingMarketplace | string | null
+  marketplace_label?: string | null
   image_url?: string | null
   image?: string | null
   gallery_url?: string | null
@@ -167,7 +171,12 @@ export interface ChecklistModel {
   multipliers: ChecklistVariation[]
   players: ChecklistPlayer[]
   fetchedAt: string
-  source: 'public-multipliers' | 'authenticated-player-model' | 'ebay-sold-model' | 'market-movers-sold-model'
+  source:
+    | 'public-multipliers'
+    | 'authenticated-player-model'
+    | 'ebay-sold-model'
+    | 'market-movers-sold-model'
+    | 'canonical-sold-model'
 }
 
 export interface NormalizedListing {
@@ -185,6 +194,8 @@ export interface NormalizedListing {
   status: ListingStatus
   isSold: boolean
   listingUrl?: string
+  marketplace?: ListingMarketplace | string
+  marketplaceLabel?: string
   imageUrl?: string | null
   sellerName?: string | null
   sellerFeedbackScore?: number | null

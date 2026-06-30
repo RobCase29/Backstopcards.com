@@ -1,6 +1,6 @@
 # Backstop Card Finder
 
-Local price atlas for Bowman 1st auto cards. The app turns checklist data into a player x variation model using a recency-weighted base price, set-level variation multiples, and Formulated Consensus dynasty context, then can scan active eBay Buy It Now listings and rank them against the model by raw dollar edge.
+Local price atlas for Bowman 1st auto cards. The app turns checklist data into a player x variation model using a recency-weighted base price, set-level variation multiples, and Formulated Consensus dynasty context, then can scan active marketplace listings and rank them against the model by raw dollar edge.
 
 ## Run
 
@@ -9,15 +9,34 @@ npm install
 npm run dev
 ```
 
-The app opens directly into the Backstop workflow: price a card, inspect the modeled checklist ladder, and scan active BINs/auctions against the current model. The current source-of-truth path is official Bowman checklists + Wax Pack Hero 1st Bowman evidence + Card Hedge/local sold comps; legacy checklist feeds remain optional fallback data.
+The app opens directly into the Backstop workflow: find underpriced players, price a card, and scan active BINs/auctions against the current model. The current source-of-truth path is official Bowman checklists + Wax Pack Hero 1st Bowman evidence + Card Hedge/local sold comps; eBay and Fanatics Collect fixed-price listings are active live-market layers, eBay remains the ending-soon auction layer, and legacy checklist feeds remain optional fallback data.
 
 Use Node 22.13+ locally. This repo includes `.nvmrc` set to Node 22 to match Vercel.
+
+For the current source-of-truth spec, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Run the full local guardrail pass with:
 
 ```bash
 npm run check
 ```
+
+## Current Architecture
+
+The scale path should stay intentionally simple:
+
+```text
+Official checklists + Wax Pack Hero 1st lists
+  -> checklist universe and card lanes
+  -> Card Hedge sold comps + local canonical comp cache
+  -> base-auto anchors and variation fair values
+  -> live marketplace scans (eBay + Fanatics Collect BINs; eBay auctions)
+  -> opportunity board, live chart, reject/cleanup loop
+```
+
+Card Hedge and the canonical SQLite cache are the pricing core. Live marketplace providers should only answer "what is active right now?" and raw query pages/snapshots are cached before scoring so multiple users do not repeat the same external calls. eBay Browse powers active BINs and auctions; Fanatics Collect uses its public search-key flow for active fixed-price listings without storing account credentials. The legacy checklist feed is no longer part of normal startup when local checklist data exists.
+
+Subscription read: keep Card Hedge and eBay active. Market Movers is now a validation/taxonomy backup unless Card Hedge coverage proves weaker than expected. Fanatics Collect does not require stored login credentials for the current public fixed-price search path. The legacy checklist feed can be cancelled after local checklists and multipliers cover the releases you care about.
 
 ## Consensus Rankings
 
@@ -36,13 +55,11 @@ The generated snapshots are:
 
 GitHub Actions also runs `.github/workflows/refresh-rankings.yml` daily. It refreshes both files, validates the ranking parser, and commits only when the data changed.
 
-## Legacy Checklist Feed (Optional)
+## Legacy Checklist Feed (Fallback Only)
 
-The app can still use the older private checklist feed as a fallback while the local checklist ledger and Card Hedge comp cache become the scale backbone. Do not put third-party passwords in this repo.
+The app can still use the older private checklist feed as a server-side fallback while the local checklist ledger and Card Hedge comp cache become the scale backbone. Normal page load now asks the local checklist ledger first. Do not put third-party passwords in this repo.
 
-Option A: use the in-app connection form. The local dev proxy exchanges your email/password for a Supabase session and stores only the session in browser local storage.
-
-Option B: create `.env.local` from `.env.example` and set:
+If a release is missing from the local ledger, create `.env.local` from `.env.example` and set:
 
 ```bash
 PROSPECTPULSE_ACCESS_TOKEN=your_legacy_feed_access_token
@@ -55,7 +72,7 @@ PROSPECTPULSE_EMAIL=your_account_email
 PROSPECTPULSE_PASSWORD=your_account_password
 ```
 
-When either server-managed option is present, every approved browser uses the same server-side connection and the local disconnect button is hidden because users do not own that session.
+When either server-managed option is present, every approved browser uses the same server-side connection. There is intentionally no public in-app login form for this fallback path.
 
 For a private deployment, set any legacy feed credential in the host's server environment and protect the site with an invite-only gate such as Cloudflare Access, Vercel password protection/auth middleware, or Google Workspace sign-in. Do not commit `.env.local`, third-party passwords, or live tokens.
 
@@ -117,9 +134,14 @@ Restart `npm run dev` after adding credentials. Optional fields:
 ```bash
 EBAY_ZIP_CODE=10001
 EBAY_CATEGORY_ID=
+EBAY_QUERY_CACHE_ENABLED=true
+EBAY_BIN_QUERY_CACHE_TTL_SECONDS=86400
+EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS=600
 ```
 
 `EBAY_ZIP_CODE` improves shipping context. `EBAY_CATEGORY_ID` can narrow search once you choose the correct eBay leaf category for trading cards.
+
+The `/api/ebay/search` proxy caches raw eBay query pages before the app maps and scores them. Fixed-price Browse pages default to 24 hours, so if one visitor scans `Aiva Arquette 2026 Bowman Chrome 1st auto`, the next visitor reuses that page instead of spending another eBay request. Auction pages default to 10 minutes because current bids and end times go stale quickly. The deployed site uses Vercel Runtime Cache when available and falls back to the local SQLite cache in development. Scan stats report live pages versus cached pages so rate-limit savings are visible.
 
 ## eBay Sold Access (Optional)
 
