@@ -283,6 +283,14 @@ function rowMatchesTeam(row: PricingRow, teamFilter: TeamFilter) {
   return normalizeTeamCode(row.currentTeam) === normalizeTeamCode(teamFilter)
 }
 
+function rowMatchesStsFilter(row: PricingRow, stsFilter: StsFilter) {
+  if (stsFilter === 'ranked') return Boolean(row.stsRank)
+  if (stsFilter === 'prospects') return Boolean(row.stsProspectRank)
+  if (stsFilter === 'mlb') return row.stsLevel?.toUpperCase() === 'MLB'
+  if (stsFilter === 'unmatched') return !row.stsName
+  return true
+}
+
 const BIN_RESULT_SORT_LABELS: Record<BinResultSort, string> = {
   'conviction-desc': 'Conviction',
   'edge-desc': 'Spread',
@@ -1842,10 +1850,13 @@ function RankingOnlyMatch({ ranking }: { ranking: NonNullable<ReturnType<typeof 
     <div className="ranking-only-card">
       <Brain size={18} />
       <div>
-        <span>Ranking-only match</span>
+        <span>Ranking found, no priced card lane yet</span>
         <strong>{ranking.name}</strong>
         <small>
           {[ranking.team, ranking.pos, ranking.level, ranking.age ? `Age ${ranking.age}` : null].filter(Boolean).join(' / ')}
+        </small>
+        <small className="ranking-only-note">
+          This player is in the rankings feed, but the current modeled-card board does not have a loaded Bowman lane for them.
         </small>
       </div>
       <div className="ranking-only-stats">
@@ -5597,23 +5608,28 @@ function App() {
     }
   }, [activeSalesCacheModels, visibleAuctionListings, visibleBinListings])
 
-  const visibleRows = useMemo(() => {
+  const trimmedQuery = query.trim()
+  const filteredBoard = useMemo(() => {
     const searchedRows = filterPricingRows(matrix.rows, query)
-    const filteredRows = searchedRows.filter((row) => {
+    const rowsBeforeRank = searchedRows.filter((row) => {
       if (releaseFilter !== 'all' && row.release !== releaseFilter) return false
       if (categoryFilter !== 'all' && row.category !== categoryFilter) return false
       if (!rowMatchesTeam(row, teamFilter)) return false
       if (baseSourceFilter !== 'all' && row.basePriceSource !== baseSourceFilter) return false
-      if (stsFilter === 'ranked' && !row.stsRank) return false
-      if (stsFilter === 'prospects' && !row.stsProspectRank) return false
-      if (stsFilter === 'mlb' && row.stsLevel?.toUpperCase() !== 'MLB') return false
-      if (stsFilter === 'unmatched' && row.stsName) return false
       return true
     })
-    return sortRows(filteredRows, sortMode)
-  }, [baseSourceFilter, categoryFilter, matrix.rows, query, releaseFilter, sortMode, stsFilter, teamFilter])
+    const filteredRows = rowsBeforeRank.filter((row) => rowMatchesStsFilter(row, stsFilter))
+    const rankRelaxedForSearch =
+      trimmedQuery.length > 0 && stsFilter !== 'all' && filteredRows.length === 0 && rowsBeforeRank.length > 0
+    return {
+      rows: sortRows(rankRelaxedForSearch ? rowsBeforeRank : filteredRows, sortMode),
+      rankRelaxedForSearch,
+    }
+  }, [baseSourceFilter, categoryFilter, matrix.rows, query, releaseFilter, sortMode, stsFilter, teamFilter, trimmedQuery.length])
+  const visibleRows = filteredBoard.rows
+  const rankRelaxedForSearch = filteredBoard.rankRelaxedForSearch
   const hasLeaderboardNarrowing =
-    query.trim().length > 0 ||
+    trimmedQuery.length > 0 ||
     releaseFilter !== 'all' ||
     categoryFilter !== 'all' ||
     teamFilter !== 'all' ||
@@ -5734,7 +5750,6 @@ function App() {
 	    },
 	    [refreshObservability, selectedRow?.playerName],
 	  )
-  const trimmedQuery = query.trim()
   const rankingOnlyMatch = useMemo(() => {
     if (!trimmedQuery || visibleRows.length > 0) return null
     return findStsRanking(trimmedQuery)
@@ -6674,6 +6689,18 @@ function App() {
               </div>
             </div>
 
+            {rankRelaxedForSearch ? (
+              <div className="search-filter-note">
+                <Search size={16} />
+                <div>
+                  <strong>Showing direct search matches outside the Rank filter.</strong>
+                  <span>
+                    The board is still set to {STS_FILTER_LABELS[stsFilter]}, but search found priced card rows that would otherwise be hidden.
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
             {rankingOnlyMatch ? <RankingOnlyMatch ranking={rankingOnlyMatch} /> : null}
 
             <div className="lookup-board-market-grid">
@@ -6686,7 +6713,9 @@ function App() {
                 emptyTitle={trimmedQuery ? 'No modeled card match.' : undefined}
                 emptyText={
                   trimmedQuery
-                    ? 'No loaded checklist row matches this search and the current filters.'
+                    ? rankingOnlyMatch
+                      ? 'Ranking data exists for this player, but no loaded Bowman card lane has a model yet.'
+                      : 'No loaded checklist row matches this search and the current filters.'
                     : undefined
                 }
               />
