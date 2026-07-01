@@ -11750,6 +11750,21 @@ button.sales-bucket-tile {
   font-size: 0.94rem;
 }
 
+.valuation-app .lookup-board-market-grid .leaderboard-player-button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  gap: 4px;
+}
+
+.valuation-app .lookup-board-market-grid .player-chip strong {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.08;
+}
+
 .valuation-app .lookup-board-market-grid .player-chip small,
 .valuation-app .lookup-board-market-grid .money-chip small,
 .valuation-app .lookup-board-market-grid .value-signal-cell small {
