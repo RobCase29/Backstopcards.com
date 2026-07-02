@@ -13164,3 +13164,362 @@ button.sales-bucket-tile {
     grid-column: 1 / -1;
   }
 }
+
+/* Sealed Wax v2: focused value scanner */
+.valuation-app .wax-command-center,
+.valuation-app .wax-value-console,
+.valuation-app .wax-evidence-details,
+.valuation-app .wax-results-panel {
+  border: 1px solid rgba(159, 216, 207, 0.22);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(159, 216, 207, 0.16), transparent 34%),
+    linear-gradient(145deg, rgba(223, 164, 81, 0.08), transparent 64%),
+    rgba(255, 250, 240, 0.9);
+  box-shadow:
+    0 20px 48px rgba(12, 16, 20, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.74);
+}
+
+.valuation-app .wax-command-center {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(420px, 0.82fr);
+  gap: 18px;
+  align-items: end;
+  padding: 18px;
+}
+
+.valuation-app .wax-command-center h2 {
+  max-width: 680px;
+  margin: 7px 0 0;
+  color: var(--ink);
+  font-size: clamp(2rem, 3.4vw, 4rem);
+  line-height: 0.96;
+}
+
+.valuation-app .wax-command-center p {
+  max-width: 62ch;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.98rem;
+  font-weight: 840;
+  line-height: 1.38;
+}
+
+.valuation-app .wax-command-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.valuation-app .wax-command-metrics span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 13px;
+  border: 1px solid rgba(12, 16, 20, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 250, 240, 0.76);
+}
+
+.valuation-app .wax-command-metrics small,
+.valuation-app .wax-step > span,
+.valuation-app .wax-evidence-details summary span,
+.valuation-app .wax-evidence-details summary em,
+.valuation-app .wax-best-card span,
+.valuation-app .wax-best-card small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 940;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.valuation-app .wax-command-metrics strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 1.24rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.valuation-app .wax-command-metrics em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.69rem;
+  font-style: normal;
+  font-weight: 860;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.valuation-app .wax-value-console {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(210px, 0.72fr) minmax(140px, 0.46fr) minmax(300px, 1fr) minmax(220px, 0.74fr);
+  gap: 10px;
+  align-items: stretch;
+  padding: 12px;
+}
+
+.valuation-app .wax-step {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 13px;
+  border: 1px solid rgba(12, 16, 20, 0.1);
+  border-radius: 12px;
+  background:
+    linear-gradient(140deg, rgba(8, 127, 140, 0.08), transparent 52%),
+    rgba(255, 250, 240, 0.76);
+}
+
+.valuation-app .wax-step strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 1.1rem;
+  font-weight: 950;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.valuation-app .wax-step small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 830;
+  line-height: 1.25;
+}
+
+.valuation-app .wax-format-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.valuation-app .wax-format-switch button {
+  min-height: 42px;
+  border: 1px solid rgba(12, 16, 20, 0.12);
+  border-radius: 10px;
+  color: var(--muted);
+  background: rgba(10, 24, 23, 0.04);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.valuation-app .wax-format-switch button.active {
+  color: #062321;
+  border-color: rgba(8, 127, 140, 0.35);
+  background:
+    linear-gradient(135deg, rgba(142, 255, 206, 0.5), rgba(159, 216, 207, 0.28)),
+    rgba(255, 250, 240, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.58);
+}
+
+.valuation-app .wax-anchor-step input,
+.valuation-app .wax-min-step input {
+  min-width: 0;
+  width: 100%;
+  min-height: 46px;
+  border: 0;
+  border-bottom: 2px solid rgba(8, 127, 140, 0.24);
+  border-radius: 0;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 1.7rem;
+  font-weight: 950;
+  outline: none;
+}
+
+.valuation-app .wax-min-step input {
+  font-size: 1.25rem;
+}
+
+.valuation-app .wax-anchor-step:focus-within,
+.valuation-app .wax-min-step:focus-within {
+  border-color: rgba(8, 127, 140, 0.34);
+  box-shadow: var(--focus-ring);
+}
+
+.valuation-app .wax-source-step {
+  align-content: center;
+}
+
+.valuation-app .wax-run-step {
+  align-content: center;
+}
+
+.valuation-app .wax-run-step .wax-scan-button {
+  width: 100%;
+  min-height: 50px;
+  justify-content: center;
+}
+
+.valuation-app .wax-run-step .wax-scan-button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.25);
+  opacity: 0.62;
+}
+
+.valuation-app .wax-console-alert {
+  grid-column: 1 / -1;
+}
+
+.valuation-app .wax-evidence-details {
+  overflow: clip;
+}
+
+.valuation-app .wax-evidence-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 54px;
+  padding: 0 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.valuation-app .wax-evidence-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.valuation-app .wax-evidence-details summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+
+.valuation-app .wax-evidence-details summary em {
+  font-style: normal;
+}
+
+.valuation-app .wax-evidence-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.82fr);
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+
+.valuation-app .wax-evidence-grid .wax-panel {
+  box-shadow: none;
+}
+
+.valuation-app .wax-best-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.22fr);
+  gap: 14px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(8, 127, 140, 0.24);
+  border-radius: 12px;
+  background:
+    linear-gradient(90deg, rgba(142, 255, 206, 0.24), transparent 50%),
+    rgba(255, 250, 240, 0.84);
+  box-shadow: inset 4px 0 0 rgba(142, 255, 206, 0.9);
+}
+
+.valuation-app .wax-best-card > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.valuation-app .wax-best-card strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 1.02rem;
+  font-weight: 950;
+  line-height: 1.18;
+}
+
+.valuation-app .wax-best-card > div:last-child {
+  justify-items: end;
+  text-align: right;
+}
+
+.valuation-app .wax-best-card > div:last-child strong {
+  color: #087f8c;
+  font-family: var(--mono);
+  font-size: 1.5rem;
+}
+
+.valuation-app .wax-best-card a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  color: #087f8c;
+  font-size: 0.74rem;
+  font-weight: 930;
+  text-decoration: none;
+}
+
+@media (max-width: 1180px) {
+  .valuation-app .wax-command-center,
+  .valuation-app .wax-value-console,
+  .valuation-app .wax-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .wax-command-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .valuation-app .wax-command-center,
+  .valuation-app .wax-value-console,
+  .valuation-app .wax-evidence-details,
+  .valuation-app .wax-results-panel {
+    border-radius: 14px;
+  }
+
+  .valuation-app .wax-command-center {
+    padding: 14px;
+  }
+
+  .valuation-app .wax-command-center h2 {
+    font-size: 2rem;
+  }
+
+  .valuation-app .wax-command-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .wax-value-console {
+    padding: 10px;
+  }
+
+  .valuation-app .wax-format-switch {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .valuation-app .wax-evidence-details summary {
+    display: grid;
+    min-height: auto;
+    padding: 14px;
+  }
+
+  .valuation-app .wax-best-card {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .wax-best-card > div:last-child {
+    justify-items: start;
+    text-align: left;
+  }
+
+  .valuation-app .wax-opportunity-row {
+    border-radius: 12px;
+  }
+}
