@@ -84,12 +84,13 @@ import {
   type CaseHitScanResult,
 } from './lib/caseHits'
 import {
-  SEALED_WAX_STARTER_PRODUCTS,
+  SEALED_WAX_PRODUCTS,
   buildWaxMarketModel,
   fetchSealedWaxListings,
   parseDaveAdamsQuotes,
   parseWaxComps,
   rankWaxOpportunities,
+  sealedWaxProductLabel,
   type WaxComp,
   type WaxMarketModel,
   type WaxOpportunity,
@@ -5354,17 +5355,21 @@ function SealedWaxDesk({
   const scannedListings = scan?.listings ?? []
   const topOpportunities = opportunities.slice(0, 48)
   const bestOpportunity = topOpportunities[0]
+  const productGroups = SEALED_WAX_PRODUCTS.reduce<Record<string, typeof SEALED_WAX_PRODUCTS>>((groups, product) => {
+    groups[product.family] = [...(groups[product.family] ?? []), product]
+    return groups
+  }, {})
   const marketplaceCounts = scannedListings.reduce<Record<string, number>>((counts, listing) => {
     counts[listing.marketplaceLabel] = (counts[listing.marketplaceLabel] ?? 0) + 1
     return counts
   }, {})
   const daveQuoteCount = scannedListings.filter((listing) => listing.marketplace === 'dave-adams').length
   const hasMarketAnchor = model.marketPrice > 0
-  const selectedFormat = query.toLowerCase().includes('jumbo') ? 'Jumbo Box' : 'Hobby Box'
+  const selectedFormat = sealedWaxProductLabel(query)
   const canScan =
     query.trim().length > 2 && hasMarketAnchor && !loading && (includeEbay || includeFanatics || daveAdamsText.trim().length > 0)
   const scanButtonText = !hasMarketAnchor
-    ? 'Add Fair Value First'
+    ? 'Add Comps or Override'
     : loading
       ? `Scanning ${selectedFormat}`
       : `Scan ${selectedFormat}`
@@ -5377,9 +5382,9 @@ function SealedWaxDesk({
             <Package size={14} />
             Sealed Wax Desk
           </span>
-          <h2>Find clean 2026 Bowman wax value.</h2>
+          <h2>Source Bowman wax against fresh comps.</h2>
           <p>
-            Pick Hobby or Jumbo, set fair value, then scan live marketplaces for sealed boxes worth reviewing.
+            Paste recent Market Movers box sales, pick a Bowman wax product, then scan live marketplaces against a recency-weighted comp anchor.
           </p>
         </div>
         <div className="wax-command-metrics" aria-label="Sealed wax status">
@@ -5403,27 +5408,37 @@ function SealedWaxDesk({
 
       <section className="wax-value-console">
         <div className="wax-step wax-format-step">
-          <span>1 / Format</span>
+          <span>1 / Product</span>
           <strong>{selectedFormat}</strong>
-          <div className="wax-format-switch" aria-label="2026 Bowman wax formats">
-            {SEALED_WAX_STARTER_PRODUCTS.map((product) => (
-              <button className={product === query ? 'active' : ''} type="button" onClick={() => onQueryChange(product)} key={product}>
-                {product.includes('Jumbo') ? 'Jumbo Box' : 'Hobby Box'}
-              </button>
+          <select className="wax-product-select" value={query} onChange={(event) => onQueryChange(event.target.value)} aria-label="Sealed wax product">
+            {Object.entries(productGroups).map(([family, products]) => (
+              <optgroup label={family} key={family}>
+                {products.map((product) => (
+                  <option value={product.query} key={product.id}>
+                    {product.label}
+                  </option>
+                ))}
+              </optgroup>
             ))}
-          </div>
+          </select>
         </div>
 
         <label className="wax-step wax-anchor-step">
-          <span>2 / Fair value</span>
+          <span>2 / Override</span>
           <input
             value={manualMarketInput}
             onChange={(event) => onManualMarketInputChange(event.target.value)}
             inputMode="decimal"
-            placeholder="$250"
-            aria-label="Fair value"
+            placeholder="Optional"
+            aria-label="Manual fair value override"
           />
-          <small>{model.source === 'comps' ? `${comps.length.toLocaleString()} comps set the anchor` : 'Manual or comp-backed anchor'}</small>
+          <small>
+            {model.source === 'manual'
+              ? `Manual override; comp anchor ${model.timeWeightedAverage ? money(model.timeWeightedAverage) : '--'}`
+              : model.source === 'comps'
+                ? `${model.recentCompCount} recent / ${model.compCount.toLocaleString()} matching comps`
+                : 'Paste comps below or enter an override'}
+          </small>
         </label>
 
         <label className="wax-step wax-min-step">
@@ -5459,7 +5474,7 @@ function SealedWaxDesk({
             <RefreshCw size={16} className={loading ? 'spin' : undefined} />
             {scanButtonText}
           </button>
-          <small>{hasMarketAnchor ? `Ranking listings within 15% of ${money(model.marketPrice)}` : 'Fair value is required to score listings'}</small>
+          <small>{hasMarketAnchor ? `Ranking listings within 15% of ${money(model.marketPrice)}` : 'A comp anchor is required to score listings'}</small>
         </div>
 
         {error ? (
@@ -5477,7 +5492,7 @@ function SealedWaxDesk({
             Market evidence and retail quotes
           </span>
           <em>
-            {comps.length.toLocaleString()} comps / {daveQuoteCount.toLocaleString()} D&A quotes
+            {model.compCount.toLocaleString()} matching / {comps.length.toLocaleString()} pasted comps / {daveQuoteCount.toLocaleString()} D&A quotes
           </em>
         </summary>
 
@@ -5489,7 +5504,8 @@ function SealedWaxDesk({
                 <strong>Recent box comps</strong>
               </div>
               <div className="wax-pill-row">
-                <span>{comps.length.toLocaleString()} comps</span>
+                <span>{model.compCount.toLocaleString()} matching</span>
+                <span>{model.recentCompCount.toLocaleString()} in model</span>
                 <span>{model.source === 'manual' ? 'manual override' : model.source}</span>
               </div>
             </div>
@@ -5497,17 +5513,21 @@ function SealedWaxDesk({
               className="wax-textarea"
               value={compText}
               onChange={(event) => onCompTextChange(event.target.value)}
-              placeholder={`Paste recent box comps here, one per line.\neBay $240 2026 Bowman Hobby Box 7/1/2026\nFanatics $260 2026 Bowman Jumbo Box 6/30/2026`}
+              placeholder={`Paste Market Movers box comps here. You can paste multiple products; the model filters to the selected product.\neBay $240 2026 Bowman Hobby Box 7/1/2026\nFanatics $260 2026 Bowman Jumbo Box 6/30/2026\nMarket Movers $345 2025 Bowman Draft Jumbo Box 6/28/2026`}
               aria-label="Market comps"
             />
             <div className="wax-model-grid">
               <span>
-                <small>Last 5</small>
-                <strong>{model.lastFiveAverage ? money(model.lastFiveAverage) : '--'}</strong>
+                <small>Weighted</small>
+                <strong>{model.timeWeightedAverage ? money(model.timeWeightedAverage) : '--'}</strong>
               </span>
               <span>
-                <small>Median</small>
-                <strong>{model.median ? money(model.median) : '--'}</strong>
+                <small>Last 3</small>
+                <strong>{model.lastThreeAverage ? money(model.lastThreeAverage) : '--'}</strong>
+              </span>
+              <span>
+                <small>Last 5</small>
+                <strong>{model.lastFiveAverage ? money(model.lastFiveAverage) : '--'}</strong>
               </span>
               <span>
                 <small>Range</small>
@@ -5536,7 +5556,7 @@ function SealedWaxDesk({
             />
             <div className="wax-note">
               <Store size={16} />
-              <span>D&A is quote-driven for now. Pasted Hobby or Jumbo rows still rank against the same fair value.</span>
+              <span>D&A is quote-driven for now. Pasted rows are matched to the selected product and ranked against the same comp anchor.</span>
             </div>
           </section>
         </div>
@@ -5605,7 +5625,7 @@ function SealedWaxDesk({
             <Package size={26} />
             <div>
               <strong>Ready to scan sealed wax.</strong>
-              <span>Run the scan to compare active eBay, Fanatics Collect, and pasted D&A quotes for the selected 2026 Bowman format.</span>
+              <span>Run the scan to compare active eBay, Fanatics Collect, and pasted D&A quotes for the selected Bowman product.</span>
             </div>
           </div>
         ) : topOpportunities.length === 0 ? (
@@ -6102,8 +6122,8 @@ function App() {
   const waxComps = useMemo(() => parseWaxComps(waxCompText), [waxCompText])
   const waxManualListings = useMemo(() => parseDaveAdamsQuotes(waxDaveAdamsText, waxQuery), [waxDaveAdamsText, waxQuery])
   const waxMarketModel = useMemo(
-    () => buildWaxMarketModel(waxComps, parseMoneyInput(waxManualMarketInput) ?? 0),
-    [waxComps, waxManualMarketInput],
+    () => buildWaxMarketModel(waxComps, parseMoneyInput(waxManualMarketInput) ?? 0, waxQuery),
+    [waxComps, waxManualMarketInput, waxQuery],
   )
   const waxOpportunities = useMemo(
     () => rankWaxOpportunities(waxScan?.listings ?? [], waxMarketModel, 0.15),

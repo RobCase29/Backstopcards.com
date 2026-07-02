@@ -12844,7 +12844,7 @@ button.sales-bucket-tile {
 }
 
 .valuation-app .wax-model-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .valuation-app .wax-toggle-row,
@@ -13257,7 +13257,7 @@ button.sales-bucket-tile {
 
 .valuation-app .wax-value-console {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(210px, 0.72fr) minmax(140px, 0.46fr) minmax(300px, 1fr) minmax(220px, 0.74fr);
+  grid-template-columns: minmax(320px, 1.2fr) minmax(210px, 0.68fr) minmax(140px, 0.44fr) minmax(300px, 0.98fr) minmax(220px, 0.72fr);
   gap: 10px;
   align-items: stretch;
   padding: 12px;
@@ -13319,6 +13319,28 @@ button.sales-bucket-tile {
     linear-gradient(135deg, rgba(142, 255, 206, 0.5), rgba(159, 216, 207, 0.28)),
     rgba(255, 250, 240, 0.9);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.58);
+}
+
+.valuation-app .wax-product-select {
+  min-width: 0;
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid rgba(12, 16, 20, 0.12);
+  border-radius: 10px;
+  color: var(--ink);
+  background:
+    linear-gradient(135deg, rgba(255, 250, 240, 0.92), rgba(159, 216, 207, 0.12)),
+    rgba(255, 250, 240, 0.9);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 920;
+  outline: none;
+  padding: 0 12px;
+}
+
+.valuation-app .wax-product-select:focus {
+  border-color: rgba(8, 127, 140, 0.38);
+  box-shadow: var(--focus-ring);
 }
 
 .valuation-app .wax-anchor-step input,

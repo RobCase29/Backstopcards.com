@@ -4,7 +4,9 @@ import {
   parseDaveAdamsQuotes,
   parseWaxComps,
   rankWaxOpportunities,
+  sealedWaxProductLabel,
   titleLooksLikeSealedWax,
+  waxCompsForQuery,
   waxProductMatchesQuery,
   waxProductKind,
   type WaxListing,
@@ -56,9 +58,11 @@ describe('sealed wax modeling', () => {
     expect(waxProductMatchesQuery('2026 Bowman Baseball Jumbo Box Factory Sealed', jumboBox)).toBe(true)
     expect(waxProductMatchesQuery('1x Pack of 2026 Bowman Baseball Jumbo Hobby Box', hobbyBox)).toBe(false)
     expect(waxProductMatchesQuery('2026 Bowman Baseball Hobby Case Sealed', hobbyBox)).toBe(false)
+    expect(waxProductMatchesQuery('2025 Bowman Chrome Baseball HTA Choice Box Factory Sealed', '2025 Bowman Chrome Baseball HTA Choice Box')).toBe(true)
+    expect(waxProductMatchesQuery('2025 Bowman Chrome Baseball Hobby Box Factory Sealed', '2025 Bowman Chrome Baseball HTA Choice Box')).toBe(false)
   })
 
-  it('builds a comp anchored market model and lets manual fair value override it', () => {
+  it('builds a recent comp anchored market model and lets manual fair value override it', () => {
     const comps = parseWaxComps(`
       eBay $240 2026 Bowman Hobby Box 7/1/2026
       Fanatics $260 2026 Bowman Hobby Box 6/30/2026
@@ -66,9 +70,33 @@ describe('sealed wax modeling', () => {
     `)
 
     expect(comps).toHaveLength(3)
-    expect(buildWaxMarketModel(comps).marketPrice).toBeCloseTo(250)
-    expect(buildWaxMarketModel(comps, 275).marketPrice).toBe(275)
-    expect(buildWaxMarketModel(comps, 275).source).toBe('manual')
+    expect(buildWaxMarketModel(comps, 0, '2026 Bowman Baseball Hobby Box').marketPrice).toBeCloseTo(248.83)
+    expect(buildWaxMarketModel(comps, 275, '2026 Bowman Baseball Hobby Box').marketPrice).toBe(275)
+    expect(buildWaxMarketModel(comps, 275, '2026 Bowman Baseball Hobby Box').source).toBe('manual')
+  })
+
+  it('filters pasted Market Movers comps to the selected sealed product', () => {
+    const comps = parseWaxComps(`
+      eBay $240 2026 Bowman Hobby Box 7/1/2026
+      Fanatics $260 2026 Bowman Hobby Box 6/30/2026
+      Market Movers $390 2026 Bowman Jumbo Box 7/1/2026
+      eBay $410 2026 Bowman Jumbo Box 6/30/2026
+      eBay $215 2026 Bowman Hobby Box 5/1/2026
+    `)
+
+    const hobbyModel = buildWaxMarketModel(comps, 0, '2026 Bowman Baseball Hobby Box')
+    const jumboModel = buildWaxMarketModel(comps, 0, '2026 Bowman Baseball Jumbo Box')
+
+    expect(waxCompsForQuery(comps, '2026 Bowman Baseball Hobby Box')).toHaveLength(3)
+    expect(waxCompsForQuery(comps, '2026 Bowman Baseball Jumbo Box').map((comp) => comp.title)).not.toContain(
+      'Market Movers 2025 Bowman Draft Jumbo Box',
+    )
+    expect(hobbyModel.compCount).toBe(3)
+    expect(hobbyModel.recentCompCount).toBe(3)
+    expect(hobbyModel.marketPrice).toBeLessThan(260)
+    expect(jumboModel.compCount).toBe(2)
+    expect(jumboModel.marketPrice).toBeGreaterThan(390)
+    expect(sealedWaxProductLabel('2026 Bowman Baseball Jumbo Box')).toBe('2026 Bowman Jumbo Box')
   })
 
   it('parses Dave & Adams retail quotes into scored listings', () => {

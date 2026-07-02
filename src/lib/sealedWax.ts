@@ -2,6 +2,16 @@ export type WaxMarketplace = 'ebay' | 'fanatics-collect' | 'dave-adams'
 export type WaxListingMode = 'bin' | 'auction' | 'retail'
 export type WaxProductKind = 'box' | 'case' | 'pack' | 'lot' | 'sealed'
 
+export type SealedWaxProduct = {
+  id: string
+  label: string
+  query: string
+  year: number
+  release: string
+  format: string
+  family: string
+}
+
 export type WaxListing = {
   id: string
   marketplace: WaxMarketplace
@@ -32,8 +42,12 @@ export type WaxMarketModel = {
   marketPrice: number
   source: 'manual' | 'comps' | 'empty'
   compCount: number
+  totalCompCount: number
+  recentCompCount: number
   median: number
   average: number
+  timeWeightedAverage: number
+  lastThreeAverage: number
   lastFiveAverage: number
   low: number
   high: number
@@ -130,10 +144,235 @@ export type WaxScanResult = {
   }
 }
 
-export const SEALED_WAX_STARTER_PRODUCTS = [
-  '2026 Bowman Baseball Hobby Box',
-  '2026 Bowman Baseball Jumbo Box',
-] as const
+export const SEALED_WAX_PRODUCTS: SealedWaxProduct[] = [
+  {
+    id: '2026-bowman-hobby-box',
+    label: '2026 Bowman Hobby Box',
+    query: '2026 Bowman Baseball Hobby Box',
+    year: 2026,
+    release: 'Bowman Baseball',
+    format: 'Hobby Box',
+    family: '2026 Bowman',
+  },
+  {
+    id: '2026-bowman-jumbo-box',
+    label: '2026 Bowman Jumbo Box',
+    query: '2026 Bowman Baseball Jumbo Box',
+    year: 2026,
+    release: 'Bowman Baseball',
+    format: 'Jumbo Box',
+    family: '2026 Bowman',
+  },
+  {
+    id: '2026-bowman-hobby-case',
+    label: '2026 Bowman Hobby Case',
+    query: '2026 Bowman Baseball Hobby Case',
+    year: 2026,
+    release: 'Bowman Baseball',
+    format: 'Hobby Case',
+    family: '2026 Bowman',
+  },
+  {
+    id: '2026-bowman-jumbo-case',
+    label: '2026 Bowman Jumbo Case',
+    query: '2026 Bowman Baseball Jumbo Case',
+    year: 2026,
+    release: 'Bowman Baseball',
+    format: 'Jumbo Case',
+    family: '2026 Bowman',
+  },
+  {
+    id: '2025-bowman-draft-hobby-box',
+    label: '2025 Bowman Draft Hobby Box',
+    query: '2025 Bowman Draft Baseball Hobby Box',
+    year: 2025,
+    release: 'Bowman Draft',
+    format: 'Hobby Box',
+    family: '2025 Bowman Draft',
+  },
+  {
+    id: '2025-bowman-draft-jumbo-box',
+    label: '2025 Bowman Draft Jumbo Box',
+    query: '2025 Bowman Draft Baseball Jumbo Box',
+    year: 2025,
+    release: 'Bowman Draft',
+    format: 'Jumbo Box',
+    family: '2025 Bowman Draft',
+  },
+  {
+    id: '2025-bowman-draft-super-jumbo-box',
+    label: '2025 Bowman Draft Super Jumbo Box',
+    query: '2025 Bowman Draft Baseball Super Jumbo Box',
+    year: 2025,
+    release: 'Bowman Draft',
+    format: 'Super Jumbo Box',
+    family: '2025 Bowman Draft',
+  },
+  {
+    id: '2025-bowman-hobby-box',
+    label: '2025 Bowman Hobby Box',
+    query: '2025 Bowman Baseball Hobby Box',
+    year: 2025,
+    release: 'Bowman Baseball',
+    format: 'Hobby Box',
+    family: '2025 Bowman',
+  },
+  {
+    id: '2025-bowman-jumbo-box',
+    label: '2025 Bowman Jumbo Box',
+    query: '2025 Bowman Baseball Jumbo Box',
+    year: 2025,
+    release: 'Bowman Baseball',
+    format: 'Jumbo Box',
+    family: '2025 Bowman',
+  },
+  {
+    id: '2025-bowman-chrome-hobby-box',
+    label: '2025 Bowman Chrome Hobby Box',
+    query: '2025 Bowman Chrome Baseball Hobby Box',
+    year: 2025,
+    release: 'Bowman Chrome',
+    format: 'Hobby Box',
+    family: '2025 Bowman Chrome',
+  },
+  {
+    id: '2025-bowman-chrome-hta-choice-box',
+    label: '2025 Bowman Chrome HTA Choice Box',
+    query: '2025 Bowman Chrome Baseball HTA Choice Box',
+    year: 2025,
+    release: 'Bowman Chrome',
+    format: 'HTA Choice Box',
+    family: '2025 Bowman Chrome',
+  },
+  {
+    id: '2024-bowman-draft-hobby-box',
+    label: '2024 Bowman Draft Hobby Box',
+    query: '2024 Bowman Draft Baseball Hobby Box',
+    year: 2024,
+    release: 'Bowman Draft',
+    format: 'Hobby Box',
+    family: '2024 Bowman Draft',
+  },
+  {
+    id: '2024-bowman-draft-jumbo-box',
+    label: '2024 Bowman Draft Jumbo Box',
+    query: '2024 Bowman Draft Baseball Jumbo Box',
+    year: 2024,
+    release: 'Bowman Draft',
+    format: 'Jumbo Box',
+    family: '2024 Bowman Draft',
+  },
+  {
+    id: '2024-bowman-draft-super-jumbo-box',
+    label: '2024 Bowman Draft Super Jumbo Box',
+    query: '2024 Bowman Draft Baseball Super Jumbo Box',
+    year: 2024,
+    release: 'Bowman Draft',
+    format: 'Super Jumbo Box',
+    family: '2024 Bowman Draft',
+  },
+  {
+    id: '2024-bowman-hobby-box',
+    label: '2024 Bowman Hobby Box',
+    query: '2024 Bowman Baseball Hobby Box',
+    year: 2024,
+    release: 'Bowman Baseball',
+    format: 'Hobby Box',
+    family: '2024 Bowman',
+  },
+  {
+    id: '2024-bowman-jumbo-box',
+    label: '2024 Bowman Jumbo Box',
+    query: '2024 Bowman Baseball Jumbo Box',
+    year: 2024,
+    release: 'Bowman Baseball',
+    format: 'Jumbo Box',
+    family: '2024 Bowman',
+  },
+  {
+    id: '2024-bowman-chrome-hobby-box',
+    label: '2024 Bowman Chrome Hobby Box',
+    query: '2024 Bowman Chrome Baseball Hobby Box',
+    year: 2024,
+    release: 'Bowman Chrome',
+    format: 'Hobby Box',
+    family: '2024 Bowman Chrome',
+  },
+  {
+    id: '2024-bowman-chrome-hta-choice-box',
+    label: '2024 Bowman Chrome HTA Choice Box',
+    query: '2024 Bowman Chrome Baseball HTA Choice Box',
+    year: 2024,
+    release: 'Bowman Chrome',
+    format: 'HTA Choice Box',
+    family: '2024 Bowman Chrome',
+  },
+  {
+    id: '2023-bowman-draft-hobby-box',
+    label: '2023 Bowman Draft Hobby Box',
+    query: '2023 Bowman Draft Baseball Hobby Box',
+    year: 2023,
+    release: 'Bowman Draft',
+    format: 'Hobby Box',
+    family: '2023 Bowman Draft',
+  },
+  {
+    id: '2023-bowman-draft-jumbo-box',
+    label: '2023 Bowman Draft Jumbo Box',
+    query: '2023 Bowman Draft Baseball Jumbo Box',
+    year: 2023,
+    release: 'Bowman Draft',
+    format: 'Jumbo Box',
+    family: '2023 Bowman Draft',
+  },
+  {
+    id: '2023-bowman-hobby-box',
+    label: '2023 Bowman Hobby Box',
+    query: '2023 Bowman Baseball Hobby Box',
+    year: 2023,
+    release: 'Bowman Baseball',
+    format: 'Hobby Box',
+    family: '2023 Bowman',
+  },
+  {
+    id: '2023-bowman-jumbo-box',
+    label: '2023 Bowman Jumbo Box',
+    query: '2023 Bowman Baseball Jumbo Box',
+    year: 2023,
+    release: 'Bowman Baseball',
+    format: 'Jumbo Box',
+    family: '2023 Bowman',
+  },
+  {
+    id: '2023-bowman-chrome-hobby-box',
+    label: '2023 Bowman Chrome Hobby Box',
+    query: '2023 Bowman Chrome Baseball Hobby Box',
+    year: 2023,
+    release: 'Bowman Chrome',
+    format: 'Hobby Box',
+    family: '2023 Bowman Chrome',
+  },
+  {
+    id: '2023-bowman-chrome-hta-choice-box',
+    label: '2023 Bowman Chrome HTA Choice Box',
+    query: '2023 Bowman Chrome Baseball HTA Choice Box',
+    year: 2023,
+    release: 'Bowman Chrome',
+    format: 'HTA Choice Box',
+    family: '2023 Bowman Chrome',
+  },
+]
+
+export const SEALED_WAX_STARTER_PRODUCTS = SEALED_WAX_PRODUCTS.slice(0, 2).map((product) => product.query)
+
+export function sealedWaxProductForQuery(query: string) {
+  const normalized = query.trim().toLowerCase()
+  return SEALED_WAX_PRODUCTS.find((product) => product.query.toLowerCase() === normalized) ?? null
+}
+
+export function sealedWaxProductLabel(query: string) {
+  return sealedWaxProductForQuery(query)?.label ?? (query.trim() || 'Sealed product')
+}
 
 const SEALED_TERMS = /\b(?:sealed|wax|box|boxes|case|cases|hobby|jumbo|super\s+jumbo|blaster|mega|sapphire|delight|breakers?|pack|packs)\b/i
 const BREAK_TERMS =
@@ -172,6 +411,7 @@ const PRODUCT_IDENTITY_STOP_WORDS = new Set([
 ])
 const SPECIFIC_BOX_FORMATS = [
   { key: 'super-jumbo', pattern: /\bsuper\s+jumbo\b/i },
+  { key: 'hta-choice', pattern: /\bhta\b|\bchoice\b/i },
   { key: 'jumbo', pattern: /\bjumbo\b/i },
   { key: 'mega', pattern: /\bmega\b/i },
   { key: 'blaster', pattern: /\bblaster\b/i },
@@ -216,6 +456,48 @@ function average(values: number[]) {
   const clean = values.filter((value) => Number.isFinite(value) && value > 0)
   if (clean.length === 0) return 0
   return clean.reduce((total, value) => total + value, 0) / clean.length
+}
+
+function weightedAverage(values: number[], weights: number[]) {
+  let weightedTotal = 0
+  let totalWeight = 0
+  values.forEach((value, index) => {
+    const weight = weights[index] ?? 0
+    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(weight) || weight <= 0) return
+    weightedTotal += value * weight
+    totalWeight += weight
+  })
+  return totalWeight > 0 ? weightedTotal / totalWeight : 0
+}
+
+function compDateTime(value?: string | null) {
+  if (!value) return null
+  const isoMatch = value.match(/^(20\d{2})[-/](\d{1,2})[-/](\d{1,2})$/)
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch
+    return Date.UTC(Number(year), Number(month) - 1, Number(day))
+  }
+
+  const usMatch = value.match(/^(\d{1,2})\/(\d{1,2})\/(20\d{2})$/)
+  if (usMatch) {
+    const [, month, day, year] = usMatch
+    return Date.UTC(Number(year), Number(month) - 1, Number(day))
+  }
+
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function sortWaxCompsNewestFirst(comps: WaxComp[]) {
+  return comps
+    .map((comp, index) => ({ comp, index, time: compDateTime(comp.soldAt) }))
+    .sort((left, right) => {
+      if (left.time !== null && right.time !== null && left.time !== right.time) return right.time - left.time
+      if (left.time !== null && right.time === null) return -1
+      if (left.time === null && right.time !== null) return 1
+      return left.index - right.index
+    })
+    .map(({ comp }) => comp)
 }
 
 function priceTokenFromText(text: string) {
@@ -360,9 +642,14 @@ export function parseWaxComps(text: string): WaxComp[] {
     const price = priceToken?.value ?? 0
     if (price <= 0) return
     const dateMatch = trimmed.match(/\b(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\/\d{1,2}\/20\d{2})\b/)
+    const title = trimmed
+      .replace(priceToken?.raw ?? '', '')
+      .replace(dateMatch?.[0] ?? '', '')
+      .replace(/\s+/g, ' ')
+      .trim()
     comps.push({
       id: `comp-${index}-${price}`,
-      title: trimmed.replace(priceToken?.raw ?? '', '').trim() || trimmed,
+      title: title || trimmed,
       price,
       soldAt: dateMatch?.[0] ?? null,
       source: /fanatics/i.test(trimmed) ? 'Fanatics' : /ebay/i.test(trimmed) ? 'eBay' : 'Comps',
@@ -372,19 +659,38 @@ export function parseWaxComps(text: string): WaxComp[] {
   return comps
 }
 
-export function buildWaxMarketModel(comps: WaxComp[], manualMarketPrice = 0): WaxMarketModel {
-  const prices = comps.map((comp) => comp.price).filter((price) => Number.isFinite(price) && price > 0)
+export function waxCompsForQuery(comps: WaxComp[], query = '') {
+  const trimmedQuery = query.trim()
+  const matching = trimmedQuery ? comps.filter((comp) => waxProductMatchesQuery(comp.title, trimmedQuery)) : comps
+  return sortWaxCompsNewestFirst(matching)
+}
+
+export function buildWaxMarketModel(comps: WaxComp[], manualMarketPrice = 0, query = ''): WaxMarketModel {
+  const matchingComps = waxCompsForQuery(comps, query)
+  const prices = matchingComps.map((comp) => comp.price).filter((price) => Number.isFinite(price) && price > 0)
   const medianPrice = median(prices)
   const averagePrice = average(prices)
-  const lastFiveAverage = average(prices.slice(0, 5))
-  const compModel = lastFiveAverage || medianPrice || averagePrice
+  const recentPrices = prices.slice(0, 5)
+  const recentMedian = median(recentPrices)
+  const timeWeights = recentPrices.map((_, index) => Math.max(1, recentPrices.length - index))
+  const timeWeightedAverage = weightedAverage(recentPrices, timeWeights)
+  const lastThreeAverage = average(prices.slice(0, 3))
+  const lastFiveAverage = average(recentPrices)
+  const compModel =
+    timeWeightedAverage && recentMedian
+      ? timeWeightedAverage * 0.7 + recentMedian * 0.3
+      : timeWeightedAverage || recentMedian || lastFiveAverage || medianPrice || averagePrice
   const marketPrice = manualMarketPrice > 0 ? manualMarketPrice : compModel
   return {
     marketPrice,
     source: manualMarketPrice > 0 ? 'manual' : compModel > 0 ? 'comps' : 'empty',
     compCount: prices.length,
+    totalCompCount: comps.length,
+    recentCompCount: recentPrices.length,
     median: medianPrice,
     average: averagePrice,
+    timeWeightedAverage,
+    lastThreeAverage,
     lastFiveAverage,
     low: prices.length ? Math.min(...prices) : 0,
     high: prices.length ? Math.max(...prices) : 0,
