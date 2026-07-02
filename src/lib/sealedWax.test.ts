@@ -33,6 +33,7 @@ describe('sealed wax modeling', () => {
     expect(titleLooksLikeSealedWax('2026 Bowman Baseball Hobby Box Factory Sealed')).toBe(true)
     expect(titleLooksLikeSealedWax('2026 Bowman Baseball Hobby Case Sealed')).toBe(true)
     expect(titleLooksLikeSealedWax('2026 Bowman Baseball Random Team Break Spot')).toBe(false)
+    expect(titleLooksLikeSealedWax('2026 Bowman Baseball - Hobby Box LIVE RIP&SHIP')).toBe(false)
     expect(titleLooksLikeSealedWax('2026 Bowman Baseball Empty Hobby Box Only')).toBe(false)
   })
 
@@ -44,9 +45,15 @@ describe('sealed wax modeling', () => {
 
   it('keeps sealed wax scans aligned to the exact product format', () => {
     const hobbyBox = '2026 Bowman Baseball Hobby Box'
+    const jumboBox = '2026 Bowman Baseball Jumbo Box'
 
     expect(waxProductMatchesQuery('2026 Bowman Baseball Hobby Box Factory Sealed', hobbyBox)).toBe(true)
+    expect(waxProductMatchesQuery('2026 Bowman Baseball MLB Factory Sealed HOBBY BOX Ships', hobbyBox)).toBe(true)
+    expect(waxProductMatchesQuery('2026 Topps Series 2 Baseball Hobby Box - 1 Box', hobbyBox)).toBe(false)
+    expect(waxProductMatchesQuery('2026 Bowman Baseball - Hobby Box (LIVE RIP&SHIP)', hobbyBox)).toBe(false)
     expect(waxProductMatchesQuery('2026 Bowman Baseball Mega Box Factory Sealed', hobbyBox)).toBe(false)
+    expect(waxProductMatchesQuery('2026 Bowman Baseball Hobby Box Factory Sealed', jumboBox)).toBe(false)
+    expect(waxProductMatchesQuery('2026 Bowman Baseball Jumbo Box Factory Sealed', jumboBox)).toBe(true)
     expect(waxProductMatchesQuery('1x Pack of 2026 Bowman Baseball Jumbo Hobby Box', hobbyBox)).toBe(false)
     expect(waxProductMatchesQuery('2026 Bowman Baseball Hobby Case Sealed', hobbyBox)).toBe(false)
   })

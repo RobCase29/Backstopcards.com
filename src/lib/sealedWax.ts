@@ -133,16 +133,43 @@ export type WaxScanResult = {
 export const SEALED_WAX_STARTER_PRODUCTS = [
   '2026 Bowman Baseball Hobby Box',
   '2026 Bowman Baseball Jumbo Box',
-  '2026 Bowman Baseball Hobby Case',
-  '2025 Bowman Draft Baseball Hobby Box',
-  '2025 Bowman Draft Baseball Jumbo Box',
-  '2024 Bowman Chrome Baseball Hobby Box',
-  '2024 Bowman Draft Baseball Super Jumbo Box',
 ] as const
 
 const SEALED_TERMS = /\b(?:sealed|wax|box|boxes|case|cases|hobby|jumbo|super\s+jumbo|blaster|mega|sapphire|delight|breakers?|pack|packs)\b/i
-const BREAK_TERMS = /\b(?:break|breaker|spot|random\s+team|pick\s+your\s+team|pyt|casebreak|case\s+break)\b/i
+const BREAK_TERMS =
+  /\b(?:break|breaker|spot|random\s+team|pick\s+your\s+team|pyt|casebreak|case\s+break|rip\s*&?\s*ship|rip\s+and\s+ship|live\s+rip|personal\s+break)\b/i
 const EMPTY_TERMS = /\b(?:empty|wrapper|wrappers|packaging|box\s+only)\b/i
+const PRODUCT_IDENTITY_STOP_WORDS = new Set([
+  'and',
+  'baseball',
+  'basketball',
+  'blaster',
+  'box',
+  'boxes',
+  'card',
+  'cards',
+  'case',
+  'cases',
+  'delight',
+  'factory',
+  'football',
+  'format',
+  'hobby',
+  'hockey',
+  'jumbo',
+  'mega',
+  'pack',
+  'packs',
+  'product',
+  'sapphire',
+  'sealed',
+  'soccer',
+  'super',
+  'the',
+  'trading',
+  'wax',
+  'with',
+])
 const SPECIFIC_BOX_FORMATS = [
   { key: 'super-jumbo', pattern: /\bsuper\s+jumbo\b/i },
   { key: 'jumbo', pattern: /\bjumbo\b/i },
@@ -280,12 +307,24 @@ function specificBoxFormat(title: string) {
   return SPECIFIC_BOX_FORMATS.find(({ pattern }) => pattern.test(title))?.key ?? null
 }
 
+function productIdentityTokens(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 2 && !PRODUCT_IDENTITY_STOP_WORDS.has(word))
+}
+
 export function waxProductMatchesQuery(title: string, query: string) {
   if (!titleLooksLikeSealedWax(title)) return false
 
   const queryKind = waxProductKind(query)
   const titleKind = waxProductKind(title)
   if (queryKind !== 'sealed' && titleKind !== queryKind) return false
+
+  const normalizedTitle = title.toLowerCase()
+  const identityTokens = productIdentityTokens(query)
+  if (identityTokens.length > 0 && !identityTokens.every((word) => normalizedTitle.includes(word))) return false
 
   const queryFormat = specificBoxFormat(query)
   const titleFormat = specificBoxFormat(title)
@@ -363,6 +402,7 @@ export function parseDaveAdamsQuotes(text: string, query: string): WaxListing[] 
     const price = priceToken?.value ?? 0
     if (price <= 0) return
     const title = trimmed.replace(url, '').replace(priceToken?.raw ?? '', '').replace(/\s+/g, ' ').trim() || query
+    if (!waxProductMatchesQuery(title, query)) return
     const confidence = Math.max(0.42, waxTitleConfidence(title, query))
     listings.push({
       id: `dave-adams-${index}-${price}-${slugFromTitle(title)}`,

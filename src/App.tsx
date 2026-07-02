@@ -5369,9 +5369,10 @@ function SealedWaxDesk({
             <Package size={14} />
             Sealed Wax Desk
           </span>
-          <h2>Boxes, cases, and packs versus recent market.</h2>
+          <h2>2026 Bowman Hobby and Jumbo wax.</h2>
           <p>
-            Anchor the product with recent box comps or a fair-value quote, then scan live marketplaces for listings near or below the current market.
+            Start with the two formats we can model cleanly: Hobby Box and Jumbo Box. Anchor each with recent comps or a fair-value quote, then scan live
+            marketplaces for sealed boxes near the current market.
           </p>
         </div>
         <div className="wax-hero-metrics" aria-label="Sealed wax status">
@@ -5398,7 +5399,7 @@ function SealedWaxDesk({
           <div className="wax-panel-title">
             <div>
               <span>1 / Product</span>
-              <strong>Choose sealed product</strong>
+              <strong>Choose 2026 Bowman format</strong>
             </div>
             <a className="wax-inline-link" href={daveSearchUrl} target="_blank" rel="noreferrer">
               <ExternalLink size={14} />
@@ -5415,7 +5416,7 @@ function SealedWaxDesk({
                 value={query}
                 onChange={(event) => onQueryChange(event.target.value)}
                 placeholder="2026 Bowman Baseball Hobby Box"
-                aria-label="Sealed wax product"
+                aria-label="2026 Bowman wax format"
               />
             </div>
             <datalist id="sealed-wax-starter-products">
@@ -5471,7 +5472,7 @@ function SealedWaxDesk({
 
           <button className="primary-button wax-scan-button" type="button" onClick={onScan} disabled={!canScan}>
             <RefreshCw size={16} className={loading ? 'spin' : undefined} />
-            {loading ? 'Scanning Wax' : 'Scan Sealed Wax'}
+            {loading ? 'Scanning 2026 Bowman Wax' : 'Scan 2026 Bowman Wax'}
           </button>
 
           {error ? (
@@ -5497,7 +5498,7 @@ function SealedWaxDesk({
             className="wax-textarea"
             value={compText}
             onChange={(event) => onCompTextChange(event.target.value)}
-            placeholder={`Paste Market Movers box comps here, one per line.\neBay $240 2026 Bowman Hobby Box 7/1/2026\nFanatics $260 2026 Bowman Hobby Box 6/30/2026`}
+            placeholder={`Paste recent box comps here, one per line.\neBay $240 2026 Bowman Hobby Box 7/1/2026\nFanatics $260 2026 Bowman Jumbo Box 6/30/2026`}
             aria-label="Market comps"
           />
           <div className="wax-model-grid">
@@ -5535,7 +5536,7 @@ function SealedWaxDesk({
           />
           <div className="wax-note">
             <Store size={16} />
-            <span>D&A is quote-driven for now because the storefront blocks automated browsing. Pasted rows still rank against the same market anchor.</span>
+            <span>D&A is quote-driven for now. Pasted Hobby or Jumbo rows still rank against the same market anchor.</span>
           </div>
         </section>
       </div>
@@ -5581,7 +5582,7 @@ function SealedWaxDesk({
             <Package size={26} />
             <div>
               <strong>Ready to scan sealed wax.</strong>
-              <span>Run the scan to compare active eBay, Fanatics Collect, and pasted D&A quotes against your market anchor.</span>
+              <span>Run the scan to compare active eBay, Fanatics Collect, and pasted D&A quotes for the selected 2026 Bowman format.</span>
             </div>
           </div>
         ) : topOpportunities.length === 0 ? (
