@@ -34,9 +34,26 @@ Official checklists + Wax Pack Hero 1st lists
   -> opportunity board, live chart, reject/cleanup loop
 ```
 
-Card Hedge and the canonical SQLite cache are the pricing core. Live marketplace providers should only answer "what is active right now?" and raw query pages/snapshots are cached before scoring so multiple users do not repeat the same external calls. eBay Browse powers active BINs and auctions; Fanatics Collect uses its public search-key flow for active fixed-price listings without storing account credentials. The legacy checklist feed is no longer part of normal startup when local checklist data exists.
+Card Hedge and the canonical comp cache are the pricing core. Live marketplace providers should only answer "what is active right now?" and raw query pages/snapshots are cached before scoring so multiple users do not repeat the same external calls. eBay Browse powers active BINs and auctions; Fanatics Collect uses its public search-key flow for active fixed-price listings without storing account credentials. The legacy checklist feed is no longer part of normal startup when local checklist data exists.
 
 Subscription read: keep Card Hedge and eBay active. Market Movers is now a validation/taxonomy backup unless Card Hedge coverage proves weaker than expected. Fanatics Collect does not require stored login credentials for the current public fixed-price search path. The legacy checklist feed can be cancelled after local checklists and multipliers cover the releases you care about.
+
+## Hosted Storage
+
+The production scale layer uses two small managed stores:
+
+- **Upstash Redis**: shared 24-hour cache for marketplace query pages and daily ranking refreshes. This protects eBay/Fanatics request budgets when multiple users scan the same player, set, or variation.
+- **Neon Postgres**: shared live-market snapshot store. Fresh BIN/auction scans survive Vercel function restarts and can hydrate the opportunity chart after reloads, but they expire automatically so stale active listings do not pollute sold-comp models.
+
+Local development still falls back to the ignored SQLite files in `local-data/`. Production should set these Vercel environment variables:
+
+```bash
+DATABASE_URL=your_neon_connection_string
+UPSTASH_REDIS_REST_URL=your_upstash_rest_url
+UPSTASH_REDIS_REST_TOKEN=your_upstash_rest_token
+```
+
+If Vercel provisions the Redis integration with KV-compatible names, `KV_REST_API_URL` and `KV_REST_API_TOKEN` are accepted as aliases. Keep all of these server-side only.
 
 ## Consensus Rankings
 
@@ -90,6 +107,9 @@ EBAY_CLIENT_SECRET=your_ebay_client_secret
 EBAY_ENV=production
 EBAY_MARKETPLACE_ID=EBAY_US
 CARD_HEDGE_API_KEY=your_card_hedge_api_key
+DATABASE_URL=your_neon_connection_string
+UPSTASH_REDIS_REST_URL=your_upstash_rest_url
+UPSTASH_REDIS_REST_TOKEN=your_upstash_rest_token
 ```
 
 Legacy checklist-feed credentials can also be set server-side when needed: `PROSPECTPULSE_ACCESS_TOKEN`, or `PROSPECTPULSE_EMAIL` plus `PROSPECTPULSE_PASSWORD`.
@@ -141,7 +161,7 @@ EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS=600
 
 `EBAY_ZIP_CODE` improves shipping context. `EBAY_CATEGORY_ID` can narrow search once you choose the correct eBay leaf category for trading cards.
 
-The `/api/ebay/search` proxy caches raw eBay query pages before the app maps and scores them. Fixed-price Browse pages default to 24 hours, so if one visitor scans `Aiva Arquette 2026 Bowman Chrome 1st auto`, the next visitor reuses that page instead of spending another eBay request. Auction pages default to 10 minutes because current bids and end times go stale quickly. The deployed site uses Vercel Runtime Cache when available and falls back to the local SQLite cache in development. Scan stats report live pages versus cached pages so rate-limit savings are visible.
+The `/api/ebay/search` proxy caches raw eBay query pages before the app maps and scores them. Fixed-price Browse pages default to 24 hours, so if one visitor scans `Aiva Arquette 2026 Bowman Chrome 1st auto`, the next visitor reuses that page instead of spending another eBay request. Auction pages default to 10 minutes because current bids and end times go stale quickly. The deployed site uses Upstash Redis first, then Vercel Runtime Cache if available, and finally the local SQLite cache in development. Scan stats report live pages versus cached pages so rate-limit savings are visible.
 
 ## eBay Sold Access (Optional)
 
@@ -186,7 +206,7 @@ npm run sales:doctor
 
 `sales:doctor` reports cache health: raw rows, modeled players, latest sold date, reviewed/flagged rows, bucket overrides, missing base-auto anchors, and fresh live-market buy dots.
 
-Fresh BIN/auction scans are also cached as short-lived live-market snapshots. They hydrate the Live Market Map after reloads, but expire automatically so stale active listings do not contaminate permanent sold-comp models.
+Fresh BIN/auction scans are also cached as short-lived live-market snapshots. Production writes them to Neon; local development uses SQLite. They hydrate the Live Market Map after reloads, but expire automatically so stale active listings do not contaminate permanent sold-comp models.
 
 ## Official Checklist Ledger
 

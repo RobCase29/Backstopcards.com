@@ -5070,7 +5070,7 @@ button.sales-bucket-tile {
 .workflow-command,
 .model-support-dock,
 .deal-workflow,
-.beta-workflow {
+.case-hit-workflow {
   width: min(var(--stage-max), 100%);
   margin: 12px auto 0;
 }
@@ -5478,16 +5478,16 @@ button.sales-bucket-tile {
 }
 
 .deal-workflow .bin-radar,
-.beta-workflow .bin-radar {
+.case-hit-workflow .bin-radar {
   margin-top: 0;
 }
 
-.beta-workflow {
+.case-hit-workflow {
   display: grid;
   gap: 10px;
 }
 
-.beta-page-head {
+.case-hit-page-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -5495,14 +5495,14 @@ button.sales-bucket-tile {
   padding: 0 2px;
 }
 
-.beta-page-head span {
+.case-hit-page-head span {
   color: rgba(9, 47, 49, 0.62);
   font-size: 0.68rem;
   font-weight: 920;
   text-transform: uppercase;
 }
 
-.beta-page-head strong {
+.case-hit-page-head strong {
   color: var(--text-strong);
   font-size: 0.98rem;
 }
@@ -10694,7 +10694,7 @@ button.sales-bucket-tile {
 .valuation-app .workflow-command,
 .valuation-app .workbench-layout,
 .valuation-app .deal-workflow,
-.valuation-app .beta-workflow,
+.valuation-app .case-hit-workflow,
 .valuation-app .operations-drawer {
   width: min(var(--stage-max), 100%);
   margin-inline: auto;
@@ -12271,6 +12271,167 @@ button.sales-bucket-tile {
   font-size: 0.72rem;
 }
 
+.valuation-app .opportunity-missions {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.34fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  padding: 10px;
+  border: 1px solid rgba(8, 127, 140, 0.14);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(142, 255, 206, 0.12), transparent 42%),
+    linear-gradient(180deg, rgba(255, 253, 247, 0.9), rgba(250, 244, 229, 0.76));
+  box-shadow: 0 16px 34px rgba(13, 24, 22, 0.08);
+}
+
+.valuation-app .opportunity-missions-copy {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(10, 24, 23, 0.92);
+  color: rgba(255, 253, 247, 0.72);
+}
+
+.valuation-app .opportunity-missions-copy span,
+.valuation-app .mission-copy span {
+  color: var(--accent);
+  font-size: 0.58rem;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.valuation-app .opportunity-missions-copy strong {
+  color: var(--paper);
+  font-size: 0.9rem;
+  font-weight: 950;
+  line-height: 1.12;
+}
+
+.valuation-app .opportunity-mission-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.valuation-app .opportunity-mission {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  gap: 8px 10px;
+  align-items: center;
+  padding: 11px;
+  border: 1px solid rgba(12, 16, 20, 0.1);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(248, 240, 221, 0.62)),
+    rgba(255, 253, 247, 0.9);
+  color: var(--text-strong);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+.valuation-app .opportunity-mission:hover:not(:disabled),
+.valuation-app .opportunity-mission:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(8, 127, 140, 0.38);
+  background:
+    linear-gradient(135deg, rgba(184, 244, 232, 0.5), rgba(255, 253, 247, 0.86)),
+    rgba(255, 253, 247, 0.95);
+  box-shadow: 0 14px 30px rgba(8, 28, 26, 0.13);
+}
+
+.valuation-app .opportunity-mission:disabled {
+  cursor: not-allowed;
+  opacity: 0.54;
+}
+
+.valuation-app .mission-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(8, 127, 140, 0.18);
+  border-radius: 12px;
+  background: rgba(159, 216, 207, 0.24);
+  color: #087f8c;
+}
+
+.valuation-app .mission-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.valuation-app .mission-copy strong {
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: 0.88rem;
+  font-weight: 950;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.valuation-app .mission-copy small {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 850;
+  line-height: 1.18;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  text-transform: uppercase;
+}
+
+.valuation-app .opportunity-mission em {
+  grid-column: 1 / -1;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(10, 24, 23, 0.08);
+  color: #087f8c;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-style: normal;
+  font-weight: 950;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.valuation-app .opportunity-mission.prospects .mission-icon {
+  color: #7a5317;
+  background: rgba(245, 194, 87, 0.24);
+  border-color: rgba(245, 194, 87, 0.34);
+}
+
+.valuation-app .opportunity-mission.player .mission-icon {
+  color: #0b737f;
+  background: rgba(8, 127, 140, 0.14);
+}
+
+.valuation-app .opportunity-mission.price .mission-icon {
+  color: #0f6e48;
+  background: rgba(142, 255, 206, 0.2);
+  border-color: rgba(15, 110, 72, 0.18);
+}
+
 .valuation-app .lookup-board-market-grid .leaderboard-head,
 .valuation-app .lookup-board-market-grid .leaderboard-row {
   grid-template-columns: 42px minmax(142px, 1.04fr) minmax(76px, 0.34fr) minmax(128px, 0.54fr) minmax(148px, 0.62fr);
@@ -12371,6 +12532,33 @@ button.sales-bucket-tile {
 @media (max-width: 980px) {
   .valuation-app .board-trust-strip {
     grid-template-columns: 1fr;
+  }
+
+  .valuation-app .opportunity-missions {
+    grid-template-columns: 1fr;
+    padding: 8px;
+  }
+
+  .valuation-app .opportunity-missions-copy {
+    padding: 10px;
+  }
+
+  .valuation-app .opportunity-mission-grid {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .valuation-app .opportunity-mission-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .opportunity-mission {
+    flex: 0 0 min(82vw, 300px);
+    scroll-snap-align: start;
   }
 
   .valuation-app .lookup-board-market-grid .leaderboard-head,

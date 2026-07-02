@@ -73,9 +73,11 @@ import { compareTeamLabels, normalizeTeamCode, teamDisplayName } from './lib/tea
 import { fetchCardHedgeStatus, type CardHedgeStatus } from './lib/cardHedge'
 import { fetchRankingsData, fetchRankingsStatus, refreshRankings, type RankingsData, type RankingsStatus } from './lib/rankings'
 import {
-  CRYSTALLIZED_CHECKLIST,
+  CASE_HIT_FAMILIES,
+  CASE_HIT_TOTAL_CARDS,
   buildCaseHitAutoEquivalent,
-  fetchCrystallizedCaseHits,
+  fetchCaseHits,
+  type CaseHitInsertKey,
   type CaseHitOpportunity,
   type CaseHitScanResult,
 } from './lib/caseHits'
@@ -182,7 +184,7 @@ type QuickGradeKey =
   | 'sgc-10'
   | 'cgc-9'
   | 'cgc-10'
-type WorkMode = 'lookup' | 'deals' | 'price' | 'health' | 'beta'
+type WorkMode = 'lookup' | 'deals' | 'price' | 'health' | 'case-hits'
 type FreshnessTone = 'fresh' | 'watch' | 'stale' | 'empty' | 'offline'
 type BinVariationOption = {
   key: string
@@ -1250,6 +1252,7 @@ function mergeBinScans(results: EbayBinScanResult[], failedErrors: Array<{ query
         cacheMisses: stats.cacheMisses + result.stats.cacheMisses,
         cacheWrites: stats.cacheWrites + result.stats.cacheWrites,
         cacheSkips: stats.cacheSkips + result.stats.cacheSkips,
+        redisCacheHits: stats.redisCacheHits + result.stats.redisCacheHits,
         runtimeCacheHits: stats.runtimeCacheHits + result.stats.runtimeCacheHits,
         sqliteCacheHits: stats.sqliteCacheHits + result.stats.sqliteCacheHits,
         upstreamPagesFetched: stats.upstreamPagesFetched + result.stats.upstreamPagesFetched,
@@ -1267,6 +1270,7 @@ function mergeBinScans(results: EbayBinScanResult[], failedErrors: Array<{ query
         cacheMisses: 0,
         cacheWrites: 0,
         cacheSkips: 0,
+        redisCacheHits: 0,
         runtimeCacheHits: 0,
         sqliteCacheHits: 0,
         upstreamPagesFetched: 0,
@@ -1436,7 +1440,7 @@ function WorkflowCommand({
           ? 'Price My Card'
           : mode === 'health'
             ? 'Data Health'
-            : 'Beta Lab'
+            : 'Case Hits'
   return (
     <section className="workflow-command" aria-label="Primary navigation">
       <div className="workflow-command-copy">
@@ -1446,7 +1450,7 @@ function WorkflowCommand({
         </span>
         <h2>{modeTitle}</h2>
         <p>
-          Start with the daily board, scan live listings when a target stands out, or price a card directly.
+          Start with Bowman 1st Autos, scan live listings when a target stands out, price a card directly, or explore rare inserts.
         </p>
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
@@ -1523,6 +1527,58 @@ function WorkflowCommand({
           </span>
           <span className="workflow-value">{modelReady ? 'OK' : '--'}</span>
         </button>
+      </div>
+    </section>
+  )
+}
+
+type OpportunityMissionKind = 'board' | 'prospects' | 'player' | 'price'
+
+type OpportunityMission = {
+  key: string
+  eyebrow: string
+  title: string
+  detail: string
+  metric: string
+  kind: OpportunityMissionKind
+  disabled?: boolean
+  onClick: () => void
+}
+
+function OpportunityMissionIcon({ kind }: { kind: OpportunityMissionKind }) {
+  if (kind === 'prospects') return <BookOpenCheck size={18} />
+  if (kind === 'player') return <Radio size={18} />
+  if (kind === 'price') return <Calculator size={18} />
+  return <Activity size={18} />
+}
+
+function OpportunityMissionStrip({ missions }: { missions: OpportunityMission[] }) {
+  return (
+    <section className="opportunity-missions" aria-label="Today's best next actions">
+      <div className="opportunity-missions-copy">
+        <span>Next best actions</span>
+        <strong>Start with a board, a player, or a quick price.</strong>
+      </div>
+      <div className="opportunity-mission-grid">
+        {missions.map((mission) => (
+          <button
+            className={`opportunity-mission ${mission.kind}`}
+            type="button"
+            onClick={mission.onClick}
+            disabled={mission.disabled}
+            key={mission.key}
+          >
+            <span className="mission-icon">
+              <OpportunityMissionIcon kind={mission.kind} />
+            </span>
+            <span className="mission-copy">
+              <span>{mission.eyebrow}</span>
+              <strong>{mission.title}</strong>
+              <small>{mission.detail}</small>
+            </span>
+            <em>{mission.metric}</em>
+          </button>
+        ))}
       </div>
     </section>
   )
@@ -4826,6 +4882,8 @@ function CaseHitLab({
   loading,
   error,
   ebayStatus,
+  familyFilter,
+  onFamilyFilterChange,
   minPrice,
   onMinPriceChange,
   onScan,
@@ -4835,11 +4893,17 @@ function CaseHitLab({
   loading: boolean
   error: string | null
   ebayStatus: EbayStatus | null
+  familyFilter: 'all' | CaseHitInsertKey
+  onFamilyFilterChange: (value: 'all' | CaseHitInsertKey) => void
   minPrice: number
   onMinPriceChange: (value: number) => void
   onScan: () => void
 }) {
   const configured = Boolean(ebayStatus?.configured)
+  const activeFamilies =
+    familyFilter === 'all' ? CASE_HIT_FAMILIES : CASE_HIT_FAMILIES.filter((family) => family.key === familyFilter)
+  const selectedFamily = familyFilter === 'all' ? null : activeFamilies[0]
+  const activeChecklistSize = activeFamilies.reduce((total, family) => total + family.cardCount, 0)
   const opportunities = scan?.opportunities ?? []
   const opportunitiesWithAutoLens = opportunities.map((opportunity) => ({
     opportunity,
@@ -4848,22 +4912,23 @@ function CaseHitLab({
   const rendered = [...opportunitiesWithAutoLens].sort(caseHitEntrySort).slice(0, CASE_HIT_RENDER_LIMIT)
   const ranking = new Map(rendered.map((entry, index) => [entry.opportunity.listing.itemId, index + 1]))
   const valuationRows = scan?.valuationRows ?? []
-  const valuationByPlayer = new Map(valuationRows.map((row) => [row.playerName, row]))
+  const valuationByPlayerLane = new Map(valuationRows.map((row) => [`${row.caseHitKey}:${row.playerName}`, row]))
   const playerGroups = Array.from(
     rendered.reduce((groups, entry) => {
-      const playerName = entry.opportunity.listing.playerName
-      const playerEntries = groups.get(playerName) ?? []
+      const groupKey = `${entry.opportunity.listing.caseHitKey}:${entry.opportunity.listing.playerName}`
+      const playerEntries = groups.get(groupKey) ?? []
       playerEntries.push(entry)
-      groups.set(playerName, playerEntries)
+      groups.set(groupKey, playerEntries)
       return groups
     }, new Map<string, CaseHitReviewEntry[]>()),
-  ).map(([playerName, entries]) => {
+  ).map(([groupKey, entries]) => {
     const sortedEntries = [...entries].sort(caseHitEntrySort)
     const best = sortedEntries[0]
-    const valuation = valuationByPlayer.get(playerName)
+    const playerName = best.opportunity.listing.playerName
+    const valuation = valuationByPlayerLane.get(groupKey)
     const bestAllIn = Math.min(...sortedEntries.map((entry) => entry.opportunity.listing.allIn))
     const bestModelEdge = Math.max(...sortedEntries.map((entry) => entry.opportunity.edgeDollars))
-    return { playerName, entries: sortedEntries, best, valuation, bestAllIn, bestModelEdge }
+    return { groupKey, playerName, entries: sortedEntries, best, valuation, bestAllIn, bestModelEdge }
   })
   const positiveEdges = opportunities.filter((opportunity) => opportunity.edgeDollars > 0).length
   const autoLensCount = opportunitiesWithAutoLens.filter((entry) => entry.autoEquivalent).length
@@ -4872,7 +4937,7 @@ function CaseHitLab({
   ).length
   const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
   const canScan = configured && !loading
-  const scanButtonLabel = loading ? 'Scanning' : configured ? 'Scan Crystallized' : 'eBay offline'
+  const scanButtonLabel = loading ? 'Scanning' : configured ? `Scan ${selectedFamily?.shortLabel ?? 'Case Hits'}` : 'eBay offline'
 
   return (
     <section className="bin-radar case-hit-lab">
@@ -4881,7 +4946,7 @@ function CaseHitLab({
           <Gem size={18} />
           <div>
             <h2>Case Hit Lab</h2>
-            <span>2026 Bowman Crystallized active BINs, mapped to the Bowman auto ladder</span>
+            <span>2026 Bowman rare inserts, compared against comps and Bowman 1st Auto peer pricing</span>
           </div>
         </div>
         <div className="bin-radar-pills">
@@ -4889,7 +4954,8 @@ function CaseHitLab({
             {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
             {configured ? 'eBay only' : 'eBay keys needed'}
           </span>
-          <span>{CRYSTALLIZED_CHECKLIST.length} cards</span>
+          <span>{activeChecklistSize.toLocaleString()} cards</span>
+          <span>{selectedFamily ? `${selectedFamily.printRun.toLocaleString()} est. run` : `${CASE_HIT_TOTAL_CARDS} total checklist`}</span>
           <span>{scan ? `${scan.listings.length.toLocaleString()} mapped` : 'No scan yet'}</span>
           <span>{scan ? `${positiveEdges.toLocaleString()} ask edges` : 'Ask model pending'}</span>
           <span>{scan ? `${relativeEdges.toLocaleString()} value tiers` : 'Relative value pending'}</span>
@@ -4900,9 +4966,24 @@ function CaseHitLab({
 
       <div className="bin-radar-controls">
         <label className="bin-control">
+          <span>Family</span>
+          <select
+            aria-label="Case hit family"
+            value={familyFilter}
+            onChange={(event) => onFamilyFilterChange(event.target.value as 'all' | CaseHitInsertKey)}
+          >
+            <option value="all">All rare inserts</option>
+            {CASE_HIT_FAMILIES.map((family) => (
+              <option key={family.key} value={family.key}>
+                {family.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="bin-control">
           <span>Min BIN</span>
           <input
-            aria-label="Minimum Crystallized BIN price"
+            aria-label="Minimum case hit BIN price"
             min="0"
             step="5"
             type="number"
@@ -4938,12 +5019,12 @@ function CaseHitLab({
           <strong>List price maps to the player's Bowman auto ladder</strong>
         </div>
         <div>
-          <span>Serial Ignored</span>
-          <strong>Gold, red, and base Crystallized all map by price, not insert numbering</strong>
+          <span>Family Lanes</span>
+          <strong>Patchwork, Anime, Kanji, Spotlights, Crystallized, and Final Draft price separately</strong>
         </div>
         <div>
-          <span>Decision Signal</span>
-          <strong>Best reads are case hits priced like base or common refractor autos</strong>
+          <span>Scarcity Context</span>
+          <strong>Estimated print runs help orient value when direct comps are thin</strong>
         </div>
       </div>
 
@@ -4952,17 +5033,17 @@ function CaseHitLab({
           <KeyRound size={24} />
           <div>
             <strong>eBay production keys are required.</strong>
-            <span>This lab builds from active eBay Crystallized BINs only.</span>
+            <span>This lab builds from active rare-insert listings and the Bowman 1st Auto model.</span>
           </div>
         </div>
       ) : !scan ? (
         <div className="bin-empty-state ready">
           <Gem size={24} />
           <div>
-            <strong>Ready to trial eBay-only case-hit modeling.</strong>
+            <strong>Ready to scan 2026 Bowman case hits.</strong>
             <span>
-              The model scans the 20-card Crystallized checklist, rejects adjacent inserts/autos, and estimates value from active ask comps
-              plus pack-odds rarity. It also compares each ask to the same player's Bowman auto variation ladder.
+              The model scans the official rare-insert checklists, rejects adjacent inserts/autos, and estimates value from active ask comps,
+              print-run context, and the same player's Bowman 1st Auto ladder when available.
             </span>
           </div>
         </div>
@@ -4970,7 +5051,7 @@ function CaseHitLab({
         <div className="bin-empty-state muted">
           <Gem size={24} />
           <div>
-            <strong>No Crystallized listings survived the title filters.</strong>
+            <strong>No case-hit listings survived the title filters.</strong>
             <span>{scan.stats.dedupedItems.toLocaleString()} eBay items were reviewed before checklist and insert filtering.</span>
           </div>
         </div>
@@ -4995,7 +5076,7 @@ function CaseHitLab({
             {playerGroups.map((group) => {
               const bestAutoLens = group.best.autoEquivalent
               return (
-                <section className="case-hit-player-group" key={group.playerName}>
+                <section className="case-hit-player-group" key={group.groupKey}>
                   <div className="case-hit-player-group-header">
                     <div>
                       <span>
@@ -5004,9 +5085,10 @@ function CaseHitLab({
                       </span>
                       <strong>{group.playerName}</strong>
                       <small>
+                        {group.best.opportunity.listing.caseHitLabel} /{' '}
                         {bestAutoLens
-                          ? `Best ask trades like ${compactVariation(bestAutoLens.equivalentLabel)} at ${formatMultiplier(bestAutoLens.autoMultiple)} base auto`
-                          : 'No Bowman auto ladder match yet'}
+                          ? `best ask trades like ${compactVariation(bestAutoLens.equivalentLabel)} at ${formatMultiplier(bestAutoLens.autoMultiple)} base auto`
+                          : 'no Bowman auto ladder match yet'}
                       </small>
                     </div>
                     <div className="case-hit-player-group-metrics">
@@ -5047,7 +5129,9 @@ function CaseHitLab({
                             <span>{opportunity.listing.title}</span>
                             <div className="bin-evidence-strip">
                               <small>{opportunity.listing.variationLabel}</small>
+                              <small>{opportunity.listing.caseHitLabel}</small>
                               <small>{opportunity.listing.cardNo}</small>
+                              <small>~{opportunity.listing.printRun.toLocaleString()} run</small>
                               <small>{opportunity.compCount} active comps</small>
                               <small>{caseHitSourceLabel(opportunity.source)}</small>
                               {autoEquivalent ? (
@@ -5116,22 +5200,22 @@ function CaseHitLab({
             <summary>
               <span>
                 <strong>Checklist valuation table</strong>
-                <small>{valuationRows.length.toLocaleString()} players / active ask pricing / pack-odds rarity</small>
+                <small>{valuationRows.length.toLocaleString()} cards / active ask pricing / print-run context</small>
               </span>
             </summary>
             <div className="case-hit-model-board">
               <div className="case-hit-model-title">
-                <strong>Crystallized Variation Model</strong>
+                <strong>Rare Insert Valuation Table</strong>
                 <span>Reference layer only. The review queue above is the primary workflow.</span>
               </div>
               <div className="case-hit-model-list">
                 {valuationRows.map((row, index) => (
-                  <article className="case-hit-model-row" key={row.cardNo}>
+                  <article className="case-hit-model-row" key={`${row.caseHitKey}:${row.cardNo}`}>
                     <div className="case-hit-player-cell">
                       <span>#{index + 1}</span>
                       <strong>{row.playerName}</strong>
                       <small>
-                        {row.cardNo} / {row.team}
+                        {row.caseHitLabel} / {row.cardNo} / {row.team}
                       </small>
                     </div>
                     <div className="case-hit-base-cell">
@@ -5204,6 +5288,7 @@ function App() {
   const [caseHitScan, setCaseHitScan] = useState<CaseHitScanResult | null>(null)
   const [caseHitLoading, setCaseHitLoading] = useState(false)
   const [caseHitError, setCaseHitError] = useState<string | null>(null)
+  const [caseHitFamilyFilter, setCaseHitFamilyFilter] = useState<'all' | CaseHitInsertKey>('all')
   const [caseHitMinPrice, setCaseHitMinPrice] = useState(20)
   const [salesCacheModel, setSalesCacheModel] = useState<SalesCachePlayerModel | null>(null)
   const [activeSalesCacheModels, setActiveSalesCacheModels] = useState<Record<string, SalesCachePlayerModel>>({})
@@ -6022,6 +6107,12 @@ function App() {
     setCaseHitError(null)
   }
 
+  function updateCaseHitFamilyFilter(value: 'all' | CaseHitInsertKey) {
+    setCaseHitFamilyFilter(value)
+    setCaseHitScan(null)
+    setCaseHitError(null)
+  }
+
   async function loadSalesCacheModelsForListings(listings: ProspectPulseListing[], signal?: AbortSignal) {
     const playerNames = playerNamesFromListings(listings)
     if (playerNames.length === 0) return {}
@@ -6423,7 +6514,7 @@ function App() {
     }
   }
 
-  async function scanCrystallizedCaseHits() {
+  async function scanCaseHits() {
     if (!ebayStatus?.configured) {
       setCaseHitError(ebayStatus?.message ?? 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in .env.local')
       return
@@ -6436,7 +6527,8 @@ function App() {
     setCaseHitError(null)
 
     try {
-      const scanResult = await fetchCrystallizedCaseHits({
+      const scanResult = await fetchCaseHits({
+        caseHitKeys: caseHitFamilyFilter === 'all' ? undefined : [caseHitFamilyFilter],
         minPrice: caseHitMinPrice,
         signal: controller.signal,
       })
@@ -6448,7 +6540,7 @@ function App() {
       )
     } catch (scanError) {
       if (controller.signal.aborted) return
-      setCaseHitError(scanError instanceof Error ? scanError.message : 'Crystallized scan failed')
+      setCaseHitError(scanError instanceof Error ? scanError.message : 'Case hit scan failed')
     } finally {
       if (caseHitRequestRef.current === controller) {
         setCaseHitLoading(false)
@@ -6456,6 +6548,66 @@ function App() {
       }
     }
   }
+
+  const missionLeadRow =
+    effectiveSelectedRow ??
+    renderedRowsForDisplay.find((row) => scoreDynastyValueOpportunity(row) > 0) ??
+    renderedRowsForDisplay[0] ??
+    null
+  const missionTargetCount = selectedTeamOption ? teamScanRows.length : Math.min(BOARD_DEAL_SCAN_LIMIT, renderedRowsForDisplay.length)
+  const topProspectCount = matrix.rows.filter((row) => {
+    const rank = primaryRankOrInfinity(row)
+    return Number.isFinite(rank) && rank <= 100
+  }).length
+  const missionDisabled = binLoading || auctionLoading
+  const opportunityMissions: OpportunityMission[] = [
+    {
+      key: 'scan-board',
+      eyebrow: selectedTeamOption ? 'Team sweep' : 'Best value sweep',
+      title: selectedTeamOption ? selectedTeamOption.label : 'Current board',
+      detail: selectedTeamOption
+        ? `Checks live listings for the strongest ${selectedTeamOption.label} targets.`
+        : 'Checks live listings for the highest value players on screen.',
+      metric: `${missionTargetCount.toLocaleString()} targets`,
+      kind: 'board',
+      disabled: missionTargetCount === 0 || missionDisabled,
+      onClick: selectedTeamOption ? scanSelectedTeamDeals : scanVisibleBoardDeals,
+    },
+    {
+      key: 'scan-prospects',
+      eyebrow: 'Rank-first sweep',
+      title: 'Top 100 prospects',
+      detail: 'Runs a prospect-ranking scan across loaded Bowman sets.',
+      metric: `${topProspectCount.toLocaleString()} matched`,
+      kind: 'prospects',
+      disabled: topProspectCount === 0 || missionDisabled,
+      onClick: scanTop100Prospects,
+    },
+    {
+      key: 'scan-lead',
+      eyebrow: 'Player focus',
+      title: missionLeadRow?.playerName ?? 'Choose a player',
+      detail: missionLeadRow
+        ? `${money(missionLeadRow.baseTwmaPrice)} base auto / ${primaryRankLabel(missionLeadRow) ?? 'rank pending'}`
+        : 'Select a modeled player to scan their live market.',
+      metric: 'Scan player',
+      kind: 'player',
+      disabled: !missionLeadRow || missionDisabled,
+      onClick: () => {
+        if (missionLeadRow) scanBinsForLookupRow(missionLeadRow)
+      },
+    },
+    {
+      key: 'price-card',
+      eyebrow: 'Quick quote',
+      title: missionLeadRow ? `Price ${missionLeadRow.playerName}` : 'Price a card',
+      detail: 'Open the card calculator with variation, grade, and all-in price.',
+      metric: 'Calculator',
+      kind: 'price',
+      disabled: !missionLeadRow,
+      onClick: () => setWorkMode('price'),
+    },
+  ]
 
   return (
     <main className="app-shell valuation-app">
@@ -6493,9 +6645,9 @@ function App() {
             <Download size={16} />
             Export
           </button>
-          <button className="ghost-button" type="button" onClick={() => setWorkMode((mode) => (mode === 'beta' ? 'lookup' : 'beta'))}>
+          <button className="ghost-button" type="button" onClick={() => setWorkMode((mode) => (mode === 'case-hits' ? 'lookup' : 'case-hits'))}>
             <Gem size={16} />
-            {workMode === 'beta' ? 'Main Desk' : 'Beta'}
+            {workMode === 'case-hits' ? 'Main Desk' : 'Case Hits'}
           </button>
         </div>
       </section>
@@ -6609,6 +6761,8 @@ function App() {
                 Active BINs and auctions vs modeled price
               </span>
             </div>
+
+            <OpportunityMissionStrip missions={opportunityMissions} />
 
             <div className="toolbar valuation-toolbar">
               <label className="filter-select">
@@ -6905,10 +7059,10 @@ function App() {
           </div>
         </section>
       ) : (
-        <section className="beta-workflow" aria-label="Beta labs">
-          <div className="beta-page-head">
-            <span>Beta Lab</span>
-            <strong>Crystallized case hits</strong>
+        <section className="case-hit-workflow" aria-label="Case hits">
+          <div className="case-hit-page-head">
+            <span>Case Hits</span>
+            <strong>2026 Bowman rare inserts</strong>
           </div>
           <CaseHitLab
             scan={caseHitScan}
@@ -6916,9 +7070,11 @@ function App() {
             loading={caseHitLoading}
             error={caseHitError}
             ebayStatus={ebayStatus}
+            familyFilter={caseHitFamilyFilter}
+            onFamilyFilterChange={updateCaseHitFamilyFilter}
             minPrice={caseHitMinPrice}
             onMinPriceChange={updateCaseHitMinPrice}
-            onScan={() => void scanCrystallizedCaseHits()}
+            onScan={() => void scanCaseHits()}
           />
         </section>
       )}

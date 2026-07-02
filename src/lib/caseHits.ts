@@ -1,5 +1,7 @@
+import { BOWMAN_2026_CASE_HIT_CHECKLISTS } from '../data/bowman2026CaseHits'
 import type { PricingRow, VariationQuote } from './matrix'
 
+export type CaseHitInsertKey = keyof typeof BOWMAN_2026_CASE_HIT_CHECKLISTS
 export type CaseHitVariationKey = 'base' | 'gold' | 'orange' | 'red' | 'superfractor'
 
 export type CaseHitModelSource = 'same-player' | 'player-rarity' | 'variation-ask' | 'global-rarity' | 'thin-ask'
@@ -10,6 +12,8 @@ export interface CaseHitChecklistCard {
   playerName: string
   team: string
   rookie?: boolean
+  caseHitKey?: CaseHitInsertKey
+  caseHitLabel?: string
 }
 
 export interface CaseHitVariation {
@@ -18,6 +22,18 @@ export interface CaseHitVariation {
   serial: number | null
   minPackOdds: number
   odds: Partial<Record<'hobby' | 'jumbo' | 'delight' | 'value', number>>
+}
+
+export interface CaseHitFamily {
+  key: CaseHitInsertKey
+  label: string
+  shortLabel: string
+  cardCount: number
+  printRun: number
+  checklist: CaseHitChecklistCard[]
+  variations: CaseHitVariation[]
+  searchTerms: string[]
+  patterns: RegExp[]
 }
 
 export interface RawEbayCaseHitItem {
@@ -43,6 +59,8 @@ export interface RawEbayCaseHitItem {
 
 export interface CaseHitListing {
   itemId: string
+  caseHitKey: CaseHitInsertKey
+  caseHitLabel: string
   cardNo: string
   playerName: string
   team: string
@@ -50,6 +68,7 @@ export interface CaseHitListing {
   variationKey: CaseHitVariationKey
   variationLabel: string
   serial: number | null
+  printRun: number
   price: number
   shipping: number
   allIn: number
@@ -110,6 +129,9 @@ export interface CaseHitValuationCell {
 }
 
 export interface CaseHitValuationRow {
+  caseHitKey: CaseHitInsertKey
+  caseHitLabel: string
+  printRun: number
   cardNo: string
   playerName: string
   team: string
@@ -157,28 +179,27 @@ type EbaySearchResponse = {
   error?: string
 }
 
-export const CRYSTALLIZED_CHECKLIST: CaseHitChecklistCard[] = [
-  { cardNo: 'BWC-1', playerName: 'Aiva Arquette', team: 'Miami Marlins' },
-  { cardNo: 'BWC-2', playerName: 'Ronald Acuña Jr.', team: 'Atlanta Braves' },
-  { cardNo: 'BWC-3', playerName: 'Marek Houston', team: 'Minnesota Twins' },
-  { cardNo: 'BWC-4', playerName: 'Edward Florentino', team: 'Pittsburgh Pirates' },
-  { cardNo: 'BWC-5', playerName: 'Jacob Misiorowski', team: 'Milwaukee Brewers', rookie: true },
-  { cardNo: 'BWC-6', playerName: 'Bryce Eldridge', team: 'San Francisco Giants', rookie: true },
-  { cardNo: 'BWC-7', playerName: 'Bobby Witt Jr.', team: 'Kansas City Royals' },
-  { cardNo: 'BWC-8', playerName: 'Aaron Judge', team: 'New York Yankees' },
-  { cardNo: 'BWC-9', playerName: 'Samuel Basallo', team: 'Baltimore Orioles', rookie: true },
-  { cardNo: 'BWC-10', playerName: 'Daniel Pierce', team: 'Tampa Bay Rays' },
-  { cardNo: 'BWC-11', playerName: 'Sal Stewart', team: 'Cincinnati Reds', rookie: true },
-  { cardNo: 'BWC-12', playerName: 'Vladimir Guerrero Jr.', team: 'Toronto Blue Jays' },
-  { cardNo: 'BWC-13', playerName: 'Jac Caglianone', team: 'Kansas City Royals', rookie: true },
-  { cardNo: 'BWC-14', playerName: 'Ethan Holliday', team: 'Colorado Rockies' },
-  { cardNo: 'BWC-15', playerName: 'Bubba Chandler', team: 'Pittsburgh Pirates', rookie: true },
-  { cardNo: 'BWC-16', playerName: 'Paul Skenes', team: 'Pittsburgh Pirates' },
-  { cardNo: 'BWC-17', playerName: 'Colson Montgomery', team: 'Chicago White Sox', rookie: true },
-  { cardNo: 'BWC-18', playerName: 'Roman Anthony', team: 'Boston Red Sox', rookie: true },
-  { cardNo: 'BWC-19', playerName: 'Shohei Ohtani', team: 'Los Angeles Dodgers' },
-  { cardNo: 'BWC-20', playerName: 'Francisco Lindor', team: 'New York Mets' },
-]
+const CRYSTALLIZED_PRINT_RUN = 100
+
+function familyChecklist(key: CaseHitInsertKey, label: string): CaseHitChecklistCard[] {
+  return BOWMAN_2026_CASE_HIT_CHECKLISTS[key].map((card) => ({
+    cardNo: card.cardNo,
+    playerName: card.playerName,
+    team: card.team,
+    caseHitKey: key,
+    caseHitLabel: label,
+  }))
+}
+
+function baseVariation(label: string, printRun: number): CaseHitVariation {
+  return {
+    key: 'base',
+    label,
+    serial: null,
+    minPackOdds: printRun,
+    odds: {},
+  }
+}
 
 export const CRYSTALLIZED_VARIATIONS: CaseHitVariation[] = [
   {
@@ -218,10 +239,97 @@ export const CRYSTALLIZED_VARIATIONS: CaseHitVariation[] = [
   },
 ]
 
-const BASE_ODDS = CRYSTALLIZED_VARIATIONS[0].minPackOdds
+const BASE_CRYSTALLIZED_ODDS = CRYSTALLIZED_VARIATIONS[0].minPackOdds
 
-const NON_CRYSTALLIZED_TERMS =
-  /\b(power\s*chord|patchwork|electric\s+sluggers|under\s+the\s+radar|bowman\s+sterling|anime|kanji|spotlight|auto|autograph|signed|topps\s+bunt\s+digital|topps\s+bunt|bunt|digital|virtual|redeemed|\d+\s*cc)\b/i
+export const CASE_HIT_FAMILIES: CaseHitFamily[] = [
+  {
+    key: 'patchwork',
+    label: 'Patchwork',
+    shortLabel: 'Patchwork',
+    cardCount: 30,
+    printRun: 185,
+    checklist: familyChecklist('patchwork', 'Patchwork'),
+    variations: [baseVariation('Patchwork', 185)],
+    searchTerms: ['2026 Bowman Patchwork'],
+    patterns: [/\bpatchwork\b/i],
+  },
+  {
+    key: 'anime-kanji',
+    label: 'Anime Kanji',
+    shortLabel: 'Kanji',
+    cardCount: 7,
+    printRun: 5,
+    checklist: familyChecklist('anime-kanji', 'Anime Kanji'),
+    variations: [baseVariation('Anime Kanji', 5)],
+    searchTerms: ['2026 Bowman Anime Kanji', '2026 Bowman Kanji'],
+    patterns: [/\banime\b(?=.*\bkanji\b)/i, /\bkanji\b/i],
+  },
+  {
+    key: 'anime',
+    label: 'Anime',
+    shortLabel: 'Anime',
+    cardCount: 29,
+    printRun: 190,
+    checklist: familyChecklist('anime', 'Anime'),
+    variations: [baseVariation('Anime', 190)],
+    searchTerms: ['2026 Bowman Anime'],
+    patterns: [/\banime\b/i],
+  },
+  {
+    key: 'bowman-spotlights',
+    label: 'Bowman Spotlights',
+    shortLabel: 'Spotlights',
+    cardCount: 15,
+    printRun: 140,
+    checklist: familyChecklist('bowman-spotlights', 'Bowman Spotlights'),
+    variations: [baseVariation('Bowman Spotlights', 140)],
+    searchTerms: ['2026 Bowman Spotlights', '2026 Bowman Bowman Spotlights'],
+    patterns: [/\bbowman\s+spotlights?\b/i, /\bspotlights?\b/i],
+  },
+  {
+    key: 'crystallized',
+    label: 'Crystallized',
+    shortLabel: 'Crystallized',
+    cardCount: 20,
+    printRun: CRYSTALLIZED_PRINT_RUN,
+    checklist: familyChecklist('crystallized', 'Crystallized'),
+    variations: CRYSTALLIZED_VARIATIONS,
+    searchTerms: ['2026 Bowman Crystallized', '2026 Bowman BWC'],
+    patterns: [/\bcrystall?ized\b/i, /\bBWC[-\s]?\d+\b/i],
+  },
+  {
+    key: 'final-draft',
+    label: 'Final Draft',
+    shortLabel: 'Final Draft',
+    cardCount: 20,
+    printRun: 185,
+    checklist: familyChecklist('final-draft', 'Final Draft'),
+    variations: [baseVariation('Final Draft', 185)],
+    searchTerms: ['2026 Bowman Final Draft'],
+    patterns: [/\bfinal\s+draft\b/i],
+  },
+]
+
+export const CASE_HIT_FAMILY_OPTIONS = CASE_HIT_FAMILIES.map((family) => ({
+  key: family.key,
+  label: family.label,
+  cardCount: family.cardCount,
+  printRun: family.printRun,
+}))
+
+export const CASE_HIT_TOTAL_CARDS = CASE_HIT_FAMILIES.reduce((total, family) => total + family.cardCount, 0)
+export const CRYSTALLIZED_CHECKLIST = CASE_HIT_FAMILIES.find((family) => family.key === 'crystallized')?.checklist ?? []
+
+const CASE_HIT_FAMILY_BY_KEY = new Map(CASE_HIT_FAMILIES.map((family) => [family.key, family]))
+
+const PHYSICAL_BLOCKER_TERMS =
+  /\b(topps\s+bunt\s+digital|topps\s+bunt|bunt|digital|virtual|redeemed|\d+\s*cc)\b/i
+const AUTO_BLOCKER_TERMS =
+  /\b(auto(?:graph|graphs|graphed)?|autographs?|signature|signed|hand\s*signed|in\s*person|ip\s+auto|ip\s+signed|redemption)\b/i
+const ADJACENT_INSERT_BLOCKER_TERMS =
+  /\b(power\s*chords?|electric\s+sluggers?|under\s+the\s+radar|bowman\s+sterling|scouts?\s+top\s*100|draft\s+night|ascensions?)\b/i
+const NON_CRYSTALLIZED_PARALLEL_TERMS =
+  /\b(gold|orange|superfractor|refractor)\b|\bred\b(?=\s+(?:refractor|parallel|wave|lava|shimmer|foil|ice|crystal))|(?:^|\s|#)\/\d{1,3}(?:\s|$)/i
 
 function normalizeText(value: string) {
   return value
@@ -241,6 +349,13 @@ function titleMatchesPlayer(title: string, playerName: string) {
   const titleWords = new Set(normalizedWords(title))
   const playerWords = normalizedWords(playerName).filter((word) => word.length > 1 && word !== 'jr')
   return playerWords.every((word) => titleWords.has(word))
+}
+
+function titleMatchesCardNo(title: string, cardNo: string) {
+  const match = cardNo.match(/^([A-Z]+)-?(\d+)$/i)
+  if (!match) return false
+  const [, prefix, number] = match
+  return new RegExp(`\\b${prefix}[-\\s#]*0*${number}\\b`, 'i').test(title)
 }
 
 function numberValue(value: unknown, fallback = 0) {
@@ -443,46 +558,102 @@ function dedupeListings(listings: CaseHitListing[]) {
   return deduped
 }
 
-function variationForKey(key: CaseHitVariationKey) {
-  return CRYSTALLIZED_VARIATIONS.find((variation) => variation.key === key) ?? CRYSTALLIZED_VARIATIONS[0]
+function caseHitFamilyForKey(key: string | undefined | null) {
+  if (!key) return null
+  return CASE_HIT_FAMILY_BY_KEY.get(key as CaseHitInsertKey) ?? null
 }
 
-export function rarityMultiplier(key: CaseHitVariationKey) {
-  const variation = variationForKey(key)
-  return Number(Math.pow(variation.minPackOdds / BASE_ODDS, 0.55).toFixed(2))
+function titleMatchesFamily(title: string, family: CaseHitFamily) {
+  return family.patterns.some((pattern) => pattern.test(title))
 }
 
-function classifyVariation(title: string): CaseHitVariationKey {
+function classifyCaseHitFamily(title: string, preferredKey?: string) {
+  const preferred = caseHitFamilyForKey(preferredKey)
+  const orderedFamilies = [
+    CASE_HIT_FAMILY_BY_KEY.get('anime-kanji'),
+    CASE_HIT_FAMILY_BY_KEY.get('crystallized'),
+    CASE_HIT_FAMILY_BY_KEY.get('patchwork'),
+    CASE_HIT_FAMILY_BY_KEY.get('final-draft'),
+    CASE_HIT_FAMILY_BY_KEY.get('bowman-spotlights'),
+    CASE_HIT_FAMILY_BY_KEY.get('anime'),
+  ].filter((family): family is CaseHitFamily => Boolean(family))
+
+  if (preferred && titleMatchesFamily(title, preferred)) {
+    if (preferred.key === 'anime' && titleMatchesFamily(title, CASE_HIT_FAMILY_BY_KEY.get('anime-kanji')!)) {
+      return CASE_HIT_FAMILY_BY_KEY.get('anime-kanji') ?? preferred
+    }
+    return preferred
+  }
+
+  return orderedFamilies.find((family) => titleMatchesFamily(title, family)) ?? null
+}
+
+function findChecklistCard(family: CaseHitFamily, title: string, playerName?: string) {
+  const queryPlayer = firstString([playerName], '')
+  if (queryPlayer) {
+    const card = family.checklist.find((candidate) => playerKey(candidate.playerName) === playerKey(queryPlayer))
+    if (card && titleMatchesPlayer(title, card.playerName)) return card
+  }
+
+  const cardNoMatch = family.checklist.find((candidate) => titleMatchesCardNo(title, candidate.cardNo))
+  if (cardNoMatch && (!queryPlayer || titleMatchesPlayer(title, cardNoMatch.playerName))) return cardNoMatch
+
+  return family.checklist.find((candidate) => titleMatchesPlayer(title, candidate.playerName)) ?? null
+}
+
+function variationForKey(key: CaseHitVariationKey, caseHitKey: CaseHitInsertKey = 'crystallized') {
+  const family = caseHitFamilyForKey(caseHitKey) ?? CASE_HIT_FAMILY_BY_KEY.get('crystallized')!
+  return family.variations.find((variation) => variation.key === key) ?? family.variations[0]
+}
+
+export function rarityMultiplier(key: CaseHitVariationKey, caseHitKey: CaseHitInsertKey = 'crystallized') {
+  const family = caseHitFamilyForKey(caseHitKey) ?? CASE_HIT_FAMILY_BY_KEY.get('crystallized')!
+  const variation = variationForKey(key, family.key)
+  const familyPrintRunMultiplier = Math.pow(CRYSTALLIZED_PRINT_RUN / family.printRun, 0.55)
+  const variationMultiplier =
+    family.key === 'crystallized' && variation.key !== 'base'
+      ? Math.pow(variation.minPackOdds / BASE_CRYSTALLIZED_ODDS, 0.55)
+      : 1
+  return Number((familyPrintRunMultiplier * variationMultiplier).toFixed(2))
+}
+
+function classifyVariation(title: string, family: CaseHitFamily): CaseHitVariationKey {
+  if (family.key !== 'crystallized') return 'base'
   const normalized = normalizeText(title)
   if (/\bsuperfractor\b|(?:^|\s|#)\/1(?:\s|$)/i.test(title)) return 'superfractor'
   if (/\bred\s+(?:refractor|crystallized)\b/.test(normalized) || /(?:^|\s|#)\/5(?:\s|$)/i.test(title)) return 'red'
   if (/\borange\b|(?:^|\s|#)\/25(?:\s|$)/i.test(title)) return 'orange'
   if (/\bgold\b|(?:^|\s|#)\/50(?:\s|$)/i.test(title)) return 'gold'
-  if (normalized.includes('refractor')) return 'base'
   return 'base'
 }
 
 export function mapEbayItemToCaseHitListing(item: RawEbayCaseHitItem): CaseHitListing | null {
   const title = firstString([item.title], '')
-  const playerName = firstString([item._bowmanTraderQuery?.playerName], '')
-  const checklistCard = CRYSTALLIZED_CHECKLIST.find((card) => card.playerName === playerName)
-  if (!title || !checklistCard || !titleMatchesPlayer(title, checklistCard.playerName)) return null
+  if (!title) return null
 
   const normalizedTitle = normalizeText(title)
-  const isCrystallized = /\bcrystall?ized\b/.test(normalizedTitle)
-  if (!/\b2026\b/.test(normalizedTitle) || !/\bbowman\b/.test(normalizedTitle) || !isCrystallized) return null
-  if (NON_CRYSTALLIZED_TERMS.test(title)) return null
+  if (!/\b2026\b/.test(normalizedTitle) || !/\bbowman\b/.test(normalizedTitle)) return null
+  if (PHYSICAL_BLOCKER_TERMS.test(title) || AUTO_BLOCKER_TERMS.test(title) || ADJACENT_INSERT_BLOCKER_TERMS.test(title)) return null
+
+  const family = classifyCaseHitFamily(title, item._bowmanTraderQuery?.caseHit)
+  if (!family) return null
+  if (family.key !== 'crystallized' && NON_CRYSTALLIZED_PARALLEL_TERMS.test(title)) return null
+
+  const checklistCard = findChecklistCard(family, title, item._bowmanTraderQuery?.playerName)
+  if (!checklistCard) return null
 
   const price = numberValue(item.price?.value, 0)
   if (price <= 0) return null
 
-  const variationKey = classifyVariation(title)
-  const variation = variationForKey(variationKey)
+  const variationKey = classifyVariation(title, family)
+  const variation = variationForKey(variationKey, family.key)
   const itemId = firstString([item.legacyItemId, item.itemId, item.itemWebUrl], title)
   const shipping = minShippingCost(item)
 
   return {
     itemId,
+    caseHitKey: family.key,
+    caseHitLabel: family.label,
     cardNo: checklistCard.cardNo,
     playerName: checklistCard.playerName,
     team: checklistCard.team,
@@ -490,6 +661,7 @@ export function mapEbayItemToCaseHitListing(item: RawEbayCaseHitItem): CaseHitLi
     variationKey,
     variationLabel: variation.label,
     serial: variation.serial,
+    printRun: family.printRun,
     price,
     shipping,
     allIn: price + shipping,
@@ -514,31 +686,48 @@ function robustAsk(values: number[]) {
   return Number((median * 0.72 + lowAsk * 0.28).toFixed(2))
 }
 
+function modelLaneKey(caseHitKey: CaseHitInsertKey, variationKey: CaseHitVariationKey) {
+  return `${caseHitKey}:${variationKey}`
+}
+
 function buildBaseAnchors(listings: CaseHitListing[], excludeItemId?: string) {
   const usable = listings.filter((listing) => listing.itemId !== excludeItemId)
-  const globalBaseAsk = robustAsk(usable.map((listing) => listing.allIn / rarityMultiplier(listing.variationKey)))
-  const variationAsks = new Map<CaseHitVariationKey, number>()
+  const globalBaseAsks = new Map<CaseHitInsertKey, number>()
+  const variationAsks = new Map<string, number>()
   const playerBaseAsks = new Map<string, number>()
 
-  for (const variation of CRYSTALLIZED_VARIATIONS) {
-    variationAsks.set(
-      variation.key,
-      robustAsk(usable.filter((listing) => listing.variationKey === variation.key).map((listing) => listing.allIn)),
-    )
-  }
-
-  for (const card of CRYSTALLIZED_CHECKLIST) {
-    playerBaseAsks.set(
-      card.playerName,
+  for (const family of CASE_HIT_FAMILIES) {
+    globalBaseAsks.set(
+      family.key,
       robustAsk(
         usable
-          .filter((listing) => listing.playerName === card.playerName)
-          .map((listing) => listing.allIn / rarityMultiplier(listing.variationKey)),
+          .filter((listing) => listing.caseHitKey === family.key)
+          .map((listing) => listing.allIn / rarityMultiplier(listing.variationKey, listing.caseHitKey)),
       ),
     )
+    for (const variation of family.variations) {
+      variationAsks.set(
+        modelLaneKey(family.key, variation.key),
+        robustAsk(
+          usable
+            .filter((listing) => listing.caseHitKey === family.key && listing.variationKey === variation.key)
+            .map((listing) => listing.allIn),
+        ),
+      )
+    }
+    for (const card of family.checklist) {
+      playerBaseAsks.set(
+        `${family.key}:${card.playerName}`,
+        robustAsk(
+          usable
+            .filter((listing) => listing.caseHitKey === family.key && listing.playerName === card.playerName)
+            .map((listing) => listing.allIn / rarityMultiplier(listing.variationKey, listing.caseHitKey)),
+        ),
+      )
+    }
   }
 
-  return { globalBaseAsk, playerBaseAsks, variationAsks }
+  return { globalBaseAsks, playerBaseAsks, variationAsks }
 }
 
 function opportunityGrade(edgeDollars: number, discountPct: number, confidence: number): CaseHitOpportunity['grade'] {
@@ -552,23 +741,25 @@ function opportunityGrade(edgeDollars: number, discountPct: number, confidence: 
 export function rankCaseHitListings(listings: CaseHitListing[]): CaseHitOpportunity[] {
   return listings
     .map((listing) => {
-      const { globalBaseAsk, playerBaseAsks, variationAsks } = buildBaseAnchors(listings, listing.itemId)
+      const { globalBaseAsks, playerBaseAsks, variationAsks } = buildBaseAnchors(listings, listing.itemId)
       const samePlayerVariation = listings.filter(
         (candidate) =>
           candidate.itemId !== listing.itemId &&
+          candidate.caseHitKey === listing.caseHitKey &&
           candidate.playerName === listing.playerName &&
           candidate.variationKey === listing.variationKey,
       )
       const samePlayerAsk = robustAsk(samePlayerVariation.map((candidate) => candidate.allIn))
-      const playerBaseAsk = playerBaseAsks.get(listing.playerName) ?? 0
-      const variationAsk = variationAsks.get(listing.variationKey) ?? 0
-      const rarity = rarityMultiplier(listing.variationKey)
+      const globalBaseAsk = globalBaseAsks.get(listing.caseHitKey) ?? 0
+      const playerBaseAsk = playerBaseAsks.get(`${listing.caseHitKey}:${listing.playerName}`) ?? 0
+      const variationAsk = variationAsks.get(modelLaneKey(listing.caseHitKey, listing.variationKey)) ?? 0
+      const rarity = rarityMultiplier(listing.variationKey, listing.caseHitKey)
       const rarityModel = (playerBaseAsk || globalBaseAsk) * rarity
 
       let modelPrice = rarityModel
       let source: CaseHitModelSource = playerBaseAsk ? 'player-rarity' : 'global-rarity'
       let confidence = playerBaseAsk ? 0.54 : 0.42
-      let compCount = listings.filter((candidate) => candidate.itemId !== listing.itemId).length
+      let compCount = listings.filter((candidate) => candidate.itemId !== listing.itemId && candidate.caseHitKey === listing.caseHitKey).length
 
       if (samePlayerVariation.length >= 2 && samePlayerAsk > 0) {
         modelPrice = samePlayerAsk * 0.72 + (rarityModel || samePlayerAsk) * 0.28
@@ -579,12 +770,22 @@ export function rankCaseHitListings(listings: CaseHitListing[]): CaseHitOpportun
         modelPrice = rarityModel * 0.68 + variationAsk * 0.32
         source = 'player-rarity'
         confidence = 0.58
-        compCount = listings.filter((candidate) => candidate.itemId !== listing.itemId && candidate.playerName === listing.playerName).length
+        compCount = listings.filter(
+          (candidate) =>
+            candidate.itemId !== listing.itemId &&
+            candidate.caseHitKey === listing.caseHitKey &&
+            candidate.playerName === listing.playerName,
+        ).length
       } else if (variationAsk) {
         modelPrice = variationAsk * 0.62 + (rarityModel || variationAsk) * 0.38
         source = 'variation-ask'
         confidence = 0.46
-        compCount = listings.filter((candidate) => candidate.itemId !== listing.itemId && candidate.variationKey === listing.variationKey).length
+        compCount = listings.filter(
+          (candidate) =>
+            candidate.itemId !== listing.itemId &&
+            candidate.caseHitKey === listing.caseHitKey &&
+            candidate.variationKey === listing.variationKey,
+        ).length
       } else if (!modelPrice) {
         modelPrice = listing.allIn
         source = 'thin-ask'
@@ -619,65 +820,77 @@ export function rankCaseHitListings(listings: CaseHitListing[]): CaseHitOpportun
 }
 
 export function buildCaseHitValuationRows(listings: CaseHitListing[]): CaseHitValuationRow[] {
-  const { globalBaseAsk, playerBaseAsks } = buildBaseAnchors(listings)
+  const { globalBaseAsks, playerBaseAsks } = buildBaseAnchors(listings)
 
-  return CRYSTALLIZED_CHECKLIST.map((card) => {
-    const playerListings = listings.filter((listing) => listing.playerName === card.playerName)
-    const playerBaseAsk = playerBaseAsks.get(card.playerName) ?? 0
-    const baseAsk = playerBaseAsk || globalBaseAsk || 0
-    const source: CaseHitValuationRow['source'] = playerBaseAsk ? 'player-ask' : globalBaseAsk ? 'global-ask' : 'unpriced'
-    const confidence =
-      source === 'player-ask'
-        ? Math.min(0.72, 0.46 + playerListings.length / 26)
-        : source === 'global-ask'
-          ? Math.min(0.44, 0.28 + listings.length / 80)
-          : 0
+  return CASE_HIT_FAMILIES.flatMap((family) =>
+    family.checklist.map((card) => {
+      const playerListings = listings.filter(
+        (listing) => listing.caseHitKey === family.key && listing.playerName === card.playerName,
+      )
+      const playerBaseAsk = playerBaseAsks.get(`${family.key}:${card.playerName}`) ?? 0
+      const globalBaseAsk = globalBaseAsks.get(family.key) ?? 0
+      const baseAsk = playerBaseAsk || globalBaseAsk || 0
+      const source: CaseHitValuationRow['source'] = playerBaseAsk ? 'player-ask' : globalBaseAsk ? 'global-ask' : 'unpriced'
+      const confidence =
+        source === 'player-ask'
+          ? Math.min(0.72, 0.46 + playerListings.length / 26)
+          : source === 'global-ask'
+            ? Math.min(0.44, 0.28 + listings.filter((listing) => listing.caseHitKey === family.key).length / 80)
+            : 0
 
-    return {
-      cardNo: card.cardNo,
-      playerName: card.playerName,
-      team: card.team,
-      baseAsk: Number(baseAsk.toFixed(2)),
-      confidence,
-      source,
-      activeListings: playerListings.length,
-      variations: CRYSTALLIZED_VARIATIONS.map((variation) => {
-        const multiplier = rarityMultiplier(variation.key)
-        return {
-          key: variation.key,
-          label: variation.label,
-          serial: variation.serial,
-          price: Number((baseAsk * multiplier).toFixed(2)),
-          rarityMultiplier: multiplier,
-          activeListings: playerListings.filter((listing) => listing.variationKey === variation.key).length,
-        }
-      }),
-    }
-  }).sort(
+      return {
+        caseHitKey: family.key,
+        caseHitLabel: family.label,
+        printRun: family.printRun,
+        cardNo: card.cardNo,
+        playerName: card.playerName,
+        team: card.team,
+        baseAsk: Number(baseAsk.toFixed(2)),
+        confidence,
+        source,
+        activeListings: playerListings.length,
+        variations: family.variations.map((variation) => {
+          const multiplier = rarityMultiplier(variation.key, family.key)
+          return {
+            key: variation.key,
+            label: variation.label,
+            serial: variation.serial,
+            price: Number((baseAsk * multiplier).toFixed(2)),
+            rarityMultiplier: multiplier,
+            activeListings: playerListings.filter((listing) => listing.variationKey === variation.key).length,
+          }
+        }),
+      }
+    }),
+  ).sort(
     (left, right) =>
       right.baseAsk - left.baseAsk ||
       right.activeListings - left.activeListings ||
+      left.caseHitLabel.localeCompare(right.caseHitLabel) ||
       left.playerName.localeCompare(right.playerName),
   )
 }
 
-function querySafePlayerName(playerName: string) {
-  return playerName.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+function selectedCaseHitFamilies(keys?: CaseHitInsertKey[]) {
+  if (!keys || keys.length === 0) return CASE_HIT_FAMILIES
+  const selected = new Set(keys)
+  return CASE_HIT_FAMILIES.filter((family) => selected.has(family.key))
 }
 
-export async function fetchCrystallizedCaseHits(options: {
+export async function fetchCaseHits(options: {
+  caseHitKeys?: CaseHitInsertKey[]
   minPrice?: number
   limitPerQuery?: number
   maxPagesPerQuery?: number
   signal?: AbortSignal
 } = {}): Promise<CaseHitScanResult> {
-  const queries = CRYSTALLIZED_CHECKLIST.flatMap((card) => {
-    const player = querySafePlayerName(card.playerName)
-    return [
-      { q: `${player} 2026 Bowman Crystallized`, playerName: card.playerName, caseHit: 'crystallized' },
-      { q: `${player} 2026 Bowman BWC`, playerName: card.playerName, caseHit: 'crystallized' },
-    ]
-  })
+  const families = selectedCaseHitFamilies(options.caseHitKeys)
+  const queries = families.flatMap((family) =>
+    family.searchTerms.map((q) => ({
+      q,
+      caseHit: family.key,
+    })),
+  )
 
   const response = await fetch('/api/ebay/search', {
     method: 'POST',
@@ -686,14 +899,14 @@ export async function fetchCrystallizedCaseHits(options: {
     body: JSON.stringify({
       queries,
       minPrice: options.minPrice ?? 0,
-      limit: options.limitPerQuery ?? 80,
+      limit: options.limitPerQuery ?? 100,
       maxPages: options.maxPagesPerQuery ?? 1,
       sort: 'price',
     }),
   })
 
   const payload = (await response.json()) as EbaySearchResponse
-  if (!response.ok) throw new Error(payload.error ?? 'Crystallized eBay search failed')
+  if (!response.ok) throw new Error(payload.error ?? 'Case hit eBay search failed')
 
   let rejectedListings = 0
   const listings = dedupeListings(
@@ -707,7 +920,7 @@ export async function fetchCrystallizedCaseHits(options: {
   return {
     listings,
     opportunities: rankCaseHitListings(listings),
-    valuationRows: buildCaseHitValuationRows(listings),
+    valuationRows: buildCaseHitValuationRows(listings).filter((row) => families.some((family) => family.key === row.caseHitKey)),
     fetchedAt: payload.fetchedAt ?? new Date().toISOString(),
     errors: payload.errors ?? [],
     stats: {
@@ -723,4 +936,13 @@ export async function fetchCrystallizedCaseHits(options: {
       upstreamPagesFetched: payload.stats?.upstreamPagesFetched ?? payload.stats?.pagesFetched ?? 0,
     },
   }
+}
+
+export async function fetchCrystallizedCaseHits(options: {
+  minPrice?: number
+  limitPerQuery?: number
+  maxPagesPerQuery?: number
+  signal?: AbortSignal
+} = {}) {
+  return fetchCaseHits({ ...options, caseHitKeys: ['crystallized'] })
 }

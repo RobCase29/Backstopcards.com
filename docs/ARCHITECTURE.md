@@ -18,12 +18,13 @@ Anything that does not directly support those jobs should live in an operations 
 Official checklists + Wax Pack Hero 1st lists
   -> checklist universe and card lanes
   -> Card Hedge sold comps
-  -> canonical SQLite sold-comp cache
+  -> canonical sold-comp cache
   -> base-auto anchors and variation fair values
   -> live marketplace scans
      -> eBay Browse active BIN/auction scans today
      -> Fanatics Collect active fixed-price scans through public search-key access
-  -> live opportunity snapshots, rejects, and cleanup feedback
+  -> Upstash Redis marketplace query cache
+  -> Neon live opportunity snapshots, rejects, and cleanup feedback
 ```
 
 ### Keep Active
@@ -33,6 +34,8 @@ Official checklists + Wax Pack Hero 1st lists
 - Fanatics Collect: active fixed-price card discovery through the public search-key + Algolia path; no account login should be stored.
 - Scout the Statline snapshots: value-board ranking, trend, and coverage context.
 - Local canonical SQLite cache: durable modeling layer and cleanup memory.
+- Upstash Redis: hosted shared cache for repeated marketplace pages and ranking refreshes.
+- Neon Postgres: hosted live-market snapshot store for short-lived active listings.
 
 ### Optional / Fallback
 
@@ -47,7 +50,9 @@ Sold comps are immutable enough to store permanently. Live listings are not.
 - Canonical sold comps are stored locally and rebuilt into stable card lanes.
 - Fixed-price live marketplace query pages are cached for 24 hours when the provider supports stable query reuse.
 - Auction/live-bid query pages are cached briefly because bids and end times move.
-- Live opportunity snapshots can be stored as observations, but every listing needs freshness metadata and should be treated as stale quickly.
+- Production stores reusable marketplace query pages in Upstash Redis before mapping/scoring.
+- Production stores live opportunity snapshots in Neon as observations, but every listing needs freshness metadata and should be treated as stale quickly.
+- Local development may fall back to ignored SQLite files when hosted services are not configured.
 - User rejects and bucket merges are cleanup signal, not throwaway UI state.
 
 ## Modeling Policy
@@ -68,11 +73,12 @@ The value board should use current base-auto price against rank-implied base pri
 - Marketplace titles can confirm 1st status, team, grade, card lane, and listing quality, but they should not create the universe on their own.
 - Every external API call should pass through a server route with caching, rate-limit accounting, and no browser-visible secrets.
 - Broad scans should use cached query pages and constrained player buckets.
+- Hosted scans should check Redis before spending marketplace API requests and should write fresh snapshots to Neon after scoring.
 - Classification fixes should be encoded as parser rules or bucket overrides after repeated misses.
 
 ## Subscription Decisions
 
-For the current architecture, Card Hedge and eBay are the important paid/credentialed services. Fanatics Collect is active marketplace discovery but currently does not need a paid/API credential path. Market Movers can be cancelled once Card Hedge coverage and canonical classification are good enough across a few full releases. The legacy checklist feed can be cancelled once the local checklist ledger has all target releases and multipliers covered.
+For the current architecture, Card Hedge and eBay are the important paid/credentialed services. Upstash Redis and Neon are infrastructure, not data subscriptions, and should stay because they reduce API spend and make the hosted app coherent across users. Fanatics Collect is active marketplace discovery but currently does not need a paid/API credential path. Market Movers can be cancelled once Card Hedge coverage and canonical classification are good enough across a few full releases. The legacy checklist feed can be cancelled once the local checklist ledger has all target releases and multipliers covered.
 
 ## Next Refactors
 

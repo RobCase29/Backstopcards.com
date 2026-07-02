@@ -125,10 +125,59 @@ describe('case hit eBay modeling', () => {
     expect(
       mapEbayItemToCaseHitListing(
         item({
-          title: '2026 Bowman Patchwork Aiva Arquette BWC-1',
+          title: '2026 Bowman Sterling Aiva Arquette Rare Insert',
         }),
       ),
     ).toBeNull()
+  })
+
+  it('maps supported rare insert families from the official 2026 Bowman checklist', () => {
+    const patchwork = mapEbayItemToCaseHitListing(
+      item({
+        itemId: 'patchwork-1',
+        title: '2026 Bowman Patchwork Jac Caglianone P-23 Kansas City Royals',
+        _bowmanTraderQuery: { playerName: 'Jac Caglianone', caseHit: 'patchwork' },
+      }),
+    )
+
+    expect(patchwork?.caseHitKey).toBe('patchwork')
+    expect(patchwork?.caseHitLabel).toBe('Patchwork')
+    expect(patchwork?.variationKey).toBe('base')
+    expect(patchwork?.printRun).toBe(185)
+
+    const kanji = mapEbayItemToCaseHitListing(
+      item({
+        itemId: 'kanji-1',
+        title: '2026 Bowman Anime Kanji Shohei Ohtani BA-26 Los Angeles Dodgers',
+        _bowmanTraderQuery: { playerName: 'Shohei Ohtani', caseHit: 'anime-kanji' },
+      }),
+    )
+
+    expect(kanji?.caseHitKey).toBe('anime-kanji')
+    expect(kanji?.caseHitLabel).toBe('Anime Kanji')
+    expect(kanji?.printRun).toBe(5)
+    expect(rarityMultiplier('base', 'anime-kanji')).toBeGreaterThan(rarityMultiplier('base', 'crystallized'))
+    expect(rarityMultiplier('base', 'patchwork')).toBeLessThan(1)
+  })
+
+  it('keeps non-Crystallized rare-insert lanes to base print-run models for now', () => {
+    expect(
+      mapEbayItemToCaseHitListing(
+        item({
+          title: '2026 Bowman Anime Shohei Ohtani Red Refractor /5 BA-26 Dodgers',
+          _bowmanTraderQuery: { playerName: 'Shohei Ohtani', caseHit: 'anime' },
+        }),
+      ),
+    ).toBeNull()
+
+    expect(
+      mapEbayItemToCaseHitListing(
+        item({
+          title: '2026 Bowman Anime Manny Ramirez Boston Red Sox BA-10',
+          _bowmanTraderQuery: { playerName: 'Manny Ramirez', caseHit: 'anime' },
+        }),
+      )?.caseHitKey,
+    ).toBe('anime')
   })
 
   it('does not treat sales language or digital Bunt cards as physical Superfractors', () => {

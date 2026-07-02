@@ -20,12 +20,16 @@ const EBAY_RATE_LIMIT_DEFAULT_MS = 60_000
 const EBAY_RATE_LIMIT_RETRY_CAP_MS = 4_000
 const EBAY_QUERY_CACHE_VERSION = 1
 const EBAY_QUERY_CACHE_NAMESPACE = 'backstop-ebay-query-v1'
+const UPSTASH_QUERY_CACHE_PREFIX = 'backstop:query-cache'
+const NEON_LIVE_MARKET_SCHEMA_VERSION = 1
 const FANATICS_COLLECT_GRAPHQL_URL = 'https://app.fanaticscollect.com/graphql'
 const FANATICS_COLLECT_MARKETPLACE_URL = 'https://www.fanaticscollect.com/marketplace?type=FIXED&category=Sports+Cards+%3E+Baseball'
 const FANATICS_COLLECT_ALGOLIA_APP_ID = '3XT9C4X62I'
 const FANATICS_COLLECT_ALGOLIA_INDEX = 'prod_item_state_v1'
+const FANATICS_COLLECT_QUERY_CACHE_NAMESPACE = 'backstop-fanatics-collect-query-v1'
 const FANATICS_COLLECT_SEARCH_KEY_TTL_MS = 10 * 60 * 1000
 const FANATICS_COLLECT_QUERY_BATCH_SIZE = 25
+const FANATICS_COLLECT_QUERY_CACHE_TTL_SECONDS = 24 * 60 * 60
 const RANKINGS_RUNTIME_CACHE_NAMESPACE = 'backstop-rankings-v1'
 const RANKINGS_RUNTIME_CACHE_KEY = 'sts-ranking-csv-bundle'
 const RANKINGS_RUNTIME_CACHE_TTL_SECONDS = 36 * 60 * 60
@@ -166,6 +170,7 @@ type EbayQueryCacheStats = {
   cacheMisses: number
   cacheWrites: number
   cacheSkips: number
+  redisCacheHits: number
   runtimeCacheHits: number
   sqliteCacheHits: number
   upstreamPagesFetched: number
@@ -842,6 +847,27 @@ async function refreshStsRankingSources() {
 }
 
 async function readRuntimeRankingSources() {
+  const redis = await getUpstashRedis(process.env)
+  if (redis) {
+    try {
+      const value = await redis.get<string>(redisQueryCacheKey(RANKINGS_RUNTIME_CACHE_NAMESPACE, RANKINGS_RUNTIME_CACHE_KEY))
+      const parsed =
+        typeof value === 'string'
+          ? (parseJsonText(value, null) as RankingRuntimeCacheValue | null)
+          : ((value ?? null) as RankingRuntimeCacheValue | null)
+      if (
+        parsed?.version === 1 &&
+        Array.isArray(parsed.sources) &&
+        parsed.sources.every((source) => typeof source.csv === 'string' && source.csv.trim()) &&
+        Date.parse(parsed.expiresAt) > Date.now()
+      ) {
+        return { sources: parsed.sources, cache: 'redis' as const }
+      }
+    } catch {
+      // Redis is preferred in production, but bundled data can still answer.
+    }
+  }
+
   const cache = await getVercelRuntimeCache(RANKINGS_RUNTIME_CACHE_NAMESPACE)
   if (!cache) return null
   try {
@@ -852,7 +878,7 @@ async function readRuntimeRankingSources() {
       value.sources.every((source) => typeof source.csv === 'string' && source.csv.trim()) &&
       Date.parse(value.expiresAt) > Date.now()
     ) {
-      return value.sources
+      return { sources: value.sources, cache: 'runtime' as const }
     }
   } catch {
     // Runtime Cache is an optimization; bundled data or live STS fetch can still answer.
@@ -861,8 +887,6 @@ async function readRuntimeRankingSources() {
 }
 
 async function writeRuntimeRankingSources(sources: RankingCsvSource[]) {
-  const cache = await getVercelRuntimeCache(RANKINGS_RUNTIME_CACHE_NAMESPACE)
-  if (!cache) return false
   const refreshedAt = new Date().toISOString()
   const value: RankingRuntimeCacheValue = {
     version: 1,
@@ -870,15 +894,30 @@ async function writeRuntimeRankingSources(sources: RankingCsvSource[]) {
     expiresAt: new Date(Date.now() + RANKINGS_RUNTIME_CACHE_TTL_SECONDS * 1000).toISOString(),
     sources,
   }
+  let wrote: 'redis-write' | 'runtime-write' | null = null
+  const redis = await getUpstashRedis(process.env)
+  if (redis) {
+    try {
+      await redis.set(redisQueryCacheKey(RANKINGS_RUNTIME_CACHE_NAMESPACE, RANKINGS_RUNTIME_CACHE_KEY), jsonText(value), {
+        ex: RANKINGS_RUNTIME_CACHE_TTL_SECONDS,
+      })
+      wrote = 'redis-write'
+    } catch {
+      // Keep trying Runtime Cache below.
+    }
+  }
+
+  const cache = await getVercelRuntimeCache(RANKINGS_RUNTIME_CACHE_NAMESPACE)
+  if (!cache) return wrote
   try {
     await cache.set(RANKINGS_RUNTIME_CACHE_KEY, value, {
       ttl: RANKINGS_RUNTIME_CACHE_TTL_SECONDS,
       tags: ['rankings', 'sts'],
       name: 'Scout the Statline rankings',
     })
-    return true
+    return wrote ?? 'runtime-write'
   } catch {
-    return false
+    return wrote
   }
 }
 
@@ -907,13 +946,13 @@ function readBundledRankingSources(): RankingCsvSource[] {
 
 async function currentRankingSources(options: { allowLiveRefresh: boolean }) {
   const cached = await readRuntimeRankingSources()
-  if (cached?.length) return { sources: cached, cache: 'runtime' as const }
+  if (cached?.sources.length) return cached
 
   if (options.allowLiveRefresh) {
     try {
       const fresh = await refreshStsRankingSources()
       const cachedFresh = await writeRuntimeRankingSources(fresh)
-      return { sources: fresh, cache: cachedFresh ? ('runtime-write' as const) : ('live' as const) }
+      return { sources: fresh, cache: cachedFresh ?? ('live' as const) }
     } catch {
       // Fall through to bundled CSVs so the app remains usable if STS is unavailable.
     }
@@ -1035,7 +1074,17 @@ type EbayQueryCacheContext = {
   env: ServerEnv
 }
 
+type RedisClient = {
+  get: <T = unknown>(key: string) => Promise<T | null>
+  set: (key: string, value: unknown, options?: { ex?: number }) => Promise<unknown>
+  ping?: () => Promise<unknown>
+}
+
+type NeonSql = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>
+
 const runtimeCachePromises = new Map<string, Promise<VercelRuntimeCache | null>>()
+const redisClientPromises = new Map<string, Promise<RedisClient | null>>()
+const neonSqlPromises = new Map<string, Promise<NeonSql | null>>()
 
 async function getVercelRuntimeCache(namespace = EBAY_QUERY_CACHE_NAMESPACE) {
   if (!process.env.VERCEL && !process.env.VERCEL_ENV) return null
@@ -1053,6 +1102,64 @@ async function getVercelRuntimeCache(namespace = EBAY_QUERY_CACHE_NAMESPACE) {
     }
   })()
   runtimeCachePromises.set(namespace, nextPromise)
+  return nextPromise
+}
+
+function upstashRedisEnv(env: ServerEnv) {
+  const url = env.UPSTASH_REDIS_REST_URL?.trim() || env.KV_REST_API_URL?.trim() || ''
+  const token = env.UPSTASH_REDIS_REST_TOKEN?.trim() || env.KV_REST_API_TOKEN?.trim() || ''
+  return { url, token, configured: Boolean(url && token) }
+}
+
+async function getUpstashRedis(env: ServerEnv) {
+  const config = upstashRedisEnv(env)
+  if (!config.configured) return null
+  const cacheKey = sha256(`${config.url}:${config.token}`)
+  const existing = redisClientPromises.get(cacheKey)
+  if (existing) return existing
+  const nextPromise = (async () => {
+    try {
+      const specifier = '@upstash/redis'
+      const module = (await import(specifier)) as { Redis?: new (config: { url: string; token: string }) => RedisClient }
+      return module.Redis ? new module.Redis({ url: config.url, token: config.token }) : null
+    } catch {
+      return null
+    }
+  })()
+  redisClientPromises.set(cacheKey, nextPromise)
+  return nextPromise
+}
+
+function redisQueryCacheKey(namespace: string, key: string) {
+  return `${UPSTASH_QUERY_CACHE_PREFIX}:${namespace}:${key}`
+}
+
+function neonDatabaseUrl(env: ServerEnv) {
+  return (
+    env.DATABASE_URL?.trim() ||
+    env.POSTGRES_URL?.trim() ||
+    env.POSTGRES_URL_NON_POOLING?.trim() ||
+    env.NEON_DATABASE_URL?.trim() ||
+    ''
+  )
+}
+
+async function getNeonSql(env: ServerEnv) {
+  const databaseUrl = neonDatabaseUrl(env)
+  if (!databaseUrl) return null
+  const cacheKey = sha256(databaseUrl)
+  const existing = neonSqlPromises.get(cacheKey)
+  if (existing) return existing
+  const nextPromise = (async () => {
+    try {
+      const specifier = '@neondatabase/serverless'
+      const module = (await import(specifier)) as typeof import('@neondatabase/serverless')
+      return module.neon(databaseUrl) as unknown as NeonSql
+    } catch {
+      return null
+    }
+  })()
+  neonSqlPromises.set(cacheKey, nextPromise)
   return nextPromise
 }
 
@@ -1077,6 +1184,7 @@ function emptyEbayQueryCacheStats(): EbayQueryCacheStats {
     cacheMisses: 0,
     cacheWrites: 0,
     cacheSkips: 0,
+    redisCacheHits: 0,
     runtimeCacheHits: 0,
     sqliteCacheHits: 0,
     upstreamPagesFetched: 0,
@@ -1187,11 +1295,30 @@ function validEbayQueryCacheValue(value: EbayQueryCacheValue | null, nowIso: str
   )
 }
 
+function parseRedisEbayQueryCacheValue(value: unknown, nowIso: string) {
+  const parsed =
+    typeof value === 'string'
+      ? (parseJsonText(value, null) as EbayQueryCacheValue | null)
+      : ((value ?? null) as EbayQueryCacheValue | null)
+  return validEbayQueryCacheValue(parsed, nowIso) ? parsed : null
+}
+
 async function readEbayQueryCache(options: {
   cache: EbayQueryCacheContext | null
   cacheKey: string
   nowIso: string
 }) {
+  const redis = options.cache?.env ? await getUpstashRedis(options.cache.env) : null
+  if (redis) {
+    try {
+      const redisValue = await redis.get<string>(redisQueryCacheKey(EBAY_QUERY_CACHE_NAMESPACE, options.cacheKey))
+      const parsed = parseRedisEbayQueryCacheValue(redisValue, options.nowIso)
+      if (parsed) return { value: parsed, source: 'redis' as const }
+    } catch {
+      // Redis is the shared production cache; fall through if it is temporarily unavailable.
+    }
+  }
+
   const runtimeCache = await getVercelRuntimeCache()
   if (runtimeCache) {
     try {
@@ -1230,6 +1357,16 @@ async function writeEbayQueryCache(options: {
   }
 
   let written = false
+  const redis = options.cache?.env ? await getUpstashRedis(options.cache.env) : null
+  if (redis) {
+    try {
+      await redis.set(redisQueryCacheKey(EBAY_QUERY_CACHE_NAMESPACE, options.cacheKey), serialized, { ex: options.ttlSeconds })
+      written = true
+    } catch {
+      // Keep going; Runtime Cache or SQLite may still save the page.
+    }
+  }
+
   const runtimeCache = await getVercelRuntimeCache()
   if (runtimeCache) {
     try {
@@ -1359,6 +1496,348 @@ function mapLiveMarketListing(row: SqliteRow) {
     expiresAt: rowString(row, 'expiresAt'),
     raw: parseJsonText(rowString(row, 'rawJson'), null),
   }
+}
+
+async function ensureNeonLiveMarketSchema(sql: NeonSql) {
+  await sql`
+    CREATE TABLE IF NOT EXISTS live_market_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      schema_version INTEGER NOT NULL DEFAULT ${NEON_LIVE_MARKET_SCHEMA_VERSION},
+      scan_type TEXT NOT NULL,
+      scan_key TEXT NOT NULL,
+      search_mode TEXT,
+      player_scope TEXT,
+      release_scope TEXT,
+      observed_at TIMESTAMPTZ NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      listing_count INTEGER NOT NULL,
+      opportunity_count INTEGER NOT NULL,
+      request_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      stats_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `
+  await sql`
+    CREATE TABLE IF NOT EXISTS live_market_listings (
+      snapshot_id TEXT NOT NULL REFERENCES live_market_snapshots(snapshot_id) ON DELETE CASCADE,
+      item_id TEXT NOT NULL,
+      listing_kind TEXT NOT NULL,
+      marketplace TEXT NOT NULL DEFAULT 'unknown',
+      marketplace_label TEXT NOT NULL DEFAULT 'Unknown',
+      player_name TEXT,
+      title TEXT,
+      listing_url TEXT,
+      image_url TEXT,
+      current_price DOUBLE PRECISION NOT NULL,
+      shipping_cost DOUBLE PRECISION NOT NULL,
+      all_in_price DOUBLE PRECISION NOT NULL,
+      model_price DOUBLE PRECISION,
+      fair_value DOUBLE PRECISION NOT NULL,
+      edge_dollars DOUBLE PRECISION NOT NULL,
+      expected_roi_pct DOUBLE PRECISION NOT NULL,
+      action TEXT,
+      lane TEXT,
+      grade TEXT,
+      variation_label TEXT,
+      matched_variation TEXT,
+      valuation_source TEXT,
+      trust_score DOUBLE PRECISION,
+      score DOUBLE PRECISION,
+      bid_count INTEGER NOT NULL DEFAULT 0,
+      listing_status TEXT,
+      end_time TIMESTAMPTZ,
+      observed_at TIMESTAMPTZ NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      raw_json JSONB NOT NULL DEFAULT 'null'::jsonb,
+      PRIMARY KEY (snapshot_id, item_id)
+    )
+  `
+  await sql`CREATE INDEX IF NOT EXISTS idx_live_market_snapshots_fresh ON live_market_snapshots(scan_type, scan_key, expires_at, observed_at)`
+  await sql`CREATE INDEX IF NOT EXISTS idx_live_market_listings_fresh ON live_market_listings(listing_kind, expires_at, edge_dollars)`
+  await sql`CREATE INDEX IF NOT EXISTS idx_live_market_listings_player ON live_market_listings(player_name, variation_label, expires_at)`
+}
+
+function neonRow(row: Record<string, unknown> | undefined | null): SqliteRow {
+  return (row ?? {}) as SqliteRow
+}
+
+async function pruneExpiredNeonLiveMarketRows(sql: NeonSql, asOf: string) {
+  const listingsDeleted = await sql`
+    WITH deleted AS (
+      DELETE FROM live_market_listings
+      WHERE expires_at <= ${asOf}::timestamptz
+      RETURNING item_id
+    )
+    SELECT COUNT(*) AS "deletedListings" FROM deleted
+  `
+  const snapshotsDeleted = await sql`
+    WITH deleted AS (
+      DELETE FROM live_market_snapshots
+      WHERE expires_at <= ${asOf}::timestamptz
+      RETURNING snapshot_id
+    )
+    SELECT COUNT(*) AS "deletedSnapshots" FROM deleted
+  `
+  return {
+    listings: rowNumber(neonRow(listingsDeleted[0]), 'deletedListings'),
+    snapshots: rowNumber(neonRow(snapshotsDeleted[0]), 'deletedSnapshots'),
+  }
+}
+
+async function insertNeonLiveMarketListings(sql: NeonSql, snapshotId: string, scanType: string, snapshotExpiresAt: string, listings: LiveMarketListingPayload[], observedAt: string) {
+  for (const [index, listing] of listings.entries()) {
+    const itemId = liveMarketListingId(listing, index)
+    const listingExpiresAt = liveMarketListingExpiresAt(listing, snapshotExpiresAt, scanType)
+    const imageUrl = typeof listing.imageUrl === 'string' ? listing.imageUrl : ''
+    const matchedVariation = typeof listing.matchedVariation === 'string' ? listing.matchedVariation : ''
+    const endTime = typeof listing.endTime === 'string' && listing.endTime ? listing.endTime : null
+    await sql`
+      INSERT INTO live_market_listings (
+        snapshot_id, item_id, listing_kind, marketplace, marketplace_label, player_name, title, listing_url, image_url,
+        current_price, shipping_cost, all_in_price, model_price, fair_value, edge_dollars,
+        expected_roi_pct, action, lane, grade, variation_label, matched_variation, valuation_source,
+        trust_score, score, bid_count, listing_status, end_time, observed_at, expires_at, raw_json
+      )
+      VALUES (
+        ${snapshotId},
+        ${itemId},
+        ${String(listing.listingKind ?? scanType)},
+        ${String(listing.marketplace ?? 'unknown')},
+        ${String(listing.marketplaceLabel ?? listing.marketplace ?? 'Unknown')},
+        ${String(listing.playerName ?? '')},
+        ${String(listing.title ?? '')},
+        ${String(listing.listingUrl ?? '')},
+        ${imageUrl},
+        ${Number(listing.currentPrice ?? 0) || 0},
+        ${Number(listing.shippingCost ?? 0) || 0},
+        ${Number(listing.allInPrice ?? 0) || 0},
+        ${Number.isFinite(Number(listing.modelPrice)) ? Number(listing.modelPrice) : null},
+        ${Number(listing.fairValue ?? 0) || 0},
+        ${Number(listing.edgeDollars ?? 0) || 0},
+        ${Number(listing.expectedRoiPct ?? 0) || 0},
+        ${String(listing.action ?? '')},
+        ${String(listing.lane ?? '')},
+        ${String(listing.grade ?? '')},
+        ${String(listing.variationLabel ?? '')},
+        ${matchedVariation},
+        ${String(listing.valuationSource ?? '')},
+        ${Number(listing.trustScore ?? 0) || 0},
+        ${Number(listing.score ?? 0) || 0},
+        ${Number(listing.bidCount ?? 0) || 0},
+        ${String(listing.listingStatus ?? '')},
+        ${endTime}::timestamptz,
+        ${observedAt}::timestamptz,
+        ${listingExpiresAt}::timestamptz,
+        ${jsonText(listing.raw, 'null')}::jsonb
+      )
+      ON CONFLICT (snapshot_id, item_id) DO NOTHING
+    `
+  }
+}
+
+async function handleNeonLiveMarketRoute(route: string, request: Request, sql: NeonSql) {
+  await ensureNeonLiveMarketSchema(sql)
+
+  const now = new Date()
+  const nowIso = now.toISOString()
+
+  if (route === 'prune') {
+    const pruned = await pruneExpiredNeonLiveMarketRows(sql, nowIso)
+    return jsonResponse(200, { pruned: pruned.snapshots + pruned.listings, ...pruned, asOf: nowIso, storage: 'neon' })
+  }
+
+  await pruneExpiredNeonLiveMarketRows(sql, nowIso)
+
+  if (route === 'status') {
+    const stats = await sql`
+      SELECT
+        COUNT(*) AS "snapshotCount",
+        COALESCE(SUM(listing_count), 0) AS "listingCount",
+        COALESCE(SUM(opportunity_count), 0) AS "opportunityCount",
+        MAX(observed_at)::text AS "latestObservedAt",
+        MIN(expires_at)::text AS "nextExpiresAt"
+      FROM live_market_snapshots
+      WHERE expires_at > ${nowIso}::timestamptz
+    `
+    const byType = await sql`
+      SELECT scan_type AS "scanType", COUNT(*) AS "snapshotCount", COALESCE(SUM(listing_count), 0) AS "listingCount"
+      FROM live_market_snapshots
+      WHERE expires_at > ${nowIso}::timestamptz
+      GROUP BY scan_type
+      ORDER BY scan_type
+    `
+    const byMarketplace = await sql`
+      SELECT
+        marketplace,
+        COALESCE(NULLIF(marketplace_label, ''), marketplace) AS "marketplaceLabel",
+        COUNT(DISTINCT snapshot_id) AS "snapshotCount",
+        COUNT(*) AS "listingCount"
+      FROM live_market_listings
+      WHERE expires_at > ${nowIso}::timestamptz
+      GROUP BY marketplace, marketplace_label
+      ORDER BY "listingCount" DESC, marketplace
+    `
+
+    return jsonResponse(200, {
+      available: true,
+      storage: 'neon',
+      dbName: 'Neon Postgres',
+      freshSnapshots: rowNumber(neonRow(stats[0]), 'snapshotCount'),
+      freshListings: rowNumber(neonRow(stats[0]), 'listingCount'),
+      freshOpportunities: rowNumber(neonRow(stats[0]), 'opportunityCount'),
+      latestObservedAt: rowString(neonRow(stats[0]), 'latestObservedAt'),
+      nextExpiresAt: rowString(neonRow(stats[0]), 'nextExpiresAt'),
+      byType: byType.map((row) => ({
+        scanType: rowString(neonRow(row), 'scanType'),
+        snapshots: rowNumber(neonRow(row), 'snapshotCount'),
+        listings: rowNumber(neonRow(row), 'listingCount'),
+      })),
+      byMarketplace: byMarketplace.map((row) => ({
+        marketplace: rowString(neonRow(row), 'marketplace'),
+        label: rowString(neonRow(row), 'marketplaceLabel'),
+        snapshots: rowNumber(neonRow(row), 'snapshotCount'),
+        listings: rowNumber(neonRow(row), 'listingCount'),
+      })),
+    })
+  }
+
+  if (route === 'latest') {
+    const params = new URL(request.url).searchParams
+    const scanType = params.get('scanType') ? safeLiveScanType(params.get('scanType')) : ''
+    const scanKey = String(params.get('scanKey') ?? '').trim().slice(0, MAX_LIVE_MARKET_SCAN_KEY_LENGTH)
+    const limit = clampInt(params.get('limit'), 160, 1, MAX_LIVE_MARKET_LISTINGS)
+    const snapshots = await sql`
+      SELECT
+        snapshot_id AS "snapshotId",
+        scan_type AS "scanType",
+        scan_key AS "scanKey",
+        search_mode AS "searchMode",
+        player_scope AS "playerScope",
+        release_scope AS "releaseScope",
+        observed_at::text AS "observedAt",
+        expires_at::text AS "expiresAt",
+        listing_count AS "listingCount",
+        opportunity_count AS "opportunityCount",
+        request_json::text AS "requestJson",
+        stats_json::text AS "statsJson",
+        created_at::text AS "createdAt"
+      FROM live_market_snapshots
+      WHERE expires_at > ${nowIso}::timestamptz
+        AND (${scanType} = '' OR scan_type = ${scanType})
+        AND (${scanKey} = '' OR scan_key = ${scanKey})
+      ORDER BY observed_at DESC
+      LIMIT 1
+    `
+    const snapshot = snapshots[0]
+
+    if (!snapshot) {
+      return jsonResponse(200, {
+        available: false,
+        storage: 'neon',
+        message: 'No fresh live-market snapshot is available.',
+        listings: [],
+      })
+    }
+
+    const listings = await sql`
+      SELECT
+        snapshot_id AS "snapshotId",
+        item_id AS "itemId",
+        listing_kind AS "listingKind",
+        marketplace,
+        marketplace_label AS "marketplaceLabel",
+        player_name AS "playerName",
+        title,
+        listing_url AS "listingUrl",
+        image_url AS "imageUrl",
+        current_price AS "currentPrice",
+        shipping_cost AS "shippingCost",
+        all_in_price AS "allInPrice",
+        model_price AS "modelPrice",
+        fair_value AS "fairValue",
+        edge_dollars AS "edgeDollars",
+        expected_roi_pct AS "expectedRoiPct",
+        action,
+        lane,
+        grade,
+        variation_label AS "variationLabel",
+        matched_variation AS "matchedVariation",
+        valuation_source AS "valuationSource",
+        trust_score AS "trustScore",
+        score,
+        bid_count AS "bidCount",
+        listing_status AS "listingStatus",
+        end_time::text AS "endTime",
+        observed_at::text AS "observedAt",
+        expires_at::text AS "expiresAt",
+        raw_json::text AS "rawJson"
+      FROM live_market_listings
+      WHERE snapshot_id = ${rowString(neonRow(snapshot), 'snapshotId')}
+        AND expires_at > ${nowIso}::timestamptz
+      ORDER BY edge_dollars DESC, score DESC
+      LIMIT ${limit}
+    `
+
+    return jsonResponse(200, {
+      available: true,
+      storage: 'neon',
+      snapshot: mapLiveMarketSnapshot(neonRow(snapshot)),
+      listings: listings.map((row) => mapLiveMarketListing(neonRow(row))),
+    })
+  }
+
+  const payload = await readJsonBody<LiveMarketSnapshotPayload>(request, MAX_EBAY_BODY_BYTES)
+  const scanType = safeLiveScanType(payload.scanType)
+  const scanKey = String(payload.scanKey ?? `${scanType}:manual`).trim().slice(0, MAX_LIVE_MARKET_SCAN_KEY_LENGTH)
+  const observedAt = safeIsoDate(payload.observedAt, now)
+  const ttlSeconds = clampInt(
+    payload.ttlSeconds,
+    defaultLiveMarketTtlSeconds(scanType),
+    60,
+    Math.min(defaultLiveMarketTtlSeconds(scanType) * 8, LIVE_MARKET_MAX_TTL_SECONDS),
+  )
+  const snapshotExpiresAt = new Date(Date.parse(observedAt) + ttlSeconds * 1_000).toISOString()
+  const listings = (payload.listings ?? [])
+    .filter((listing) => Number.isFinite(Number(listing.allInPrice)) && Number(listing.allInPrice) > 0)
+    .slice(0, MAX_LIVE_MARKET_LISTINGS)
+  const snapshotId = liveMarketSnapshotId(scanType, scanKey, observedAt)
+  const createdAt = nowIso
+
+  await sql`
+    INSERT INTO live_market_snapshots (
+      snapshot_id, schema_version, scan_type, scan_key, search_mode, player_scope, release_scope,
+      observed_at, expires_at, listing_count, opportunity_count, request_json, stats_json, created_at
+    )
+    VALUES (
+      ${snapshotId},
+      ${NEON_LIVE_MARKET_SCHEMA_VERSION},
+      ${scanType},
+      ${scanKey},
+      ${String(payload.searchMode ?? '')},
+      ${String(payload.playerScope ?? '')},
+      ${String(payload.releaseScope ?? '')},
+      ${observedAt}::timestamptz,
+      ${snapshotExpiresAt}::timestamptz,
+      ${listings.length},
+      ${listings.filter((listing) => Number(listing.edgeDollars ?? 0) >= 0).length},
+      ${jsonText(payload.request)}::jsonb,
+      ${jsonText(payload.stats)}::jsonb,
+      ${createdAt}::timestamptz
+    )
+  `
+  await insertNeonLiveMarketListings(sql, snapshotId, scanType, snapshotExpiresAt, listings, observedAt)
+
+  return jsonResponse(200, {
+    available: true,
+    storage: 'neon',
+    snapshotId,
+    scanType,
+    scanKey,
+    observedAt,
+    expiresAt: snapshotExpiresAt,
+    listingCount: listings.length,
+    opportunityCount: listings.filter((listing) => Number(listing.edgeDollars ?? 0) >= 0).length,
+  })
 }
 
 function mapSalesCacheBucket(row: SqliteRow) {
@@ -1908,6 +2387,7 @@ async function searchEbayJob(options: {
       const cached = await readEbayQueryCache({ cache: cache ?? null, cacheKey, nowIso })
       if (cached.value) {
         cacheStats.cacheHits += 1
+        if (cached.source === 'redis') cacheStats.redisCacheHits += 1
         if (cached.source === 'runtime') cacheStats.runtimeCacheHits += 1
         if (cached.source === 'sqlite') cacheStats.sqliteCacheHits += 1
         const items = cached.value.items ?? []
@@ -2037,6 +2517,7 @@ async function searchEbaySoldJob(options: {
       const cached = await readEbayQueryCache({ cache: cache ?? null, cacheKey, nowIso })
       if (cached.value) {
         cacheStats.cacheHits += 1
+        if (cached.source === 'redis') cacheStats.redisCacheHits += 1
         if (cached.source === 'runtime') cacheStats.runtimeCacheHits += 1
         if (cached.source === 'sqlite') cacheStats.sqliteCacheHits += 1
         const items = cached.value.items ?? []
@@ -2262,6 +2743,7 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
 
   if (request.method === 'GET' && route === 'status') {
     const runtimeCache = await getVercelRuntimeCache()
+    const redisConfig = upstashRedisEnv(env)
     return jsonResponse(200, {
       configured,
       environment: sandbox ? 'sandbox' : 'production',
@@ -2272,6 +2754,7 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
         fixedPriceTtlSeconds: clampInt(env.EBAY_BIN_QUERY_CACHE_TTL_SECONDS, EBAY_BIN_QUERY_CACHE_TTL_SECONDS, 0, 24 * 60 * 60),
         auctionTtlSeconds: clampInt(env.EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS, EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS, 0, 24 * 60 * 60),
         soldTtlSeconds: clampInt(env.EBAY_SOLD_QUERY_CACHE_TTL_SECONDS, EBAY_SOLD_QUERY_CACHE_TTL_SECONDS, 0, 30 * 24 * 60 * 60),
+        redisCache: redisConfig.configured,
         runtimeCache: Boolean(runtimeCache),
         localCache: true,
       },
@@ -2365,6 +2848,7 @@ export async function handleEbayRoute(route: string, request: Request, env: Serv
         cacheMisses: fulfilled.reduce((total, result) => total + result.value.cache.cacheMisses, 0),
         cacheWrites: fulfilled.reduce((total, result) => total + result.value.cache.cacheWrites, 0),
         cacheSkips: fulfilled.reduce((total, result) => total + result.value.cache.cacheSkips, 0),
+        redisCacheHits: fulfilled.reduce((total, result) => total + result.value.cache.redisCacheHits, 0),
         runtimeCacheHits: fulfilled.reduce((total, result) => total + result.value.cache.runtimeCacheHits, 0),
         sqliteCacheHits: fulfilled.reduce((total, result) => total + result.value.cache.sqliteCacheHits, 0),
         upstreamPagesFetched: fulfilled.reduce((total, result) => total + result.value.cache.upstreamPagesFetched, 0),
@@ -2396,6 +2880,13 @@ type FanaticsCollectSearchPayload = {
   queries?: Array<FanaticsCollectQueryMeta | string>
   minPrice?: number | string
   limit?: number | string
+}
+
+type FanaticsCollectSearchResult = {
+  items: Array<Record<string, unknown>>
+  errors: Array<{ query?: string; error: string }>
+  fetchedAt: string
+  stats: EbayQueryCacheStats
 }
 
 function fanaticsCollectString(value: unknown, fallback = '') {
@@ -2502,12 +2993,11 @@ function dedupeFanaticsCollectHits(items: Array<Record<string, unknown>>) {
   return deduped
 }
 
-async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env: ServerEnv) {
+async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env: ServerEnv): Promise<FanaticsCollectSearchResult> {
   const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
   const appId = env.FANATICS_COLLECT_ALGOLIA_APP_ID?.trim() || FANATICS_COLLECT_ALGOLIA_APP_ID
   const indexName = env.FANATICS_COLLECT_ALGOLIA_INDEX?.trim() || FANATICS_COLLECT_ALGOLIA_INDEX
   const queries = sanitizeFanaticsCollectQueries(payload)
-  const searchKey = await fetchFanaticsCollectSearchKey(graphqlUrl)
   const minPrice = Math.max(0, fanaticsCollectNumber(payload.minPrice, 0))
   const limit = clampInt(payload.limit, 40, 1, 100)
   const filters = 'marketplace:FIXED AND status:Live AND marketplaceSource:bo'
@@ -2536,6 +3026,46 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
     ],
     attributesToHighlight: [],
   }))
+
+  const redis = await getUpstashRedis(env)
+  const cacheTtlSeconds = clampInt(
+    env.FANATICS_QUERY_CACHE_TTL_SECONDS,
+    FANATICS_COLLECT_QUERY_CACHE_TTL_SECONDS,
+    0,
+    24 * 60 * 60,
+  )
+  const cacheKey =
+    redis && cacheTtlSeconds > 0
+      ? redisQueryCacheKey(
+          FANATICS_COLLECT_QUERY_CACHE_NAMESPACE,
+          sha256(stableJson({ appId, indexName, requests, version: 1 })),
+        )
+      : ''
+  if (redis && cacheKey) {
+    try {
+      const cached = await redis.get<string>(cacheKey)
+      const parsed =
+        typeof cached === 'string'
+          ? (parseJsonText(cached, null) as Partial<FanaticsCollectSearchResult> | null)
+          : ((cached ?? null) as Partial<FanaticsCollectSearchResult> | null)
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items) && parsed.stats) {
+        const cachedPayload = parsed as FanaticsCollectSearchResult
+        return {
+          ...cachedPayload,
+          stats: {
+            ...cachedPayload.stats,
+            cacheHits: Math.max(queries.length, cachedPayload.stats.cacheHits ?? 0),
+            redisCacheHits: Math.max(queries.length, cachedPayload.stats.redisCacheHits ?? 0),
+            upstreamPagesFetched: 0,
+          },
+        }
+      }
+    } catch {
+      // Fanatics cache failures should never block the live search route.
+    }
+  }
+
+  const searchKey = await fetchFanaticsCollectSearchKey(graphqlUrl)
   const resultBatches: Array<{ hits?: Array<Record<string, unknown>>; nbHits?: number; error?: string }> = []
   for (let index = 0; index < requests.length; index += FANATICS_COLLECT_QUERY_BATCH_SIZE) {
     const batch = requests.slice(index, index + FANATICS_COLLECT_QUERY_BATCH_SIZE)
@@ -2579,7 +3109,7 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
     }),
   )
 
-  return {
+  const response = {
     items,
     errors,
     fetchedAt: new Date().toISOString(),
@@ -2594,11 +3124,23 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
       cacheMisses: 0,
       cacheWrites: 0,
       cacheSkips: 0,
+      redisCacheHits: 0,
       runtimeCacheHits: 0,
       sqliteCacheHits: 0,
       upstreamPagesFetched: Math.ceil(requests.length / FANATICS_COLLECT_QUERY_BATCH_SIZE),
     },
   }
+
+  if (redis && cacheKey) {
+    try {
+      await redis.set(cacheKey, jsonText(response), { ex: cacheTtlSeconds })
+      response.stats.cacheWrites = 1
+    } catch {
+      response.stats.cacheSkips = 1
+    }
+  }
+
+  return response
 }
 
 export async function handleFanaticsCollectRoute(route: string, request: Request, env: ServerEnv) {
@@ -2784,6 +3326,9 @@ export async function handleLiveMarketRoute(route: string, request: Request, env
       const unsafePost = rejectUnsafePost(request)
       if (unsafePost) return unsafePost
     }
+
+    const neonSql = await getNeonSql(env)
+    if (neonSql) return await handleNeonLiveMarketRoute(route, request, neonSql)
 
     const opened = await openOptionalWritableMarketDb(env)
     db = opened.db
@@ -3104,7 +3649,7 @@ export async function handleRankingsRoute(route: string, request: Request) {
       const status = rankingStatusFromSources(sources)
       return jsonResponse(200, {
         ...status,
-        cache: cached ? 'runtime-write' : 'live',
+        cache: cached ?? 'live',
         refreshedAt: new Date().toISOString(),
         output: `Refreshed ${status.rows.toLocaleString()} Scout the Statline ranking rows`,
         sources: sources.map((source) => ({

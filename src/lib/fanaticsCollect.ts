@@ -472,6 +472,7 @@ export async function fetchFanaticsCollectBinListings(options: FetchFanaticsColl
       cacheMisses: payload.stats?.cacheMisses ?? 0,
       cacheWrites: payload.stats?.cacheWrites ?? 0,
       cacheSkips: payload.stats?.cacheSkips ?? 0,
+      redisCacheHits: payload.stats?.redisCacheHits ?? 0,
       runtimeCacheHits: payload.stats?.runtimeCacheHits ?? 0,
       sqliteCacheHits: payload.stats?.sqliteCacheHits ?? 0,
       upstreamPagesFetched: payload.stats?.upstreamPagesFetched ?? payload.stats?.pagesFetched ?? 0,

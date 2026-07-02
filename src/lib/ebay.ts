@@ -63,6 +63,7 @@ export type EbayStatus = {
     fixedPriceTtlSeconds: number
     auctionTtlSeconds: number
     soldTtlSeconds: number
+    redisCache: boolean
     runtimeCache: boolean
     localCache: boolean
   }
@@ -82,6 +83,7 @@ export type EbayScanStats = {
   cacheMisses: number
   cacheWrites: number
   cacheSkips: number
+  redisCacheHits: number
   runtimeCacheHits: number
   sqliteCacheHits: number
   upstreamPagesFetched: number
@@ -548,6 +550,7 @@ async function fetchEbayListings(options: FetchEbayListingsOptions & { listingMo
       cacheMisses: payload.stats?.cacheMisses ?? 0,
       cacheWrites: payload.stats?.cacheWrites ?? 0,
       cacheSkips: payload.stats?.cacheSkips ?? 0,
+      redisCacheHits: payload.stats?.redisCacheHits ?? 0,
       runtimeCacheHits: payload.stats?.runtimeCacheHits ?? 0,
       sqliteCacheHits: payload.stats?.sqliteCacheHits ?? 0,
       upstreamPagesFetched: payload.stats?.upstreamPagesFetched ?? payload.stats?.pagesFetched ?? 0,
