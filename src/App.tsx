@@ -10,12 +10,14 @@ import {
   ExternalLink,
   Gem,
   KeyRound,
+  Package,
   Radio,
   RefreshCw,
   Search,
   ShieldCheck,
   Sigma,
   SlidersHorizontal,
+  Store,
   TableProperties,
   Undo2,
   Wifi,
@@ -81,6 +83,18 @@ import {
   type CaseHitOpportunity,
   type CaseHitScanResult,
 } from './lib/caseHits'
+import {
+  SEALED_WAX_STARTER_PRODUCTS,
+  buildWaxMarketModel,
+  fetchSealedWaxListings,
+  parseDaveAdamsQuotes,
+  parseWaxComps,
+  rankWaxOpportunities,
+  type WaxComp,
+  type WaxMarketModel,
+  type WaxOpportunity,
+  type WaxScanResult,
+} from './lib/sealedWax'
 import {
   buildPricingMatrix,
   filterPricingRows,
@@ -184,7 +198,7 @@ type QuickGradeKey =
   | 'sgc-10'
   | 'cgc-9'
   | 'cgc-10'
-type WorkMode = 'lookup' | 'deals' | 'price' | 'health' | 'case-hits'
+type WorkMode = 'lookup' | 'deals' | 'price' | 'health' | 'case-hits' | 'wax'
 type FreshnessTone = 'fresh' | 'watch' | 'stale' | 'empty' | 'offline'
 type BinVariationOption = {
   key: string
@@ -1440,7 +1454,15 @@ function WorkflowCommand({
           ? 'Price My Card'
           : mode === 'health'
             ? 'Data Health'
-            : 'Case Hits'
+            : mode === 'wax'
+              ? 'Sealed Wax'
+              : 'Case Hits'
+  const modeDescription =
+    mode === 'wax'
+      ? 'Compare sealed boxes, cases, and packs against recent market comps, then scan live listings for clean buying windows.'
+      : mode === 'case-hits'
+        ? 'Explore rare Bowman inserts with print-run context, recent comps, and live listing checks.'
+        : 'Start with the daily value board, scan live listings when a target stands out, or price a card directly.'
   return (
     <section className="workflow-command" aria-label="Primary navigation">
       <div className="workflow-command-copy">
@@ -1449,13 +1471,21 @@ function WorkflowCommand({
           Market Desk
         </span>
         <h2>{modeTitle}</h2>
-        <p>
-          Start with Bowman 1st Autos, scan live listings when a target stands out, price a card directly, or explore rare inserts.
-        </p>
+        <p>{modeDescription}</p>
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
           <span>{pricedRows.toLocaleString()} players</span>
-          <span>{mode === 'lookup' ? 'Value first' : mode === 'price' ? 'Calculator' : mode === 'health' ? 'Freshness' : `Top base ${money(topBase)}`}</span>
+          <span>
+            {mode === 'lookup'
+              ? 'Value first'
+              : mode === 'price'
+                ? 'Calculator'
+                : mode === 'health'
+                  ? 'Freshness'
+                  : mode === 'wax'
+                    ? 'Boxes + cases'
+                    : `Top base ${money(topBase)}`}
+          </span>
         </div>
       </div>
 
@@ -1526,6 +1556,23 @@ function WorkflowCommand({
             <small>Freshness and source coverage</small>
           </span>
           <span className="workflow-value">{modelReady ? 'OK' : '--'}</span>
+        </button>
+
+        <button
+          className={`workflow-mode-card ${mode === 'wax' ? 'active' : ''}`}
+          type="button"
+          onClick={() => onModeChange('wax')}
+          aria-pressed={mode === 'wax'}
+        >
+          <span className="workflow-icon">
+            <Package size={19} />
+          </span>
+          <span className="workflow-card-copy">
+            <span>Sealed</span>
+            <strong>Sealed Wax</strong>
+            <small>Boxes, cases, packs</small>
+          </span>
+          <span className="workflow-value">New</span>
         </button>
       </div>
     </section>
@@ -5245,6 +5292,365 @@ function CaseHitLab({
   )
 }
 
+function sealedWaxSourceLabel(model: WaxMarketModel) {
+  if (model.source === 'manual') return 'Manual fair value'
+  if (model.source === 'comps') return 'Comp-backed'
+  return 'Add market anchor'
+}
+
+function sealedWaxGradeLabel(opportunity: WaxOpportunity) {
+  if (opportunity.grade === 'A') return 'Below market'
+  if (opportunity.grade === 'B') return 'Worth review'
+  if (opportunity.grade === 'C') return 'Near market'
+  return 'Watch'
+}
+
+function SealedWaxDesk({
+  query,
+  onQueryChange,
+  manualMarketInput,
+  onManualMarketInputChange,
+  minPrice,
+  onMinPriceChange,
+  compText,
+  onCompTextChange,
+  daveAdamsText,
+  onDaveAdamsTextChange,
+  includeEbay,
+  onIncludeEbayChange,
+  includeFanatics,
+  onIncludeFanaticsChange,
+  comps,
+  model,
+  scan,
+  opportunities,
+  loading,
+  error,
+  onScan,
+}: {
+  query: string
+  onQueryChange: (value: string) => void
+  manualMarketInput: string
+  onManualMarketInputChange: (value: string) => void
+  minPrice: number
+  onMinPriceChange: (value: number) => void
+  compText: string
+  onCompTextChange: (value: string) => void
+  daveAdamsText: string
+  onDaveAdamsTextChange: (value: string) => void
+  includeEbay: boolean
+  onIncludeEbayChange: (value: boolean) => void
+  includeFanatics: boolean
+  onIncludeFanaticsChange: (value: boolean) => void
+  comps: WaxComp[]
+  model: WaxMarketModel
+  scan: WaxScanResult | null
+  opportunities: WaxOpportunity[]
+  loading: boolean
+  error: string | null
+  onScan: () => void
+}) {
+  const daveSearchUrl = `https://www.dacardworld.com/search?Search=${encodeURIComponent(query || 'sealed wax')}`
+  const scannedListings = scan?.listings ?? []
+  const topOpportunities = opportunities.slice(0, 48)
+  const marketplaceCounts = scannedListings.reduce<Record<string, number>>((counts, listing) => {
+    counts[listing.marketplaceLabel] = (counts[listing.marketplaceLabel] ?? 0) + 1
+    return counts
+  }, {})
+  const daveQuoteCount = scannedListings.filter((listing) => listing.marketplace === 'dave-adams').length
+  const hasMarketAnchor = model.marketPrice > 0
+  const canScan = query.trim().length > 2 && !loading && (includeEbay || includeFanatics || daveAdamsText.trim().length > 0)
+
+  return (
+    <section className="sealed-wax-desk">
+      <div className="wax-hero">
+        <div>
+          <span className="workflow-kicker">
+            <Package size={14} />
+            Sealed Wax Desk
+          </span>
+          <h2>Boxes, cases, and packs versus recent market.</h2>
+          <p>
+            Anchor the product with recent box comps or a fair-value quote, then scan live marketplaces for listings near or below the current market.
+          </p>
+        </div>
+        <div className="wax-hero-metrics" aria-label="Sealed wax status">
+          <span>
+            <small>Market anchor</small>
+            <strong>{hasMarketAnchor ? money(model.marketPrice) : '--'}</strong>
+            <em>{sealedWaxSourceLabel(model)}</em>
+          </span>
+          <span>
+            <small>Live listings</small>
+            <strong>{scannedListings.length.toLocaleString()}</strong>
+            <em>{scan ? `Updated ${new Date(scan.fetchedAt).toLocaleTimeString()}` : 'No scan yet'}</em>
+          </span>
+          <span>
+            <small>Buy zone</small>
+            <strong>{opportunities.filter((opportunity) => opportunity.spread >= 0).length.toLocaleString()}</strong>
+            <em>At or below anchor</em>
+          </span>
+        </div>
+      </div>
+
+      <div className="wax-workbench">
+        <section className="wax-panel wax-setup-panel">
+          <div className="wax-panel-title">
+            <div>
+              <span>1 / Product</span>
+              <strong>Choose sealed product</strong>
+            </div>
+            <a className="wax-inline-link" href={daveSearchUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={14} />
+              Dave & Adams search
+            </a>
+          </div>
+
+          <label className="wax-field wax-product-field">
+            <span>Product</span>
+            <div className="wax-field-line">
+              <Search size={16} />
+              <input
+                list="sealed-wax-starter-products"
+                value={query}
+                onChange={(event) => onQueryChange(event.target.value)}
+                placeholder="2026 Bowman Baseball Hobby Box"
+                aria-label="Sealed wax product"
+              />
+            </div>
+            <datalist id="sealed-wax-starter-products">
+              {SEALED_WAX_STARTER_PRODUCTS.map((product) => (
+                <option value={product} key={product} />
+              ))}
+            </datalist>
+          </label>
+
+          <div className="wax-starter-grid" aria-label="Starter sealed products">
+            {SEALED_WAX_STARTER_PRODUCTS.slice(0, 5).map((product) => (
+              <button className={product === query ? 'active' : ''} type="button" onClick={() => onQueryChange(product)} key={product}>
+                {product}
+              </button>
+            ))}
+          </div>
+
+          <div className="wax-control-grid">
+            <label className="wax-field">
+              <span>Manual fair value</span>
+              <input
+                value={manualMarketInput}
+                onChange={(event) => onManualMarketInputChange(event.target.value)}
+                inputMode="decimal"
+                placeholder="$250"
+                aria-label="Manual fair value"
+              />
+            </label>
+            <label className="wax-field">
+              <span>Minimum listing</span>
+              <input
+                type="number"
+                min="0"
+                step="10"
+                value={minPrice}
+                onChange={(event) => onMinPriceChange(Math.max(0, Number(event.target.value) || 0))}
+                aria-label="Minimum listing price"
+              />
+            </label>
+          </div>
+
+          <div className="wax-toggle-row" aria-label="Wax marketplace sources">
+            <label>
+              <input type="checkbox" checked={includeEbay} onChange={(event) => onIncludeEbayChange(event.target.checked)} />
+              <span>eBay live</span>
+            </label>
+            <label>
+              <input type="checkbox" checked={includeFanatics} onChange={(event) => onIncludeFanaticsChange(event.target.checked)} />
+              <span>Fanatics Collect</span>
+            </label>
+            <span>Dave & Adams via quote paste</span>
+          </div>
+
+          <button className="primary-button wax-scan-button" type="button" onClick={onScan} disabled={!canScan}>
+            <RefreshCw size={16} className={loading ? 'spin' : undefined} />
+            {loading ? 'Scanning Wax' : 'Scan Sealed Wax'}
+          </button>
+
+          {error ? (
+            <div className="wax-alert">
+              <ShieldCheck size={16} />
+              <span>{error}</span>
+            </div>
+          ) : null}
+        </section>
+
+        <section className="wax-panel wax-comp-panel">
+          <div className="wax-panel-title">
+            <div>
+              <span>2 / Market Anchor</span>
+              <strong>Paste recent box comps</strong>
+            </div>
+            <div className="wax-pill-row">
+              <span>{comps.length.toLocaleString()} comps</span>
+              <span>{model.source === 'manual' ? 'manual override' : model.source}</span>
+            </div>
+          </div>
+          <textarea
+            className="wax-textarea"
+            value={compText}
+            onChange={(event) => onCompTextChange(event.target.value)}
+            placeholder={`Paste Market Movers box comps here, one per line.\neBay $240 2026 Bowman Hobby Box 7/1/2026\nFanatics $260 2026 Bowman Hobby Box 6/30/2026`}
+            aria-label="Market comps"
+          />
+          <div className="wax-model-grid">
+            <span>
+              <small>Last 5</small>
+              <strong>{model.lastFiveAverage ? money(model.lastFiveAverage) : '--'}</strong>
+            </span>
+            <span>
+              <small>Median</small>
+              <strong>{model.median ? money(model.median) : '--'}</strong>
+            </span>
+            <span>
+              <small>Range</small>
+              <strong>{model.low ? `${money(model.low)}-${money(model.high)}` : '--'}</strong>
+            </span>
+          </div>
+        </section>
+
+        <section className="wax-panel wax-retail-panel">
+          <div className="wax-panel-title">
+            <div>
+              <span>3 / Retail Quotes</span>
+              <strong>Dave & Adams watchlist</strong>
+            </div>
+            <div className="wax-pill-row">
+              <span>{daveQuoteCount.toLocaleString()} quotes</span>
+            </div>
+          </div>
+          <textarea
+            className="wax-textarea compact"
+            value={daveAdamsText}
+            onChange={(event) => onDaveAdamsTextChange(event.target.value)}
+            placeholder={`Paste D&A rows when you find a quote.\n2026 Bowman Baseball Hobby Box $229.95 https://www.dacardworld.com/...`}
+            aria-label="Dave and Adams quote rows"
+          />
+          <div className="wax-note">
+            <Store size={16} />
+            <span>D&A is quote-driven for now because the storefront blocks automated browsing. Pasted rows still rank against the same market anchor.</span>
+          </div>
+        </section>
+      </div>
+
+      <section className="wax-results-panel">
+        <div className="wax-results-head">
+          <div>
+            <span>Opportunity Queue</span>
+            <strong>
+              {hasMarketAnchor
+                ? `${topOpportunities.length.toLocaleString()} listings inside review window`
+                : 'Add comps or fair value to score listings'}
+            </strong>
+          </div>
+          <div className="wax-pill-row">
+            {Object.entries(marketplaceCounts).map(([marketplace, count]) => (
+              <span key={marketplace}>
+                {marketplace}: {count.toLocaleString()}
+              </span>
+            ))}
+            {scan?.stats.cacheHits ? <span>{scan.stats.cacheHits.toLocaleString()} cached</span> : null}
+            {scan?.stats.upstreamPages ? <span>{scan.stats.upstreamPages.toLocaleString()} live pages</span> : null}
+          </div>
+        </div>
+
+        {scan?.errors.length ? (
+          <div className="wax-alert muted">
+            <ShieldCheck size={16} />
+            <span>{scan.errors.map((scanError) => `${scanError.source}: ${scanError.error}`).join(' / ')}</span>
+          </div>
+        ) : null}
+
+        {!hasMarketAnchor ? (
+          <div className="wax-empty-state">
+            <BarChart3 size={26} />
+            <div>
+              <strong>Set a market anchor first.</strong>
+              <span>Paste recent box comps or enter a manual fair value. Then every live listing can be ranked against the same number.</span>
+            </div>
+          </div>
+        ) : !scan ? (
+          <div className="wax-empty-state">
+            <Package size={26} />
+            <div>
+              <strong>Ready to scan sealed wax.</strong>
+              <span>Run the scan to compare active eBay, Fanatics Collect, and pasted D&A quotes against your market anchor.</span>
+            </div>
+          </div>
+        ) : topOpportunities.length === 0 ? (
+          <div className="wax-empty-state">
+            <Radio size={26} />
+            <div>
+              <strong>No listings cleared the review window.</strong>
+              <span>
+                {scannedListings.length.toLocaleString()} sealed listings reviewed; none were close enough to {money(model.marketPrice)} to review.
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="wax-opportunity-list">
+            <div className="wax-opportunity-head">
+              <span>Rank</span>
+              <span>Product</span>
+              <span>Source</span>
+              <span>All In</span>
+              <span>Market</span>
+              <span>Signal</span>
+            </div>
+            {topOpportunities.map((opportunity, index) => (
+              <article className={`wax-opportunity-row grade-${opportunity.grade.toLowerCase()}`} key={opportunity.listing.id}>
+                <div className="wax-rank-cell">
+                  <strong>#{index + 1}</strong>
+                  <span>{opportunity.grade}</span>
+                </div>
+                <div className="wax-product-cell">
+                  {opportunity.listing.imageUrl ? <img src={opportunity.listing.imageUrl} alt="" loading="lazy" /> : <Package size={20} />}
+                  <div>
+                    <strong>{opportunity.listing.title}</strong>
+                    <span>
+                      {opportunity.listing.productKind} / {Math.round(opportunity.listing.confidence * 100)}% title match
+                      {opportunity.listing.mode === 'auction' && opportunity.listing.endTime ? ` / ends ${compactDate(opportunity.listing.endTime)}` : ''}
+                    </span>
+                  </div>
+                </div>
+                <div className="wax-source-cell">
+                  <span>{opportunity.listing.marketplaceLabel}</span>
+                  <small>{opportunity.listing.mode}</small>
+                </div>
+                <div className="wax-money-cell">
+                  <strong>{money(opportunity.listing.allIn)}</strong>
+                  <span>{opportunity.listing.shipping ? `${money(opportunity.listing.shipping)} ship` : 'all-in'}</span>
+                </div>
+                <div className="wax-money-cell">
+                  <strong>{money(opportunity.marketPrice)}</strong>
+                  <span>{opportunity.spread >= 0 ? `${money(opportunity.spread)} under` : `${money(Math.abs(opportunity.spread))} over`}</span>
+                </div>
+                <div className="wax-signal-cell">
+                  <strong>{sealedWaxGradeLabel(opportunity)}</strong>
+                  <span>{percent(opportunity.discountPct)} vs market</span>
+                  {opportunity.listing.listingUrl ? (
+                    <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={14} />
+                      Open
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </section>
+  )
+}
+
 function App() {
   const [releaseOptions, setReleaseOptions] = useState<ReleaseOption[]>(FALLBACK_RELEASE_OPTIONS)
   const [catalogLoading, setCatalogLoading] = useState(false)
@@ -5290,6 +5696,16 @@ function App() {
   const [caseHitError, setCaseHitError] = useState<string | null>(null)
   const [caseHitFamilyFilter, setCaseHitFamilyFilter] = useState<'all' | CaseHitInsertKey>('all')
   const [caseHitMinPrice, setCaseHitMinPrice] = useState(20)
+  const [waxQuery, setWaxQuery] = useState('2026 Bowman Baseball Hobby Box')
+  const [waxManualMarketInput, setWaxManualMarketInput] = useState('')
+  const [waxMinPrice, setWaxMinPrice] = useState(50)
+  const [waxCompText, setWaxCompText] = useState('')
+  const [waxDaveAdamsText, setWaxDaveAdamsText] = useState('')
+  const [waxIncludeEbay, setWaxIncludeEbay] = useState(true)
+  const [waxIncludeFanatics, setWaxIncludeFanatics] = useState(true)
+  const [waxScan, setWaxScan] = useState<WaxScanResult | null>(null)
+  const [waxLoading, setWaxLoading] = useState(false)
+  const [waxError, setWaxError] = useState<string | null>(null)
   const [salesCacheModel, setSalesCacheModel] = useState<SalesCachePlayerModel | null>(null)
   const [activeSalesCacheModels, setActiveSalesCacheModels] = useState<Record<string, SalesCachePlayerModel>>({})
   const [salesCacheLoading, setSalesCacheLoading] = useState(false)
@@ -5304,6 +5720,7 @@ function App() {
   const binRequestRef = useRef<AbortController | null>(null)
   const auctionRequestRef = useRef<AbortController | null>(null)
   const caseHitRequestRef = useRef<AbortController | null>(null)
+  const waxRequestRef = useRef<AbortController | null>(null)
   const salesCacheRequestRef = useRef<AbortController | null>(null)
   const activeSalesCacheRequestRef = useRef<AbortController | null>(null)
   const dealResultsRef = useRef<HTMLDivElement | null>(null)
@@ -5658,6 +6075,16 @@ function App() {
     (binScan || auctionScan)
       ? visibleBinListings.length + visibleAuctionListings.length
       : (displayedBinOpportunities.length + displayedAuctionOpportunities.length)
+  const waxComps = useMemo(() => parseWaxComps(waxCompText), [waxCompText])
+  const waxManualListings = useMemo(() => parseDaveAdamsQuotes(waxDaveAdamsText, waxQuery), [waxDaveAdamsText, waxQuery])
+  const waxMarketModel = useMemo(
+    () => buildWaxMarketModel(waxComps, parseMoneyInput(waxManualMarketInput) ?? 0),
+    [waxComps, waxManualMarketInput],
+  )
+  const waxOpportunities = useMemo(
+    () => rankWaxOpportunities(waxScan?.listings ?? [], waxMarketModel, 0.15),
+    [waxMarketModel, waxScan?.listings],
+  )
 
   useEffect(() => {
     const playerNames = playerNamesFromListings([...visibleBinListings, ...visibleAuctionListings]).filter(
@@ -6549,6 +6976,56 @@ function App() {
     }
   }
 
+  function updateWaxQuery(value: string) {
+    setWaxQuery(value)
+    setWaxScan(null)
+    setWaxError(null)
+  }
+
+  async function scanSealedWax() {
+    if (waxQuery.trim().length < 3) {
+      setWaxError('Enter a sealed product before scanning.')
+      return
+    }
+
+    if (!waxIncludeEbay && !waxIncludeFanatics && waxManualListings.length === 0) {
+      setWaxError('Choose at least one live marketplace or paste a Dave & Adams quote.')
+      return
+    }
+
+    waxRequestRef.current?.abort()
+    const controller = new AbortController()
+    waxRequestRef.current = controller
+    setWaxLoading(true)
+    setWaxError(null)
+
+    try {
+      const scanResult = await fetchSealedWaxListings({
+        query: waxQuery,
+        minPrice: waxMinPrice,
+        includeEbay: waxIncludeEbay,
+        includeFanatics: waxIncludeFanatics,
+        manualListings: waxManualListings,
+        signal: controller.signal,
+      })
+      if (controller.signal.aborted) return
+      setWaxScan(scanResult)
+      setWaxError(
+        scanResult.errors.length > 0
+          ? `${scanResult.errors.length.toLocaleString()} marketplace quer${scanResult.errors.length === 1 ? 'y' : 'ies'} failed; ranked successful results.`
+          : null,
+      )
+    } catch (scanError) {
+      if (controller.signal.aborted) return
+      setWaxError(scanError instanceof Error ? scanError.message : 'Sealed wax scan failed')
+    } finally {
+      if (waxRequestRef.current === controller) {
+        setWaxLoading(false)
+        waxRequestRef.current = null
+      }
+    }
+  }
+
   const missionLeadRow =
     effectiveSelectedRow ??
     renderedRowsForDisplay.find((row) => scoreDynastyValueOpportunity(row) > 0) ??
@@ -6644,6 +7121,10 @@ function App() {
           <button className="ghost-button" type="button" onClick={() => downloadMatrixCsv(visibleRows)}>
             <Download size={16} />
             Export
+          </button>
+          <button className="ghost-button" type="button" onClick={() => setWorkMode((mode) => (mode === 'wax' ? 'lookup' : 'wax'))}>
+            <Package size={16} />
+            {workMode === 'wax' ? 'Main Desk' : 'Sealed Wax'}
           </button>
           <button className="ghost-button" type="button" onClick={() => setWorkMode((mode) => (mode === 'case-hits' ? 'lookup' : 'case-hits'))}>
             <Gem size={16} />
@@ -7057,6 +7538,32 @@ function App() {
               </div>
             </section>
           </div>
+        </section>
+      ) : workMode === 'wax' ? (
+        <section className="sealed-wax-workflow" aria-label="Sealed wax">
+          <SealedWaxDesk
+            query={waxQuery}
+            onQueryChange={updateWaxQuery}
+            manualMarketInput={waxManualMarketInput}
+            onManualMarketInputChange={setWaxManualMarketInput}
+            minPrice={waxMinPrice}
+            onMinPriceChange={setWaxMinPrice}
+            compText={waxCompText}
+            onCompTextChange={setWaxCompText}
+            daveAdamsText={waxDaveAdamsText}
+            onDaveAdamsTextChange={setWaxDaveAdamsText}
+            includeEbay={waxIncludeEbay}
+            onIncludeEbayChange={setWaxIncludeEbay}
+            includeFanatics={waxIncludeFanatics}
+            onIncludeFanaticsChange={setWaxIncludeFanatics}
+            comps={waxComps}
+            model={waxMarketModel}
+            scan={waxScan}
+            opportunities={waxOpportunities}
+            loading={waxLoading}
+            error={waxError}
+            onScan={() => void scanSealedWax()}
+          />
         </section>
       ) : (
         <section className="case-hit-workflow" aria-label="Case hits">

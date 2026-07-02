@@ -12592,3 +12592,575 @@ button.sales-bucket-tile {
     font-size: 0.58rem;
   }
 }
+
+/* Sealed Wax Desk */
+.valuation-app .workflow-mode-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.valuation-app .sealed-wax-workflow {
+  width: min(var(--stage-max), 100%);
+  margin: 12px auto 0;
+}
+
+.valuation-app .sealed-wax-desk {
+  display: grid;
+  gap: 14px;
+}
+
+.valuation-app .wax-hero,
+.valuation-app .wax-panel,
+.valuation-app .wax-results-panel {
+  border: 1px solid rgba(159, 216, 207, 0.2);
+  border-radius: 12px;
+  background:
+    linear-gradient(125deg, rgba(159, 216, 207, 0.12), transparent 32%),
+    linear-gradient(145deg, rgba(223, 164, 81, 0.09), transparent 58%),
+    rgba(255, 250, 240, 0.82);
+  box-shadow:
+    0 18px 42px rgba(12, 16, 20, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.68);
+}
+
+.valuation-app .wax-hero {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(360px, 0.75fr);
+  gap: 18px;
+  align-items: end;
+  padding: 18px;
+}
+
+.valuation-app .wax-hero h2 {
+  max-width: 760px;
+  margin: 7px 0 0;
+  color: var(--ink);
+  font-size: clamp(1.8rem, 3.2vw, 3.7rem);
+  line-height: 0.98;
+}
+
+.valuation-app .wax-hero p {
+  max-width: 72ch;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 780;
+  line-height: 1.45;
+}
+
+.valuation-app .wax-hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.valuation-app .wax-hero-metrics span,
+.valuation-app .wax-model-grid span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid rgba(12, 16, 20, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 250, 240, 0.72);
+}
+
+.valuation-app .wax-hero-metrics small,
+.valuation-app .wax-model-grid small,
+.valuation-app .wax-panel-title span,
+.valuation-app .wax-field span,
+.valuation-app .wax-results-head span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 940;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.valuation-app .wax-hero-metrics strong,
+.valuation-app .wax-model-grid strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 1.18rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.valuation-app .wax-hero-metrics em {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.valuation-app .wax-workbench {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.95fr) minmax(360px, 0.9fr) minmax(320px, 0.72fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.valuation-app .wax-panel {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.valuation-app .wax-panel-title,
+.valuation-app .wax-results-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.valuation-app .wax-panel-title > div:first-child,
+.valuation-app .wax-results-head > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.valuation-app .wax-panel-title strong,
+.valuation-app .wax-results-head strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 950;
+  line-height: 1.1;
+}
+
+.valuation-app .wax-inline-link,
+.valuation-app .wax-signal-cell a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #087f8c;
+  font-size: 0.74rem;
+  font-weight: 930;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.valuation-app .wax-field {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.valuation-app .wax-field input,
+.valuation-app .wax-textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(12, 16, 20, 0.12);
+  border-radius: 10px;
+  color: var(--ink);
+  background: rgba(255, 250, 240, 0.76);
+  font: inherit;
+  font-weight: 850;
+  outline: none;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease;
+}
+
+.valuation-app .wax-field input {
+  min-height: 48px;
+  padding: 0 12px;
+}
+
+.valuation-app .wax-field-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-inline: 12px;
+  border: 1px solid rgba(12, 16, 20, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 250, 240, 0.76);
+}
+
+.valuation-app .wax-field-line svg {
+  flex: 0 0 auto;
+  color: #087f8c;
+}
+
+.valuation-app .wax-field-line input {
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.valuation-app .wax-field:focus-within input,
+.valuation-app .wax-field:focus-within .wax-field-line,
+.valuation-app .wax-textarea:focus {
+  border-color: rgba(8, 127, 140, 0.38);
+  box-shadow: var(--focus-ring);
+  background: rgba(255, 250, 240, 0.94);
+}
+
+.valuation-app .wax-starter-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.valuation-app .wax-starter-grid button,
+.valuation-app .wax-pill-row span,
+.valuation-app .wax-toggle-row label,
+.valuation-app .wax-toggle-row > span {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid rgba(12, 16, 20, 0.09);
+  border-radius: 999px;
+  background: rgba(10, 24, 23, 0.05);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 920;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.valuation-app .wax-starter-grid button {
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.valuation-app .wax-starter-grid button.active {
+  color: #082321;
+  border-color: rgba(159, 216, 207, 0.58);
+  background: rgba(159, 216, 207, 0.42);
+}
+
+.valuation-app .wax-control-grid,
+.valuation-app .wax-model-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.valuation-app .wax-model-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.valuation-app .wax-toggle-row,
+.valuation-app .wax-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.valuation-app .wax-toggle-row label,
+.valuation-app .wax-toggle-row > span,
+.valuation-app .wax-pill-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.valuation-app .wax-toggle-row input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #087f8c;
+}
+
+.valuation-app .wax-scan-button {
+  min-height: 48px;
+  justify-content: center;
+}
+
+.valuation-app .wax-textarea {
+  min-height: 154px;
+  resize: vertical;
+  padding: 12px;
+  line-height: 1.35;
+}
+
+.valuation-app .wax-textarea.compact {
+  min-height: 118px;
+}
+
+.valuation-app .wax-note,
+.valuation-app .wax-alert,
+.valuation-app .wax-empty-state {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid rgba(159, 216, 207, 0.2);
+  border-radius: 10px;
+  color: var(--muted);
+  background: rgba(159, 216, 207, 0.1);
+  font-size: 0.78rem;
+  font-weight: 820;
+  line-height: 1.35;
+}
+
+.valuation-app .wax-alert {
+  color: #7a5317;
+  border-color: rgba(223, 164, 81, 0.36);
+  background: rgba(223, 164, 81, 0.12);
+}
+
+.valuation-app .wax-alert.muted {
+  margin-bottom: 10px;
+}
+
+.valuation-app .wax-results-panel {
+  padding: 14px;
+}
+
+.valuation-app .wax-opportunity-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.valuation-app .wax-opportunity-head,
+.valuation-app .wax-opportunity-row {
+  display: grid;
+  grid-template-columns: 58px minmax(320px, 1.35fr) minmax(120px, 0.45fr) minmax(110px, 0.36fr) minmax(120px, 0.42fr) minmax(150px, 0.5fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.valuation-app .wax-opportunity-head {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #080d0f;
+  color: rgba(255, 250, 240, 0.62);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.valuation-app .wax-opportunity-row {
+  min-height: 88px;
+  padding: 10px 12px;
+  border: 1px solid rgba(12, 16, 20, 0.08);
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, rgba(159, 216, 207, 0.14), transparent 16%),
+    rgba(255, 250, 240, 0.72);
+}
+
+.valuation-app .wax-opportunity-row.grade-a {
+  border-color: rgba(8, 127, 140, 0.26);
+  box-shadow: inset 4px 0 0 rgba(142, 255, 206, 0.78);
+}
+
+.valuation-app .wax-opportunity-row.grade-b {
+  box-shadow: inset 4px 0 0 rgba(159, 216, 207, 0.6);
+}
+
+.valuation-app .wax-opportunity-row.grade-c {
+  box-shadow: inset 4px 0 0 rgba(245, 194, 87, 0.65);
+}
+
+.valuation-app .wax-rank-cell {
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+}
+
+.valuation-app .wax-rank-cell strong {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 8px;
+  color: #fffaf0;
+  background: #081013;
+  font-family: var(--mono);
+  font-size: 0.92rem;
+}
+
+.valuation-app .wax-rank-cell span {
+  color: #087f8c;
+  font-size: 0.64rem;
+  font-weight: 950;
+}
+
+.valuation-app .wax-product-cell {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.valuation-app .wax-product-cell img,
+.valuation-app .wax-product-cell > svg {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border: 1px solid rgba(12, 16, 20, 0.1);
+  border-radius: 8px;
+  background: rgba(8, 13, 15, 0.08);
+}
+
+.valuation-app .wax-product-cell > svg {
+  padding: 12px;
+  color: #087f8c;
+}
+
+.valuation-app .wax-product-cell div,
+.valuation-app .wax-source-cell,
+.valuation-app .wax-money-cell,
+.valuation-app .wax-signal-cell {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.valuation-app .wax-product-cell strong,
+.valuation-app .wax-source-cell span,
+.valuation-app .wax-money-cell strong,
+.valuation-app .wax-signal-cell strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 950;
+  line-height: 1.18;
+}
+
+.valuation-app .wax-product-cell strong {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.valuation-app .wax-product-cell span,
+.valuation-app .wax-source-cell small,
+.valuation-app .wax-money-cell span,
+.valuation-app .wax-signal-cell span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 880;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.valuation-app .wax-money-cell strong {
+  font-family: var(--mono);
+  font-size: 1.06rem;
+}
+
+.valuation-app .wax-empty-state {
+  min-height: 170px;
+  margin-top: 12px;
+  justify-content: center;
+  background: rgba(255, 250, 240, 0.58);
+}
+
+.valuation-app .wax-empty-state div {
+  display: grid;
+  gap: 4px;
+}
+
+.valuation-app .wax-empty-state strong {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 950;
+}
+
+@media (max-width: 1320px) {
+  .valuation-app .workflow-mode-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .valuation-app .wax-hero,
+  .valuation-app .wax-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .wax-opportunity-head,
+  .valuation-app .wax-opportunity-row {
+    grid-template-columns: 54px minmax(260px, 1fr) minmax(105px, 0.4fr) minmax(100px, 0.35fr) minmax(110px, 0.4fr);
+  }
+
+  .valuation-app .wax-opportunity-head span:last-child,
+  .valuation-app .wax-signal-cell {
+    grid-column: 2 / -1;
+  }
+}
+
+@media (max-width: 720px) {
+  .valuation-app .workflow-mode-grid {
+    display: flex;
+  }
+
+  .valuation-app .sealed-wax-workflow {
+    margin-top: 10px;
+  }
+
+  .valuation-app .wax-hero,
+  .valuation-app .wax-panel,
+  .valuation-app .wax-results-panel {
+    border-radius: 14px;
+  }
+
+  .valuation-app .wax-hero {
+    padding: 14px;
+  }
+
+  .valuation-app .wax-hero h2 {
+    font-size: 1.72rem;
+  }
+
+  .valuation-app .wax-hero-metrics,
+  .valuation-app .wax-control-grid,
+  .valuation-app .wax-model-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .wax-panel-title,
+  .valuation-app .wax-results-head {
+    display: grid;
+  }
+
+  .valuation-app .wax-opportunity-head {
+    display: none;
+  }
+
+  .valuation-app .wax-opportunity-row {
+    grid-template-columns: 46px minmax(0, 1fr);
+    gap: 8px 10px;
+    align-items: start;
+    padding: 12px;
+  }
+
+  .valuation-app .wax-product-cell {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .valuation-app .wax-product-cell img,
+  .valuation-app .wax-product-cell > svg {
+    width: 42px;
+    height: 42px;
+  }
+
+  .valuation-app .wax-source-cell,
+  .valuation-app .wax-money-cell,
+  .valuation-app .wax-signal-cell {
+    grid-column: 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-top: 8px;
+    border-top: 1px solid rgba(12, 16, 20, 0.08);
+  }
+
+  .valuation-app .wax-signal-cell a {
+    grid-column: 1 / -1;
+  }
+}

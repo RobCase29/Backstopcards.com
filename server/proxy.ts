@@ -150,6 +150,7 @@ type EbaySearchPayload = {
   maxHoursToClose?: number
   categoryId?: string
   marketplaceId?: string
+  sealedWax?: boolean
 }
 
 type EbayQueryCacheValue = {
@@ -2355,7 +2356,10 @@ async function searchEbayJob(options: {
   const limit = clampInt(payload.limit, 100, 1, 200)
   const maxPages = clampInt(payload.maxPages, 1, 1, 3)
   const marketplaceId = String(defaultMarketplaceId || 'EBAY_US')
-  const categoryId = String(defaultCategoryId || '').trim()
+  const categoryOverride = Object.prototype.hasOwnProperty.call(payload, 'categoryId')
+    ? String(payload.categoryId ?? '').trim()
+    : undefined
+  const categoryId = categoryOverride ?? String(defaultCategoryId || '').trim()
   const allItems: Array<Record<string, unknown>> = []
   const cacheConfig = ebayQueryCacheConfig(cache?.env ?? {}, 'search', payload)
   const cacheStats = emptyEbayQueryCacheStats()
@@ -2488,7 +2492,10 @@ async function searchEbaySoldJob(options: {
   const limit = clampInt(payload.limit, 100, 1, 200)
   const maxPages = clampInt(payload.maxPages, 1, 1, 3)
   const marketplaceId = String(defaultMarketplaceId || 'EBAY_US')
-  const categoryId = String(defaultCategoryId || '').trim()
+  const categoryOverride = Object.prototype.hasOwnProperty.call(payload, 'categoryId')
+    ? String(payload.categoryId ?? '').trim()
+    : undefined
+  const categoryId = categoryOverride ?? String(defaultCategoryId || '').trim()
   const allItems: Array<Record<string, unknown>> = []
   const cacheConfig = ebayQueryCacheConfig(cache?.env ?? {}, 'sold', payload)
   const cacheStats = emptyEbayQueryCacheStats()
@@ -2613,12 +2620,21 @@ function canUsePublicChecklist(body: string) {
 }
 
 function safeEbayQueries(payload: EbaySearchPayload) {
+  const sealedWax = Boolean(payload.sealedWax)
   return (payload.queries ?? [])
     .flatMap((query) => {
       const q = String(query.q ?? '').replace(/\s+/g, ' ').trim()
       if (!q) return []
       if (q.length > MAX_EBAY_QUERY_LENGTH) throw new ProxyRequestError(400, 'eBay query is too long')
-      if (!/\bbowman\b/i.test(q)) throw new ProxyRequestError(400, 'eBay queries must be scoped to Bowman cards')
+      if (sealedWax) {
+        const hasTradingCardScope = /\b(?:bowman|topps|panini|pokemon|trading\s+cards?|sports\s+cards?|baseball|basketball|football|hockey|soccer)\b/i.test(q)
+        const hasWaxScope = /\b(?:sealed|wax|box|boxes|case|cases|hobby|jumbo|super\s+jumbo|blaster|mega|sapphire|delight|pack|packs)\b/i.test(q)
+        if (!hasTradingCardScope || !hasWaxScope) {
+          throw new ProxyRequestError(400, 'Sealed wax eBay queries must be scoped to trading card boxes, packs, or cases')
+        }
+      } else if (!/\bbowman\b/i.test(q)) {
+        throw new ProxyRequestError(400, 'eBay queries must be scoped to Bowman cards')
+      }
       return [{ ...query, q }]
     })
     .slice(0, MAX_EBAY_QUERIES)
