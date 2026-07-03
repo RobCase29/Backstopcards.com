@@ -1460,7 +1460,7 @@ function WorkflowCommand({
               : 'Case Hits'
   const modeDescription =
     mode === 'wax'
-      ? 'Scan 2026 Bowman Hobby and Jumbo boxes against a fair-value anchor, with live listings ranked into a clean review queue.'
+      ? 'Scan 2026 Bowman Hobby and Jumbo boxes against your target price or recent comps, with live listings ranked into a clean offer queue.'
       : mode === 'case-hits'
         ? 'Explore rare Bowman inserts with print-run context, recent comps, and live listing checks.'
         : 'Start with the daily value board, scan live listings when a target stands out, or price a card directly.'
@@ -5294,15 +5294,15 @@ function CaseHitLab({
 }
 
 function sealedWaxSourceLabel(model: WaxMarketModel) {
-  if (model.source === 'manual') return 'Manual fair value'
+  if (model.source === 'manual') return 'Target price'
   if (model.source === 'comps') return 'Comp-backed'
-  return 'Add market anchor'
+  return 'Add target'
 }
 
 function sealedWaxGradeLabel(opportunity: WaxOpportunity) {
-  if (opportunity.grade === 'A') return 'Below market'
-  if (opportunity.grade === 'B') return 'Worth review'
-  if (opportunity.grade === 'C') return 'Near market'
+  if (opportunity.grade === 'A') return 'Below target'
+  if (opportunity.grade === 'B') return 'Offer zone'
+  if (opportunity.grade === 'C') return 'Reach offer'
   return 'Watch'
 }
 
@@ -5376,7 +5376,7 @@ function SealedWaxDesk({
     !loading &&
     (includeEbay || includeFanatics || includeDaveAdams || daveAdamsText.trim().length > 0)
   const scanButtonText = !hasMarketAnchor
-    ? 'Add Comps or Override'
+    ? 'Add Target or Comps'
     : loading
       ? `Scanning ${selectedFormat}`
       : `Scan ${selectedFormat}`
@@ -5396,7 +5396,7 @@ function SealedWaxDesk({
         </div>
         <div className="wax-command-metrics" aria-label="Sealed wax status">
           <span>
-            <small>Fair value</small>
+            <small>Target price</small>
             <strong>{hasMarketAnchor ? money(model.marketPrice) : '--'}</strong>
             <em>{sealedWaxSourceLabel(model)}</em>
           </span>
@@ -5431,20 +5431,20 @@ function SealedWaxDesk({
         </div>
 
         <label className="wax-step wax-anchor-step">
-          <span>2 / Override</span>
+          <span>2 / Willing to pay</span>
           <input
             value={manualMarketInput}
             onChange={(event) => onManualMarketInputChange(event.target.value)}
             inputMode="decimal"
-            placeholder="Optional"
-            aria-label="Manual fair value override"
+            placeholder="Optional target"
+            aria-label="Price you are willing to pay"
           />
           <small>
             {model.source === 'manual'
-              ? `Manual override; comp anchor ${model.timeWeightedAverage ? money(model.timeWeightedAverage) : '--'}`
+              ? `Your target; comp anchor ${model.timeWeightedAverage ? money(model.timeWeightedAverage) : '--'}`
               : model.source === 'comps'
                 ? `${model.recentCompCount} recent / ${model.compCount.toLocaleString()} matching comps`
-                : 'Paste comps below or enter an override'}
+                : 'Paste comps below or enter a target'}
           </small>
         </label>
 
@@ -5485,7 +5485,7 @@ function SealedWaxDesk({
             <RefreshCw size={16} className={loading ? 'spin' : undefined} />
             {scanButtonText}
           </button>
-          <small>{hasMarketAnchor ? `Ranking listings within 15% of ${money(model.marketPrice)}` : 'A comp anchor is required to score listings'}</small>
+          <small>{hasMarketAnchor ? `Ranking listings up to 30% above ${money(model.marketPrice)}` : 'A target or comp anchor is required to score listings'}</small>
         </div>
 
         {error ? (
@@ -5517,7 +5517,7 @@ function SealedWaxDesk({
               <div className="wax-pill-row">
                 <span>{model.compCount.toLocaleString()} matching</span>
                 <span>{model.recentCompCount.toLocaleString()} in model</span>
-                <span>{model.source === 'manual' ? 'manual override' : model.source}</span>
+                <span>{model.source === 'manual' ? 'target price' : model.source}</span>
               </div>
             </div>
             <textarea
@@ -5581,8 +5581,8 @@ function SealedWaxDesk({
             <span>Ranked Opportunities</span>
             <strong>
               {hasMarketAnchor
-                ? `${topOpportunities.length.toLocaleString()} listings inside review window`
-                : 'Add fair value to score listings'}
+                ? `${topOpportunities.length.toLocaleString()} listings inside offer window`
+                : 'Add a target price to score listings'}
             </strong>
           </div>
           <div className="wax-pill-row">
@@ -5609,7 +5609,8 @@ function SealedWaxDesk({
               <span>Best current lead</span>
               <strong>{bestOpportunity.listing.title}</strong>
               <small>
-                {bestOpportunity.listing.marketplaceLabel} / {money(bestOpportunity.listing.allIn)} all-in / {money(bestOpportunity.spread)} under fair value
+                {bestOpportunity.listing.marketplaceLabel} / {money(bestOpportunity.listing.allIn)} all-in /{' '}
+                {bestOpportunity.spread >= 0 ? `${money(bestOpportunity.spread)} under target` : `${money(Math.abs(bestOpportunity.spread))} over target`}
               </small>
             </div>
             <div>
@@ -5629,8 +5630,8 @@ function SealedWaxDesk({
           <div className="wax-empty-state">
             <BarChart3 size={26} />
             <div>
-              <strong>Start with fair value.</strong>
-              <span>Enter a fair-value number above, or expand market evidence and paste recent comps. Then scans rank listings immediately.</span>
+              <strong>Start with your target price.</strong>
+              <span>Enter what you would pay, or expand market evidence and paste recent comps. Then scans grade listings around that number.</span>
             </div>
           </div>
         ) : !scan ? (
@@ -5645,9 +5646,9 @@ function SealedWaxDesk({
           <div className="wax-empty-state">
             <Radio size={26} />
             <div>
-              <strong>No listings cleared the review window.</strong>
+              <strong>No listings cleared the offer window.</strong>
               <span>
-                {scannedListings.length.toLocaleString()} sealed listings reviewed; none were close enough to {money(model.marketPrice)} to review.
+                {scannedListings.length.toLocaleString()} sealed listings reviewed; none landed within 30% above {money(model.marketPrice)}.
               </span>
             </div>
           </div>
@@ -5658,7 +5659,7 @@ function SealedWaxDesk({
               <span>Product</span>
               <span>Source</span>
               <span>All In</span>
-              <span>Market</span>
+              <span>Target</span>
               <span>Signal</span>
             </div>
             {topOpportunities.map((opportunity, index) => (
@@ -5691,7 +5692,7 @@ function SealedWaxDesk({
                 </div>
                 <div className="wax-signal-cell">
                   <strong>{sealedWaxGradeLabel(opportunity)}</strong>
-                  <span>{percent(opportunity.discountPct)} vs market</span>
+                  <span>{percent(opportunity.discountPct)} vs target</span>
                   {opportunity.listing.listingUrl ? (
                     <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
                       <ExternalLink size={14} />
@@ -6140,7 +6141,7 @@ function App() {
     [waxComps, waxManualMarketInput, waxQuery],
   )
   const waxOpportunities = useMemo(
-    () => rankWaxOpportunities(waxScan?.listings ?? [], waxMarketModel, 0.15),
+    () => rankWaxOpportunities(waxScan?.listings ?? [], waxMarketModel, 0.3),
     [waxMarketModel, waxScan?.listings],
   )
 

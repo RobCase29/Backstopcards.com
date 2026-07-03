@@ -63,7 +63,7 @@ describe('sealed wax modeling', () => {
     expect(waxProductMatchesQuery('2025 Bowman Chrome Baseball Hobby Box Factory Sealed', '2025 Bowman Chrome Baseball HTA Choice Box')).toBe(false)
   })
 
-  it('builds a recent comp anchored market model and lets manual fair value override it', () => {
+  it('builds a recent comp anchored market model and lets a target price override it', () => {
     const comps = parseWaxComps(`
       eBay $240 2026 Bowman Hobby Box 7/1/2026
       Fanatics $260 2026 Bowman Hobby Box 6/30/2026
@@ -153,20 +153,22 @@ describe('sealed wax modeling', () => {
     }
   })
 
-  it('ranks quotes inside the fair-value window by absolute spread', () => {
+  it('ranks quotes inside the target offer window by absolute spread', () => {
     const model = buildWaxMarketModel([], 300)
     const ranked = rankWaxOpportunities(
       [
         listing({ id: 'near', allIn: 310, price: 310 }),
+        listing({ id: 'offer', allIn: 385, price: 385 }),
         listing({ id: 'strong', allIn: 230, price: 220, shipping: 10 }),
         listing({ id: 'rich', allIn: 500, price: 500 }),
       ],
       model,
-      0.15,
+      0.3,
     )
 
-    expect(ranked.map((opportunity) => opportunity.listing.id)).toEqual(['strong', 'near'])
+    expect(ranked.map((opportunity) => opportunity.listing.id)).toEqual(['strong', 'near', 'offer'])
     expect(ranked[0].grade).toBe('A')
-    expect(ranked[1].signal).toBe('Near market')
+    expect(ranked[1].signal).toBe('Reach offer')
+    expect(ranked[2].signal).toBe('Reach offer')
   })
 })

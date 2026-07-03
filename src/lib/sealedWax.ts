@@ -847,7 +847,7 @@ function dedupeWaxListings(listings: WaxListing[]) {
   return deduped
 }
 
-export function rankWaxOpportunities(listings: WaxListing[], model: WaxMarketModel, maxAbovePct = 0.15): WaxOpportunity[] {
+export function rankWaxOpportunities(listings: WaxListing[], model: WaxMarketModel, maxAbovePct = 0.3): WaxOpportunity[] {
   if (model.marketPrice <= 0) return []
   return listings
     .map((listing) => {
@@ -863,11 +863,11 @@ export function rankWaxOpportunities(listings: WaxListing[], model: WaxMarketMod
               : 'Watch'
       const signal =
         grade === 'A'
-          ? 'Strong buy zone'
+          ? 'Below target'
           : grade === 'B'
-            ? 'Below market'
+            ? 'Offer zone'
             : grade === 'C'
-              ? 'Near market'
+              ? 'Reach offer'
               : 'Track only'
       return { listing, marketPrice: model.marketPrice, spread, discountPct, grade, signal }
     })
