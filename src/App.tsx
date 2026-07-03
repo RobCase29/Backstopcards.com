@@ -5321,6 +5321,8 @@ function SealedWaxDesk({
   onIncludeEbayChange,
   includeFanatics,
   onIncludeFanaticsChange,
+  includeDaveAdams,
+  onIncludeDaveAdamsChange,
   comps,
   model,
   scan,
@@ -5343,6 +5345,8 @@ function SealedWaxDesk({
   onIncludeEbayChange: (value: boolean) => void
   includeFanatics: boolean
   onIncludeFanaticsChange: (value: boolean) => void
+  includeDaveAdams: boolean
+  onIncludeDaveAdamsChange: (value: boolean) => void
   comps: WaxComp[]
   model: WaxMarketModel
   scan: WaxScanResult | null
@@ -5363,11 +5367,14 @@ function SealedWaxDesk({
     counts[listing.marketplaceLabel] = (counts[listing.marketplaceLabel] ?? 0) + 1
     return counts
   }, {})
-  const daveQuoteCount = scannedListings.filter((listing) => listing.marketplace === 'dave-adams').length
+  const daveListingCount = scannedListings.filter((listing) => listing.marketplace === 'dave-adams').length
   const hasMarketAnchor = model.marketPrice > 0
   const selectedFormat = sealedWaxProductLabel(query)
   const canScan =
-    query.trim().length > 2 && hasMarketAnchor && !loading && (includeEbay || includeFanatics || daveAdamsText.trim().length > 0)
+    query.trim().length > 2 &&
+    hasMarketAnchor &&
+    !loading &&
+    (includeEbay || includeFanatics || includeDaveAdams || daveAdamsText.trim().length > 0)
   const scanButtonText = !hasMarketAnchor
     ? 'Add Comps or Override'
     : loading
@@ -5465,7 +5472,11 @@ function SealedWaxDesk({
               <input type="checkbox" checked={includeFanatics} onChange={(event) => onIncludeFanaticsChange(event.target.checked)} />
               <span>Fanatics Collect</span>
             </label>
-            <span>Dave & Adams via quote paste</span>
+            <label>
+              <input type="checkbox" checked={includeDaveAdams} onChange={(event) => onIncludeDaveAdamsChange(event.target.checked)} />
+              <span>Dave & Adams live</span>
+            </label>
+            <span>Quote paste fallback</span>
           </div>
         </div>
 
@@ -5492,7 +5503,7 @@ function SealedWaxDesk({
             Market evidence and retail quotes
           </span>
           <em>
-            {model.compCount.toLocaleString()} matching / {comps.length.toLocaleString()} pasted comps / {daveQuoteCount.toLocaleString()} D&A quotes
+            {model.compCount.toLocaleString()} matching / {comps.length.toLocaleString()} pasted comps / {daveListingCount.toLocaleString()} D&A listings
           </em>
         </summary>
 
@@ -5540,7 +5551,7 @@ function SealedWaxDesk({
             <div className="wax-panel-title">
               <div>
                 <span>Retail Quotes</span>
-                <strong>Dave & Adams watchlist</strong>
+                <strong>Dave & Adams fallback</strong>
               </div>
               <a className="wax-inline-link" href={daveSearchUrl} target="_blank" rel="noreferrer">
                 <ExternalLink size={14} />
@@ -5556,7 +5567,9 @@ function SealedWaxDesk({
             />
             <div className="wax-note">
               <Store size={16} />
-              <span>D&A is quote-driven for now. Pasted rows are matched to the selected product and ranked against the same comp anchor.</span>
+              <span>
+                Live D&A reads are attempted when enabled. If the storefront blocks automated reads, pasted rows still rank against the same comp anchor.
+              </span>
             </div>
           </section>
         </div>
@@ -5625,7 +5638,7 @@ function SealedWaxDesk({
             <Package size={26} />
             <div>
               <strong>Ready to scan sealed wax.</strong>
-              <span>Run the scan to compare active eBay, Fanatics Collect, and pasted D&A quotes for the selected Bowman product.</span>
+              <span>Run the scan to compare active eBay, Fanatics Collect, D&A, and pasted retail quotes for the selected Bowman product.</span>
             </div>
           </div>
         ) : topOpportunities.length === 0 ? (
@@ -5747,6 +5760,7 @@ function App() {
   const [waxDaveAdamsText, setWaxDaveAdamsText] = useState('')
   const [waxIncludeEbay, setWaxIncludeEbay] = useState(true)
   const [waxIncludeFanatics, setWaxIncludeFanatics] = useState(true)
+  const [waxIncludeDaveAdams, setWaxIncludeDaveAdams] = useState(true)
   const [waxScan, setWaxScan] = useState<WaxScanResult | null>(null)
   const [waxLoading, setWaxLoading] = useState(false)
   const [waxError, setWaxError] = useState<string | null>(null)
@@ -7032,7 +7046,7 @@ function App() {
       return
     }
 
-    if (!waxIncludeEbay && !waxIncludeFanatics && waxManualListings.length === 0) {
+    if (!waxIncludeEbay && !waxIncludeFanatics && !waxIncludeDaveAdams && waxManualListings.length === 0) {
       setWaxError('Choose at least one live marketplace or paste a Dave & Adams quote.')
       return
     }
@@ -7049,6 +7063,7 @@ function App() {
         minPrice: waxMinPrice,
         includeEbay: waxIncludeEbay,
         includeFanatics: waxIncludeFanatics,
+        includeDaveAdams: waxIncludeDaveAdams,
         manualListings: waxManualListings,
         signal: controller.signal,
       })
@@ -7600,6 +7615,8 @@ function App() {
             onIncludeEbayChange={setWaxIncludeEbay}
             includeFanatics={waxIncludeFanatics}
             onIncludeFanaticsChange={setWaxIncludeFanatics}
+            includeDaveAdams={waxIncludeDaveAdams}
+            onIncludeDaveAdamsChange={setWaxIncludeDaveAdams}
             comps={waxComps}
             model={waxMarketModel}
             scan={waxScan}

@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import {
   handleCardHedgeNodeRequest,
   handleChecklistNodeRequest,
+  handleDaveAdamsNodeRequest,
   handleEbayNodeRequest,
   handleFanaticsCollectNodeRequest,
   handleLiveMarketNodeRequest,
@@ -49,6 +50,23 @@ function fanaticsCollectProxy(): Plugin {
           return
         }
         await handleFanaticsCollectNodeRequest(request, response, env)
+      })
+    },
+  }
+}
+
+function daveAdamsProxy(): Plugin {
+  return {
+    name: 'dave-adams-local-proxy',
+    configureServer(server) {
+      const env = loadEnv(server.config.mode, process.cwd(), '')
+
+      server.middlewares.use(async (request, response, next) => {
+        if (!request.url?.startsWith('/api/dave-adams')) {
+          next()
+          return
+        }
+        await handleDaveAdamsNodeRequest(request, response, env)
       })
     },
   }
@@ -124,6 +142,7 @@ export default defineConfig({
     prospectPulseProxy(),
     ebayProxy(),
     fanaticsCollectProxy(),
+    daveAdamsProxy(),
     cardHedgeProxy(),
     salesCacheProxy(),
     checklistProxy(),

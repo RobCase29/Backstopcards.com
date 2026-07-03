@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildWaxMarketModel,
+  fetchSealedWaxListings,
   parseDaveAdamsQuotes,
   parseWaxComps,
   rankWaxOpportunities,
@@ -109,6 +110,47 @@ describe('sealed wax modeling', () => {
     expect(quotes[0].marketplaceLabel).toBe('Dave & Adams')
     expect(quotes[0].allIn).toBe(229.95)
     expect(quotes[0].productKind).toBe('box')
+  })
+
+  it('pulls Dave & Adams live retail rows into sealed wax scans', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 'da-2026-bowman-hobby',
+              title: '2026 Bowman Baseball Hobby Box',
+              listingUrl: 'https://www.dacardworld.com/sports-cards/2026-bowman-baseball-hobby-box',
+              price: 229.95,
+              allIn: 229.95,
+            },
+          ],
+          stats: {
+            cacheHits: 0,
+            upstreamPagesFetched: 1,
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }) as typeof fetch
+
+    try {
+      const scan = await fetchSealedWaxListings({
+        query: '2026 Bowman Baseball Hobby Box',
+        minPrice: 50,
+        includeEbay: false,
+        includeFanatics: false,
+        includeDaveAdams: true,
+      })
+
+      expect(scan.listings).toHaveLength(1)
+      expect(scan.listings[0].marketplaceLabel).toBe('Dave & Adams')
+      expect(scan.stats.daveAdamsItems).toBe(1)
+      expect(scan.stats.upstreamPages).toBe(1)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 
   it('ranks quotes inside the fair-value window by absolute spread', () => {

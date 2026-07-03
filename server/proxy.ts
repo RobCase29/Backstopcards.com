@@ -30,6 +30,9 @@ const FANATICS_COLLECT_QUERY_CACHE_NAMESPACE = 'backstop-fanatics-collect-query-
 const FANATICS_COLLECT_SEARCH_KEY_TTL_MS = 10 * 60 * 1000
 const FANATICS_COLLECT_QUERY_BATCH_SIZE = 25
 const FANATICS_COLLECT_QUERY_CACHE_TTL_SECONDS = 24 * 60 * 60
+const DAVE_ADAMS_BASE_URL = 'https://www.dacardworld.com'
+const DAVE_ADAMS_QUERY_CACHE_NAMESPACE = 'backstop-dave-adams-query-v1'
+const DAVE_ADAMS_QUERY_CACHE_TTL_SECONDS = 6 * 60 * 60
 const RANKINGS_RUNTIME_CACHE_NAMESPACE = 'backstop-rankings-v1'
 const RANKINGS_RUNTIME_CACHE_KEY = 'sts-ranking-csv-bundle'
 const RANKINGS_RUNTIME_CACHE_TTL_SECONDS = 36 * 60 * 60
@@ -47,6 +50,7 @@ const MAX_EBAY_QUERY_LENGTH = 140
 const PROSPECTPULSE_FUNCTION_ROUTES = new Set(['api-checklists', 'api-listings'])
 const EBAY_ROUTES = new Set(['search', 'sold'])
 const FANATICS_COLLECT_ROUTES = new Set(['status', 'search'])
+const DAVE_ADAMS_ROUTES = new Set(['status', 'search'])
 const CARD_HEDGE_ROUTES = new Set([
   'status',
   'search',
@@ -3209,6 +3213,323 @@ export async function handleFanaticsCollectRoute(route: string, request: Request
   }
 }
 
+type DaveAdamsSearchPayload = {
+  query?: string
+  minPrice?: number | string
+  limit?: number | string
+}
+
+type DaveAdamsSearchResult = {
+  items: Array<Record<string, unknown>>
+  errors: Array<{ query?: string; error: string }>
+  fetchedAt: string
+  blocked: boolean
+  sourceUrl: string
+  stats: EbayQueryCacheStats & {
+    queriesRun: number
+    queriesSucceeded: number
+    queriesFailed: number
+    pagesFetched: number
+    upstreamTotal: number
+    dedupedItems: number
+  }
+}
+
+function daveAdamsString(value: unknown, fallback = '') {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim()
+  return trimmed || fallback
+}
+
+function daveAdamsNumber(value: unknown, fallback = 0) {
+  const parsed = Number(String(value ?? '').replace(/[$,%\s,]/g, ''))
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function daveAdamsSearchUrl(query: string) {
+  return `${DAVE_ADAMS_BASE_URL}/search?Search=${encodeURIComponent(query)}`
+}
+
+function decodeBasicHtmlEntities(value: string) {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, decimal: string) => String.fromCharCode(Number.parseInt(decimal, 10)))
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+}
+
+function stripHtml(value: string) {
+  return decodeBasicHtmlEntities(value.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function absoluteDaveAdamsUrl(value: string) {
+  try {
+    return new URL(decodeBasicHtmlEntities(value), DAVE_ADAMS_BASE_URL).toString()
+  } catch {
+    return DAVE_ADAMS_BASE_URL
+  }
+}
+
+function looksLikeDaveAdamsBlock(html: string) {
+  return /just a moment|cf_chl|challenges\.cloudflare\.com|enable javascript and cookies|checking your browser/i.test(html)
+}
+
+function daveAdamsPriceFrom(value: string) {
+  const match = value.match(/\$\s*([0-9][0-9,]*(?:\.\d{2})?)/)
+  return match ? daveAdamsNumber(match[1], 0) : 0
+}
+
+function daveAdamsImageFrom(value: string) {
+  const match = value.match(/<img\b[^>]*(?:data-src|src)=["']([^"']+)["'][^>]*>/i)
+  return match?.[1] ? absoluteDaveAdamsUrl(match[1]) : ''
+}
+
+function daveAdamsTitleFrom(anchorHtml: string, fallback: string) {
+  const explicitTitle = anchorHtml.match(/\btitle=["']([^"']+)["']/i)?.[1]
+  const imageAlt = anchorHtml.match(/\balt=["']([^"']+)["']/i)?.[1]
+  return stripHtml(explicitTitle || imageAlt || anchorHtml || fallback)
+}
+
+function dedupeDaveAdamsItems(items: Array<Record<string, unknown>>) {
+  const seen = new Set<string>()
+  const deduped: Array<Record<string, unknown>> = []
+  for (const item of items) {
+    const key = daveAdamsString(item.listingUrl) || daveAdamsString(item.title)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    deduped.push(item)
+  }
+  return deduped
+}
+
+function parseDaveAdamsJsonLdProducts(html: string, sourceUrl: string) {
+  const items: Array<Record<string, unknown>> = []
+  const scripts = html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)
+  for (const script of scripts) {
+    const parsed = parseJsonText(decodeBasicHtmlEntities(script[1] ?? ''), null) as unknown
+    const nodes = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === 'object' && Array.isArray((parsed as Record<string, unknown>)['@graph'])
+        ? ((parsed as Record<string, unknown>)['@graph'] as unknown[])
+        : parsed
+          ? [parsed]
+          : []
+    for (const node of nodes) {
+      if (!node || typeof node !== 'object') continue
+      const record = node as Record<string, unknown>
+      const type = String(record['@type'] ?? '').toLowerCase()
+      if (!type.includes('product')) continue
+      const title = daveAdamsString(record.name)
+      const offers = record.offers && typeof record.offers === 'object' ? (record.offers as Record<string, unknown>) : {}
+      const price = daveAdamsNumber(offers.price, 0) || daveAdamsNumber(record.price, 0)
+      if (!title || price <= 0) continue
+      items.push({
+        id: sha256(`${title}:${price}:${daveAdamsString(record.url)}`).slice(0, 18),
+        title,
+        listingUrl: absoluteDaveAdamsUrl(daveAdamsString(record.url, sourceUrl)),
+        imageUrl: Array.isArray(record.image)
+          ? absoluteDaveAdamsUrl(daveAdamsString(record.image[0]))
+          : absoluteDaveAdamsUrl(daveAdamsString(record.image)),
+        price,
+        shipping: 0,
+        allIn: price,
+        availability: daveAdamsString(offers.availability),
+        sourceUrl,
+      })
+    }
+  }
+  return items
+}
+
+function parseDaveAdamsSearchHtml(html: string, sourceUrl: string, minPrice: number, limit: number) {
+  const items = parseDaveAdamsJsonLdProducts(html, sourceUrl)
+  const anchorMatches = html.matchAll(/<a\b([^>]*href=["'][^"']*(?:\/sports-cards\/|\/gaming-cards\/|\/entertainment-cards\/)[^"']+["'][^>]*)>([\s\S]*?)<\/a>/gi)
+  for (const match of anchorMatches) {
+    const attributes = match[1] ?? ''
+    const href = attributes.match(/\bhref=["']([^"']+)["']/i)?.[1]
+    if (!href) continue
+    const listingUrl = absoluteDaveAdamsUrl(href)
+    const anchorHtml = `${attributes}${match[2] ?? ''}`
+    const title = daveAdamsTitleFrom(anchorHtml, '')
+    if (!title || title.length < 8 || /view details|add to cart|wishlist/i.test(title)) continue
+    const context = html.slice(Math.max(0, (match.index ?? 0) - 900), Math.min(html.length, (match.index ?? 0) + 2400))
+    const price = daveAdamsPriceFrom(context)
+    if (price <= 0) continue
+    items.push({
+      id: sha256(`${listingUrl}:${title}`).slice(0, 18),
+      title,
+      listingUrl,
+      imageUrl: daveAdamsImageFrom(context),
+      price,
+      shipping: 0,
+      allIn: price,
+      availability: /out of stock|sold out/i.test(context) ? 'out-of-stock' : 'available',
+      sourceUrl,
+    })
+  }
+
+  return dedupeDaveAdamsItems(items)
+    .filter((item) => daveAdamsNumber(item.price, 0) >= minPrice)
+    .slice(0, limit)
+}
+
+async function fetchDaveAdamsHtml(sourceUrl: string) {
+  const upstream = await fetch(sourceUrl, {
+    method: 'GET',
+    headers: {
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'User-Agent':
+        'BackstopCardFinder/1.0 (+https://backstopcards.com; sealed wax market research)',
+    },
+    signal: AbortSignal.timeout(10_000),
+  })
+  const html = await upstream.text()
+  return { html, status: upstream.status, statusText: upstream.statusText }
+}
+
+async function searchDaveAdams(payload: DaveAdamsSearchPayload, env: ServerEnv): Promise<DaveAdamsSearchResult> {
+  const query = daveAdamsString(payload.query).replace(/\s+/g, ' ').slice(0, MAX_EBAY_QUERY_LENGTH)
+  if (query.length < 3) throw new ProxyRequestError(400, 'Enter a Dave & Adams product search')
+  const minPrice = Math.max(0, daveAdamsNumber(payload.minPrice, 0))
+  const limit = clampInt(payload.limit, 40, 1, 80)
+  const sourceUrl = daveAdamsSearchUrl(query)
+  const redis = await getUpstashRedis(env)
+  const cacheTtlSeconds = clampInt(
+    env.DAVE_ADAMS_QUERY_CACHE_TTL_SECONDS,
+    DAVE_ADAMS_QUERY_CACHE_TTL_SECONDS,
+    0,
+    24 * 60 * 60,
+  )
+  const cacheKey =
+    redis && cacheTtlSeconds > 0
+      ? redisQueryCacheKey(DAVE_ADAMS_QUERY_CACHE_NAMESPACE, sha256(stableJson({ query, minPrice, limit, version: 1 })))
+      : ''
+
+  if (redis && cacheKey) {
+    try {
+      const cached = await redis.get<string>(cacheKey)
+      const parsed =
+        typeof cached === 'string'
+          ? (parseJsonText(cached, null) as Partial<DaveAdamsSearchResult> | null)
+          : ((cached ?? null) as Partial<DaveAdamsSearchResult> | null)
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items) && parsed.stats) {
+        const cachedPayload = parsed as DaveAdamsSearchResult
+        return {
+          ...cachedPayload,
+          stats: {
+            ...cachedPayload.stats,
+            cacheHits: Math.max(1, cachedPayload.stats.cacheHits ?? 0),
+            redisCacheHits: Math.max(1, cachedPayload.stats.redisCacheHits ?? 0),
+            upstreamPagesFetched: 0,
+          },
+        }
+      }
+    } catch {
+      // A cache miss should not block a fresh storefront read.
+    }
+  }
+
+  const { html, status, statusText } = await fetchDaveAdamsHtml(sourceUrl)
+  if (looksLikeDaveAdamsBlock(html)) {
+    throw new ProxyRequestError(
+      502,
+      'Dave & Adams is blocking automated public reads right now. Use the D&A quote paste fallback or connect an approved product feed.',
+    )
+  }
+  if (status >= 400) throw new ProxyRequestError(status, `Dave & Adams returned ${status} ${statusText}`.trim())
+
+  const items = parseDaveAdamsSearchHtml(html, sourceUrl, minPrice, limit)
+  const response: DaveAdamsSearchResult = {
+    items,
+    errors: [],
+    fetchedAt: new Date().toISOString(),
+    blocked: false,
+    sourceUrl,
+    stats: {
+      ...emptyEbayQueryCacheStats(),
+      queriesRun: 1,
+      queriesSucceeded: 1,
+      queriesFailed: 0,
+      pagesFetched: 1,
+      upstreamTotal: items.length,
+      dedupedItems: items.length,
+      upstreamPagesFetched: 1,
+    },
+  }
+
+  if (redis && cacheKey) {
+    try {
+      await redis.set(cacheKey, jsonText(response), { ex: cacheTtlSeconds })
+      response.stats.cacheWrites = 1
+    } catch {
+      response.stats.cacheSkips = 1
+    }
+  }
+
+  return response
+}
+
+export async function handleDaveAdamsRoute(route: string, request: Request, env: ServerEnv) {
+  if (!DAVE_ADAMS_ROUTES.has(route)) return new Response(null, { status: 404 })
+  if (route === 'status' && request.method !== 'GET') return new Response(null, { status: 404 })
+  if (route === 'search' && request.method !== 'POST') return new Response(null, { status: 404 })
+
+  try {
+    if (route === 'search') {
+      const unsafePost = rejectUnsafePost(request)
+      if (unsafePost) return unsafePost
+      const payload = await readJsonBody<DaveAdamsSearchPayload>(request, MAX_EBAY_BODY_BYTES)
+      const search = await searchDaveAdams(payload, env)
+      return jsonResponse(200, search)
+    }
+
+    const probeUrl = daveAdamsSearchUrl('2026 Bowman Baseball Hobby Box')
+    let reachable = false
+    let blocked = false
+    let message = 'Dave & Adams public search is ready.'
+    try {
+      const { html, status, statusText } = await fetchDaveAdamsHtml(probeUrl)
+      blocked = looksLikeDaveAdamsBlock(html)
+      reachable = status < 400 && !blocked
+      if (blocked) {
+        message = 'Dave & Adams public storefront is blocking automated reads; quote paste fallback is available.'
+      } else if (!reachable) {
+        message = `Dave & Adams returned ${status} ${statusText}`.trim()
+      }
+    } catch (error) {
+      message = error instanceof Error ? error.message : 'Dave & Adams public search is unavailable.'
+    }
+
+    return jsonResponse(200, {
+      provider: 'dave-adams',
+      label: 'Dave & Adams',
+      configured: true,
+      reachable,
+      blocked,
+      mode: reachable ? 'public-html-search' : 'quote-paste-fallback',
+      searchUrl: probeUrl,
+      message,
+    })
+  } catch (error) {
+    console.warn('[dave-adams] route failed', {
+      route,
+      status: routeErrorStatus(error),
+      error: routeErrorMessage(error, 'Dave & Adams request failed'),
+    })
+    return jsonResponse(routeErrorStatus(error), {
+      error: routeErrorMessage(error, 'Dave & Adams request failed'),
+    })
+  }
+}
+
 export async function handleCardHedgeRoute(route: string, request: Request, env: ServerEnv) {
   if (!CARD_HEDGE_ROUTES.has(route)) return new Response(null, { status: 404 })
 
@@ -4791,6 +5112,11 @@ export async function handleFanaticsCollectNodeRequest(request: IncomingMessage,
     response,
     await handleFanaticsCollectRoute(prefixedNodeRoute(request, '/api/fanatics-collect'), fetchRequest, env),
   )
+}
+
+export async function handleDaveAdamsNodeRequest(request: IncomingMessage, response: ServerResponse, env: ServerEnv) {
+  const fetchRequest = await nodeToFetchRequest(request)
+  await writeNodeResponse(response, await handleDaveAdamsRoute(prefixedNodeRoute(request, '/api/dave-adams'), fetchRequest, env))
 }
 
 export async function handleCardHedgeNodeRequest(request: IncomingMessage, response: ServerResponse, env: ServerEnv) {

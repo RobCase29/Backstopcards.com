@@ -131,6 +131,36 @@ type FanaticsWaxResponse = {
   }
 }
 
+type DaveAdamsWaxItem = {
+  id?: string
+  title?: string
+  listingUrl?: string
+  imageUrl?: string
+  price?: number | string | null
+  shipping?: number | string | null
+  allIn?: number | string | null
+  availability?: string
+}
+
+type DaveAdamsWaxResponse = {
+  items?: DaveAdamsWaxItem[]
+  errors?: Array<{ query?: string; error: string }>
+  fetchedAt?: string
+  error?: string
+  blocked?: boolean
+  sourceUrl?: string
+  stats?: {
+    queriesRun?: number
+    queriesSucceeded?: number
+    queriesFailed?: number
+    pagesFetched?: number
+    upstreamTotal?: number
+    dedupedItems?: number
+    cacheHits?: number
+    upstreamPagesFetched?: number
+  }
+}
+
 export type WaxScanResult = {
   listings: WaxListing[]
   fetchedAt: string
@@ -138,6 +168,7 @@ export type WaxScanResult = {
   stats: {
     ebayItems: number
     fanaticsItems: number
+    daveAdamsItems: number
     manualItems: number
     cacheHits: number
     upstreamPages: number
@@ -779,6 +810,31 @@ function mapFanaticsWaxHit(item: FanaticsWaxHit, query: string): WaxListing | nu
   }
 }
 
+function mapDaveAdamsWaxItem(item: DaveAdamsWaxItem, query: string): WaxListing | null {
+  const title = firstString([item.title])
+  if (!title || !waxProductMatchesQuery(title, query)) return null
+  if (/out of stock|sold out|unavailable/i.test(firstString([item.availability]))) return null
+  const confidence = waxTitleConfidence(title, query)
+  if (confidence < 0.55) return null
+  const price = firstPositive([item.price, item.allIn])
+  if (price <= 0) return null
+  const shipping = firstPositive([item.shipping])
+  return {
+    id: firstString([item.id, item.listingUrl], title),
+    marketplace: 'dave-adams',
+    marketplaceLabel: 'Dave & Adams',
+    mode: 'retail',
+    title,
+    listingUrl: firstString([item.listingUrl], `https://www.dacardworld.com/search?Search=${encodeURIComponent(query)}`),
+    imageUrl: firstString([item.imageUrl]),
+    price,
+    shipping,
+    allIn: firstPositive([item.allIn]) || price + shipping,
+    productKind: waxProductKind(title),
+    confidence,
+  }
+}
+
 function dedupeWaxListings(listings: WaxListing[]) {
   const seen = new Set<string>()
   const deduped: WaxListing[] = []
@@ -829,6 +885,7 @@ export async function fetchSealedWaxListings(options: {
   minPrice: number
   includeEbay: boolean
   includeFanatics: boolean
+  includeDaveAdams: boolean
   manualListings?: WaxListing[]
   signal?: AbortSignal
 }): Promise<WaxScanResult> {
@@ -837,6 +894,7 @@ export async function fetchSealedWaxListings(options: {
   const listings: WaxListing[] = [...(options.manualListings ?? [])]
   let ebayItems = 0
   let fanaticsItems = 0
+  let daveAdamsItems = 0
   let cacheHits = 0
   let upstreamPages = 0
 
@@ -899,6 +957,33 @@ export async function fetchSealedWaxListings(options: {
     }
   }
 
+  if (options.includeDaveAdams) {
+    const response = await fetch('/api/dave-adams/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: options.signal,
+      body: JSON.stringify({
+        query,
+        minPrice: options.minPrice,
+        limit: 80,
+      }),
+    })
+    const payload = (await response.json()) as DaveAdamsWaxResponse
+    if (!response.ok) {
+      errors.push({ source: 'Dave & Adams', query, error: payload.error ?? 'Dave & Adams wax scan failed' })
+    } else {
+      const mapped = (payload.items ?? []).flatMap((item) => {
+        const listing = mapDaveAdamsWaxItem(item, query)
+        return listing ? [listing] : []
+      })
+      daveAdamsItems = mapped.length
+      cacheHits += payload.stats?.cacheHits ?? 0
+      upstreamPages += payload.stats?.upstreamPagesFetched ?? payload.stats?.pagesFetched ?? 0
+      listings.push(...mapped)
+      for (const error of payload.errors ?? []) errors.push({ source: 'Dave & Adams', ...error })
+    }
+  }
+
   const deduped = dedupeWaxListings(listings)
   return {
     listings: deduped,
@@ -907,6 +992,7 @@ export async function fetchSealedWaxListings(options: {
     stats: {
       ebayItems,
       fanaticsItems,
+      daveAdamsItems,
       manualItems: options.manualListings?.length ?? 0,
       cacheHits,
       upstreamPages,
