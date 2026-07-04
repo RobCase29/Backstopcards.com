@@ -38,12 +38,12 @@ jobs:
 
       - name: Commit updated ranking data
         run: |
-          if git diff --quiet -- src/data/sts_formulated_consensus_hitters.csv src/data/sts_formulated_consensus_pitchers.csv; then
+          if git diff --quiet -- src/data/sts_formulated_consensus_hitters.csv src/data/sts_formulated_consensus_pitchers.csv src/data/sts_oopsy_peak_mlb.csv; then
             echo "Consensus data unchanged."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/data/sts_formulated_consensus_hitters.csv src/data/sts_formulated_consensus_pitchers.csv
+          git add src/data/sts_formulated_consensus_hitters.csv src/data/sts_formulated_consensus_pitchers.csv src/data/sts_oopsy_peak_mlb.csv
           git commit -m "Refresh consensus rankings"
           git push

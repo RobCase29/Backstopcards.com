@@ -96,8 +96,12 @@ describe('consensus rankings', () => {
       team: 'MIA',
       population: 'hitter',
       source: 'formulated-consensus',
-      coverage: 6,
     })
+    expect(ranking?.coverage).toBeGreaterThanOrEqual(5)
+    expect(ranking?.coverage).toBe(
+      Object.values(ranking?.sourceRanks ?? {}).filter((sourceRank) => sourceRank !== null).length,
+    )
+    expect(ranking?.lowCoverage).toBe(false)
 
     const pitcher = findStsRanking('Karson Milbrandt')
 
