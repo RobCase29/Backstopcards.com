@@ -19,6 +19,8 @@ export type CardHedgeStatus = CardHedgeUsage & {
   plan: string
   eliteAccessExpected: boolean
   baseUrl: string
+  usageTracking?: boolean
+  usageBackend?: 'sqlite' | 'redis' | 'none' | string
   endpoints: Record<string, string>
   message: string
 }
@@ -104,6 +106,21 @@ export type CardHedgePriceUpdate = {
 export type CardHedgePriceUpdatesResponse = {
   updates: CardHedgePriceUpdate[]
   count: number
+}
+
+export type CardHedgeSalesStatsByPlayerResponse = {
+  player?: string
+  interval?: string
+  stats?: unknown[]
+  data?: unknown[]
+  count?: number
+}
+
+export type CardHedgeTotalSalesByPlayerResponse = {
+  players?: unknown[]
+  totals?: unknown[]
+  data?: unknown[]
+  count?: number
 }
 
 export type CardHedgeFmvResult = {
@@ -213,6 +230,29 @@ export function fetchCardHedgePriceUpdates(
   signal?: AbortSignal,
 ) {
   return postCardHedge<CardHedgePriceUpdatesResponse>('price-updates', payload, signal)
+}
+
+export function fetchCardHedgeSalesStatsByPlayer(
+  payload: {
+    player: string
+    interval?: 'day' | 'week' | 'month' | string
+    since?: string
+    category?: string | null
+  },
+  signal?: AbortSignal,
+) {
+  return postCardHedge<CardHedgeSalesStatsByPlayerResponse>('sales-stats-by-player', payload, signal)
+}
+
+export function fetchCardHedgeTotalSalesByPlayer(
+  payload: {
+    players: string[]
+    since?: string
+    category?: string | null
+  },
+  signal?: AbortSignal,
+) {
+  return postCardHedge<CardHedgeTotalSalesByPlayerResponse>('total-sales-by-player', payload, signal)
 }
 
 export function fetchCardHedgeFmvBatch(

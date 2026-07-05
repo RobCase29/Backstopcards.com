@@ -13,6 +13,10 @@
     {
       "path": "/api/rankings/refresh",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/card-hedge/refresh",
+      "schedule": "20 9 * * *"
     }
   ],
   "headers": [

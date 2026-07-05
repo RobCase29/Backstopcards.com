@@ -53,12 +53,16 @@ const FANATICS_COLLECT_ROUTES = new Set(['status', 'search'])
 const DAVE_ADAMS_ROUTES = new Set(['status', 'search'])
 const CARD_HEDGE_ROUTES = new Set([
   'status',
+  'refresh',
   'search',
   'match',
   'comps',
   'all-prices',
   'prices-by-card',
   'price-updates',
+  'sales-stats-by-player',
+  'total-sales-by-player',
+  'subscribe-price-updates',
   'price-estimate',
   'batch-price-estimate',
   'card-fmv-batch',
@@ -482,11 +486,115 @@ function cardHedgeEndpoint(route: string) {
     'all-prices': '/v1/cards/all-prices-by-card',
     'prices-by-card': '/v1/cards/prices-by-card',
     'price-updates': '/v1/cards/price-updates',
+    'sales-stats-by-player': '/v1/cards/sales-stats-by-player',
+    'total-sales-by-player': '/v1/cards/total-sales-by-player',
+    'subscribe-price-updates': '/v1/cards/subscribe-price-updates',
     'price-estimate': '/v1/cards/price-estimate',
     'batch-price-estimate': '/v1/cards/batch-price-estimate',
     'card-fmv-batch': '/v1/cards/card-fmv-batch',
   }
   return endpoints[route] ?? ''
+}
+
+function cardHedgeRedisUsageKeys(now = new Date()) {
+  const minuteStart = new Date(Math.floor(now.getTime() / 60_000) * 60_000)
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  return {
+    minuteKey: `backstop:card-hedge:usage:minute:${minuteStart.toISOString().slice(0, 16)}`,
+    dayKey: `backstop:card-hedge:usage:day:${dayStart.toISOString().slice(0, 10)}`,
+    minuteStart: minuteStart.toISOString(),
+    dayStart: dayStart.toISOString(),
+  }
+}
+
+async function cardHedgeRedisUsagePayload(redis: RedisClient, env: ServerEnv, now = new Date()) {
+  const limits = cardHedgeRateConfig(env)
+  const keys = cardHedgeRedisUsageKeys(now)
+  const [minuteRaw, dayRaw] = await Promise.all([redis.get<number | string>(keys.minuteKey), redis.get<number | string>(keys.dayKey)])
+  const minute = Number(minuteRaw ?? 0)
+  const day = Number(dayRaw ?? 0)
+  const safeMinute = Number.isFinite(minute) ? minute : 0
+  const safeDay = Number.isFinite(day) ? day : 0
+  return {
+    limits,
+    usage: {
+      minute: safeMinute,
+      day: safeDay,
+      remainingMinute: Math.max(0, limits.perMinute - safeMinute),
+      remainingDay: Math.max(0, limits.perDay - safeDay),
+      minuteWindowStart: keys.minuteStart,
+      dayWindowStart: keys.dayStart,
+    },
+  }
+}
+
+async function cardHedgeRedisRateLimitError(redis: RedisClient, env: ServerEnv, requestedCalls = 1) {
+  const { limits, usage } = await cardHedgeRedisUsagePayload(redis, env)
+  if (usage.minute + requestedCalls > limits.perMinute) {
+    return {
+      status: 429,
+      payload: {
+        error: 'Card Hedge minute limit would be exceeded; wait a minute or lower batch size.',
+        limits,
+        usage,
+      },
+    }
+  }
+  if (usage.day + requestedCalls > limits.perDay) {
+    return {
+      status: 429,
+      payload: {
+        error: 'Card Hedge daily limit would be exceeded; resume tomorrow or raise CARD_HEDGE_DAILY_LIMIT.',
+        limits,
+        usage,
+      },
+    }
+  }
+  return null
+}
+
+async function incrementRedisCounter(redis: RedisClient, key: string, ttlSeconds: number) {
+  try {
+    if (redis.incrby) {
+      const next = await redis.incrby(key, 1)
+      await redis.expire?.(key, ttlSeconds)
+      return next
+    }
+    const currentRaw = await redis.get<number | string>(key)
+    const current = Number(currentRaw ?? 0)
+    const next = (Number.isFinite(current) ? current : 0) + 1
+    await redis.set(key, next, { ex: ttlSeconds })
+    return next
+  } catch {
+    return null
+  }
+}
+
+async function recordCardHedgeRedisCall(redis: RedisClient, route: string, endpoint: string, statusCode: number, now = new Date()) {
+  const keys = cardHedgeRedisUsageKeys(now)
+  const requestedAt = now.toISOString()
+  await Promise.all([
+    incrementRedisCounter(redis, keys.minuteKey, 2 * 60),
+    incrementRedisCounter(redis, keys.dayKey, 2 * 24 * 60 * 60),
+    redis.set(
+      'backstop:card-hedge:usage:last-call',
+      {
+        route,
+        endpoint,
+        statusCode,
+        requestedAt,
+      },
+      { ex: 2 * 24 * 60 * 60 },
+    ),
+  ])
+}
+
+function cardHedgeRefreshCheckpointKey() {
+  return 'backstop:card-hedge:price-updates:checkpoint'
+}
+
+function cardHedgeRefreshFallbackSince(now = new Date()) {
+  return new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
 }
 
 function cardHedgeDailyExportDate(request: Request) {
@@ -1082,6 +1190,8 @@ type EbayQueryCacheContext = {
 type RedisClient = {
   get: <T = unknown>(key: string) => Promise<T | null>
   set: (key: string, value: unknown, options?: { ex?: number }) => Promise<unknown>
+  incrby?: (key: string, increment: number) => Promise<number>
+  expire?: (key: string, seconds: number) => Promise<number>
   ping?: () => Promise<unknown>
 }
 
@@ -3534,6 +3644,7 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
   if (!CARD_HEDGE_ROUTES.has(route)) return new Response(null, { status: 404 })
 
   let db: SqliteDatabase | null = null
+  let redis: RedisClient | null = null
   try {
     const configured = Boolean(env.CARD_HEDGE_API_KEY)
     const plan = String(env.CARD_HEDGE_PLAN ?? '').trim().toLowerCase()
@@ -3544,15 +3655,31 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
       const opened = await openOptionalWritableMarketDb(env)
       db = opened.db
       let usageTracking = false
+      let usageBackend = 'none'
       let usagePayload = cardHedgeUsageFallback(env)
       if (db) {
         try {
           ensureCardHedgeUsageSchema(db)
           usagePayload = cardHedgeUsagePayload(db, env)
           usageTracking = true
+          usageBackend = 'sqlite'
         } catch {
           db.close()
           db = null
+        }
+      }
+      if (!db) {
+        redis = await getUpstashRedis(env)
+        if (redis) {
+          try {
+            usagePayload = await cardHedgeRedisUsagePayload(redis, env)
+            usageTracking = true
+            usageBackend = 'redis'
+          } catch {
+            usagePayload = cardHedgeUsageFallback(env)
+            usageTracking = false
+            usageBackend = 'none'
+          }
         }
       }
 
@@ -3564,14 +3691,19 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
         baseUrl: CARD_HEDGE_API_BASE,
         dbName: basename(opened.dbPath),
         usageTracking,
+        usageBackend,
         ...usagePayload,
         endpoints: {
+          refresh: '/api/card-hedge/refresh',
           search: '/api/card-hedge/search',
           match: '/api/card-hedge/match',
           comps: '/api/card-hedge/comps',
           allPrices: '/api/card-hedge/all-prices',
           pricesByCard: '/api/card-hedge/prices-by-card',
           priceUpdates: '/api/card-hedge/price-updates',
+          salesStatsByPlayer: '/api/card-hedge/sales-stats-by-player',
+          totalSalesByPlayer: '/api/card-hedge/total-sales-by-player',
+          subscribePriceUpdates: '/api/card-hedge/subscribe-price-updates',
           priceEstimate: '/api/card-hedge/price-estimate',
           batchPriceEstimate: '/api/card-hedge/batch-price-estimate',
           cardFmvBatch: '/api/card-hedge/card-fmv-batch',
@@ -3581,14 +3713,82 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
       })
     }
 
-    const opened = await openWritableMarketDb(env)
+    const opened = await openOptionalWritableMarketDb(env)
     db = opened.db
-    ensureCardHedgeUsageSchema(db)
+    let usageBackend = 'none'
+    if (db) {
+      try {
+        ensureCardHedgeUsageSchema(db)
+        usageBackend = 'sqlite'
+      } catch {
+        db.close()
+        db = null
+      }
+    }
+    if (!db) {
+      redis = await getUpstashRedis(env)
+      usageBackend = redis ? 'redis' : 'none'
+    }
 
     if (!configured) return jsonResponse(401, { error: 'Set CARD_HEDGE_API_KEY in environment variables' })
 
-    const rateLimit = cardHedgeRateLimitError(db, env)
+    const rateLimit = db ? cardHedgeRateLimitError(db, env) : redis ? await cardHedgeRedisRateLimitError(redis, env) : null
     if (rateLimit) return jsonResponse(rateLimit.status, rateLimit.payload)
+
+    const recordCall = async (routeName: string, endpointName: string, statusCode: number) => {
+      if (db) {
+        recordCardHedgeCall(db, routeName, endpointName, statusCode)
+      } else if (redis) {
+        await recordCardHedgeRedisCall(redis, routeName, endpointName, statusCode)
+      }
+    }
+
+    if (route === 'refresh') {
+      if (request.method === 'GET') {
+        const secret = env.CRON_SECRET?.trim() || process.env.CRON_SECRET?.trim() || ''
+        const authHeader = request.headers.get('authorization')
+        if (secret && authHeader !== `Bearer ${secret}`) return jsonResponse(401, { error: 'Unauthorized Card Hedge refresh' })
+      } else if (request.method === 'POST') {
+        const unsafePost = rejectUnsafePost(request)
+        if (unsafePost) return unsafePost
+      } else {
+        return new Response(null, { status: 404 })
+      }
+
+      const endpoint = cardHedgeEndpoint('price-updates')
+      const checkpointKey = cardHedgeRefreshCheckpointKey()
+      const since = (redis ? await redis.get<string>(checkpointKey).catch(() => null) : null) || cardHedgeRefreshFallbackSince()
+      const upstream = await fetch(`${CARD_HEDGE_API_BASE}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'X-API-Key': env.CARD_HEDGE_API_KEY ?? '',
+        },
+        body: JSON.stringify({ since }),
+      })
+      const text = await upstream.text()
+      await recordCall(route, endpoint, upstream.status)
+      const payload = parseJsonText(text, null) as { updates?: Array<{ update_timestamp?: string }>; count?: number; error?: string } | null
+      const updates = Array.isArray(payload?.updates) ? payload.updates : []
+      const latestUpdate = updates
+        .map((update) => String(update.update_timestamp ?? ''))
+        .filter(Boolean)
+        .sort()
+        .at(-1)
+      const nextCheckpoint = upstream.ok ? latestUpdate || new Date().toISOString() : ''
+      if (redis && nextCheckpoint) await redis.set(checkpointKey, nextCheckpoint, { ex: 90 * 24 * 60 * 60 })
+
+      return jsonResponse(upstream.status, {
+        ok: upstream.ok,
+        mode: 'price-updates',
+        usageBackend,
+        since,
+        nextCheckpoint,
+        count: Number(payload?.count ?? updates.length ?? 0),
+        payload,
+      })
+    }
 
     if (route === 'daily-export') {
       if (request.method !== 'GET') return new Response(null, { status: 404 })
@@ -3601,7 +3801,7 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
           Accept: 'text/csv, application/json',
         },
       })
-      recordCardHedgeCall(db, route, endpoint, upstream.status)
+      await recordCall(route, endpoint, upstream.status)
       const body = await upstream.arrayBuffer()
       return new Response(body, {
         status: upstream.status,
@@ -3635,7 +3835,7 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
       body,
     })
     const text = await upstream.text()
-    recordCardHedgeCall(db, route, endpoint, upstream.status)
+    await recordCall(route, endpoint, upstream.status)
     return new Response(text, {
       status: upstream.status,
       headers: {

@@ -100,6 +100,32 @@ describe('Card Hedge proxy', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('still forwards Card Hedge calls when the local usage database is unavailable', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe('https://api.cardhedger.com/v1/cards/comps')
+      expect(init?.headers).toMatchObject({ 'X-API-Key': 'test-card-hedge-key' })
+      return new Response(JSON.stringify({ comp_price: 125, high: 150, low: 100, count_requested: 5, count_used: 5, time_weighted: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await handleCardHedgeRoute(
+      'comps',
+      postJson('http://localhost/api/card-hedge/comps', {
+        card_id: 'card-1',
+        count: 5,
+        grade: 'Raw',
+        time_weighted: true,
+      }),
+      tempEnv({ BACKSTOP_SALES_DB: '/dev/null/backstop-sales.sqlite' }),
+    )
+
+    await expect(response.json()).resolves.toMatchObject({ comp_price: 125, count_used: 5 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('guards the locally configured minute rate limit before calling upstream', async () => {
     const env = tempEnv({ CARD_HEDGE_RATE_LIMIT_PER_MINUTE: '1' })
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ count: 0, pages: 0, cards: [] }), { status: 200 }))
