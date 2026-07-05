@@ -1507,7 +1507,7 @@ async function ensureNeonLiveMarketSchema(sql: NeonSql) {
   await sql`
     CREATE TABLE IF NOT EXISTS live_market_snapshots (
       snapshot_id TEXT PRIMARY KEY,
-      schema_version INTEGER NOT NULL DEFAULT ${NEON_LIVE_MARKET_SCHEMA_VERSION},
+      schema_version INTEGER NOT NULL DEFAULT 1,
       scan_type TEXT NOT NULL,
       scan_key TEXT NOT NULL,
       search_mode TEXT,
