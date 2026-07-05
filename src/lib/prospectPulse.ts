@@ -122,6 +122,7 @@ const CHECKLIST_PROGRESS_EVERY_MS = 900
 const RESPONSE_CACHE_LIMIT = 500
 const LISTING_CACHE_TTL_MS = 12_000
 const CHECKLIST_CACHE_TTL_MS = 5 * 60_000
+let staticChecklistSnapshotPromise: Promise<typeof import('../data/staticChecklistSnapshot')> | null = null
 
 const responseCache = new Map<string, { expiresAt: number; value: unknown }>()
 const inFlightCache = new Map<string, { expiresAt: number; promise: Promise<unknown> }>()
@@ -131,6 +132,11 @@ const requestTelemetry = {
   cacheHits: 0,
   dedupeHits: 0,
   networkCalls: 0,
+}
+
+function loadStaticChecklistSnapshot() {
+  staticChecklistSnapshotPromise ??= import('../data/staticChecklistSnapshot')
+  return staticChecklistSnapshotPromise
 }
 
 function canUseBrowserStorage() {
@@ -472,6 +478,60 @@ async function fetchLocalChecklistCatalog(minYear: number, signal?: AbortSignal)
   const response = await fetch(url, { signal })
   const payload = await readJson<LocalChecklistCatalogResponse>(response)
   return payload.available ? payload.releases ?? [] : []
+}
+
+function normalizeChecklistRelease(value: string | null | undefined) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+async function staticChecklistCatalog(minYear: number, categories: ChecklistModel['category'][]): Promise<ChecklistCatalogRelease[]> {
+  const { STATIC_CHECKLIST_MODELS } = await loadStaticChecklistSnapshot()
+  const categorySet = new Set(categories)
+  return STATIC_CHECKLIST_MODELS.filter((model) => model.releaseYear >= minYear && categorySet.has(model.category))
+    .map((model) => ({
+      id: normalizeChecklistRelease(model.release),
+      label: model.release.replaceAll('-', ' '),
+      category: model.category,
+      categoryLabel: model.category === 'draft' ? 'Bowman Draft' : model.category === 'chrome' ? 'Bowman Chrome' : 'Bowman',
+      year: model.releaseYear,
+      release: model.release,
+      releaseKey: normalizeChecklistRelease(model.release),
+      totalPlayers: model.totalPlayers ?? model.players.length,
+      firstChromeAutos: model.firstChromeAutos ?? model.players.length,
+      activeChecklistPlayers: model.activeChecklistPlayers ?? model.players.filter((player) => player.baseAvgPrice > 0).length,
+    }))
+    .sort((left, right) => right.year - left.year || left.category.localeCompare(right.category) || left.release.localeCompare(right.release))
+}
+
+async function findStaticChecklistModel(options: {
+  category?: ChecklistModel['category']
+  year?: number
+  release?: string
+}) {
+  const { STATIC_CHECKLIST_GENERATED_AT, STATIC_CHECKLIST_MODELS } = await loadStaticChecklistSnapshot()
+  const requestedRelease = normalizeChecklistRelease(options.release)
+  const category = options.category
+  const year = options.year
+  const model =
+    STATIC_CHECKLIST_MODELS.find((candidate) => {
+      const candidateRelease = normalizeChecklistRelease(candidate.release)
+      return requestedRelease && candidateRelease === requestedRelease
+    }) ??
+    STATIC_CHECKLIST_MODELS.find((candidate) => {
+      if (year && candidate.releaseYear !== year) return false
+      if (category && candidate.category !== category) return false
+      return true
+    }) ??
+    null
+
+  if (!model) return null
+  return {
+    ...model,
+    fetchedAt: STATIC_CHECKLIST_GENERATED_AT,
+  }
 }
 
 function binPriceBands(options: { minPrice?: number; maxPrice?: number | null; scanDepth?: FeedScanDepth }) {
@@ -823,6 +883,11 @@ export async function fetchChecklistModel(options: {
     `${requestedReleaseYear}-${category === 'draft' ? 'Bowman-Draft' : category === 'chrome' ? 'Bowman-Chrome' : 'Bowman'}`
   const localFirstModel = await fetchLocalChecklistModel(requestedRelease, options.signal).catch(() => null)
   if (localFirstModel?.players?.length) return localFirstModel
+  const staticFirstModel = await findStaticChecklistModel({
+    category,
+    year: requestedReleaseYear,
+    release: requestedRelease,
+  })
 
   let remoteModel: ChecklistModel | null = null
   let remoteError: unknown = null
@@ -876,7 +941,14 @@ export async function fetchChecklistModel(options: {
   }
 
   const localModel = localFirstModel ?? (await fetchLocalChecklistModel(release || requestedRelease, options.signal).catch(() => null))
-  const merged = mergeChecklistModels(remoteModel, localModel)
+  const staticModel =
+    staticFirstModel ??
+    (await findStaticChecklistModel({
+      category,
+      year: releaseYear,
+      release: release || requestedRelease,
+    }))
+  const merged = mergeChecklistModels(remoteModel, localModel ?? staticModel)
   if (merged) return merged
   if (remoteError) throw remoteError
   throw new Error('Checklist model load failed')
@@ -926,7 +998,9 @@ export async function fetchChecklistCatalog(options: {
     )
 
   const merged = new Map<string, (typeof remoteCatalog)[number]>()
-  for (const release of [...remoteCatalog, ...localCatalog]) {
+  const staticCatalog = await staticChecklistCatalog(minYear, categories)
+
+  for (const release of [...remoteCatalog, ...staticCatalog, ...localCatalog]) {
     const key = `${release.category}:${release.year}:${release.release}`.toLowerCase()
     const current = merged.get(key)
     if (!current) {

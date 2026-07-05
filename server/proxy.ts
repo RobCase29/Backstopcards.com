@@ -1570,7 +1570,7 @@ async function pruneExpiredNeonLiveMarketRows(sql: NeonSql, asOf: string) {
   const listingsDeleted = await sql`
     WITH deleted AS (
       DELETE FROM live_market_listings
-      WHERE expires_at <= ${asOf}::timestamptz
+      WHERE expires_at <= ${asOf}
       RETURNING item_id
     )
     SELECT COUNT(*) AS "deletedListings" FROM deleted
@@ -1578,7 +1578,7 @@ async function pruneExpiredNeonLiveMarketRows(sql: NeonSql, asOf: string) {
   const snapshotsDeleted = await sql`
     WITH deleted AS (
       DELETE FROM live_market_snapshots
-      WHERE expires_at <= ${asOf}::timestamptz
+      WHERE expires_at <= ${asOf}
       RETURNING snapshot_id
     )
     SELECT COUNT(*) AS "deletedSnapshots" FROM deleted
@@ -1630,9 +1630,9 @@ async function insertNeonLiveMarketListings(sql: NeonSql, snapshotId: string, sc
         ${Number(listing.score ?? 0) || 0},
         ${Number(listing.bidCount ?? 0) || 0},
         ${String(listing.listingStatus ?? '')},
-        ${endTime}::timestamptz,
-        ${observedAt}::timestamptz,
-        ${listingExpiresAt}::timestamptz,
+        ${endTime},
+        ${observedAt},
+        ${listingExpiresAt},
         ${jsonText(listing.raw, 'null')}::jsonb
       )
       ON CONFLICT (snapshot_id, item_id) DO NOTHING
@@ -1662,12 +1662,12 @@ async function handleNeonLiveMarketRoute(route: string, request: Request, sql: N
         MAX(observed_at)::text AS "latestObservedAt",
         MIN(expires_at)::text AS "nextExpiresAt"
       FROM live_market_snapshots
-      WHERE expires_at > ${nowIso}::timestamptz
+      WHERE expires_at > ${nowIso}
     `
     const byType = await sql`
       SELECT scan_type AS "scanType", COUNT(*) AS "snapshotCount", COALESCE(SUM(listing_count), 0) AS "listingCount"
       FROM live_market_snapshots
-      WHERE expires_at > ${nowIso}::timestamptz
+      WHERE expires_at > ${nowIso}
       GROUP BY scan_type
       ORDER BY scan_type
     `
@@ -1678,7 +1678,7 @@ async function handleNeonLiveMarketRoute(route: string, request: Request, sql: N
         COUNT(DISTINCT snapshot_id) AS "snapshotCount",
         COUNT(*) AS "listingCount"
       FROM live_market_listings
-      WHERE expires_at > ${nowIso}::timestamptz
+      WHERE expires_at > ${nowIso}
       GROUP BY marketplace, marketplace_label
       ORDER BY "listingCount" DESC, marketplace
     `
@@ -1727,7 +1727,7 @@ async function handleNeonLiveMarketRoute(route: string, request: Request, sql: N
         stats_json::text AS "statsJson",
         created_at::text AS "createdAt"
       FROM live_market_snapshots
-      WHERE expires_at > ${nowIso}::timestamptz
+      WHERE expires_at > ${nowIso}
         AND (${scanType} = '' OR scan_type = ${scanType})
         AND (${scanKey} = '' OR scan_key = ${scanKey})
       ORDER BY observed_at DESC
@@ -1778,7 +1778,7 @@ async function handleNeonLiveMarketRoute(route: string, request: Request, sql: N
         raw_json::text AS "rawJson"
       FROM live_market_listings
       WHERE snapshot_id = ${rowString(neonRow(snapshot), 'snapshotId')}
-        AND expires_at > ${nowIso}::timestamptz
+        AND expires_at > ${nowIso}
       ORDER BY edge_dollars DESC, score DESC
       LIMIT ${limit}
     `
@@ -1821,13 +1821,13 @@ async function handleNeonLiveMarketRoute(route: string, request: Request, sql: N
       ${String(payload.searchMode ?? '')},
       ${String(payload.playerScope ?? '')},
       ${String(payload.releaseScope ?? '')},
-      ${observedAt}::timestamptz,
-      ${snapshotExpiresAt}::timestamptz,
+      ${observedAt},
+      ${snapshotExpiresAt},
       ${listings.length},
       ${listings.filter((listing) => Number(listing.edgeDollars ?? 0) >= 0).length},
       ${jsonText(payload.request)}::jsonb,
       ${jsonText(payload.stats)}::jsonb,
-      ${createdAt}::timestamptz
+      ${createdAt}
     )
   `
   await insertNeonLiveMarketListings(sql, snapshotId, scanType, snapshotExpiresAt, listings, observedAt)
