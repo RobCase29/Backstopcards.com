@@ -1,6 +1,6 @@
 import type { ChecklistModel } from '../types'
 
-export const STATIC_CHECKLIST_GENERATED_AT = "2026-07-06T00:13:51.434Z"
+export const STATIC_CHECKLIST_GENERATED_AT = "2026-07-06T23:30:15.004Z"
 
 export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
   {
@@ -49857,7 +49857,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         ]
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.256Z",
+    "fetchedAt": "2026-07-06T23:30:14.818Z",
     "source": "canonical-sold-model"
   },
   {
@@ -51724,7 +51724,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.268Z",
+    "fetchedAt": "2026-07-06T23:30:14.831Z",
     "source": "canonical-sold-model"
   },
   {
@@ -53987,7 +53987,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.280Z",
+    "fetchedAt": "2026-07-06T23:30:14.844Z",
     "source": "canonical-sold-model"
   },
   {
@@ -56221,7 +56221,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.291Z",
+    "fetchedAt": "2026-07-06T23:30:14.857Z",
     "source": "canonical-sold-model"
   },
   {
@@ -57896,7 +57896,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.303Z",
+    "fetchedAt": "2026-07-06T23:30:14.869Z",
     "source": "canonical-sold-model"
   },
   {
@@ -60736,7 +60736,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.315Z",
+    "fetchedAt": "2026-07-06T23:30:14.881Z",
     "source": "canonical-sold-model"
   },
   {
@@ -64103,7 +64103,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.327Z",
+    "fetchedAt": "2026-07-06T23:30:14.895Z",
     "source": "canonical-sold-model"
   },
   {
@@ -65615,7 +65615,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.339Z",
+    "fetchedAt": "2026-07-06T23:30:14.908Z",
     "source": "canonical-sold-model"
   },
   {
@@ -69199,7 +69199,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.352Z",
+    "fetchedAt": "2026-07-06T23:30:14.921Z",
     "source": "canonical-sold-model"
   },
   {
@@ -71074,7 +71074,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.363Z",
+    "fetchedAt": "2026-07-06T23:30:14.933Z",
     "source": "canonical-sold-model"
   },
   {
@@ -71833,7 +71833,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.375Z",
+    "fetchedAt": "2026-07-06T23:30:14.945Z",
     "source": "canonical-sold-model"
   },
   {
@@ -73898,7 +73898,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.387Z",
+    "fetchedAt": "2026-07-06T23:30:14.957Z",
     "source": "canonical-sold-model"
   },
   {
@@ -77226,7 +77226,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.400Z",
+    "fetchedAt": "2026-07-06T23:30:14.969Z",
     "source": "canonical-sold-model"
   },
   {
@@ -78526,7 +78526,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.411Z",
+    "fetchedAt": "2026-07-06T23:30:14.981Z",
     "source": "canonical-sold-model"
   },
   {
@@ -80751,7 +80751,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.423Z",
+    "fetchedAt": "2026-07-06T23:30:14.993Z",
     "source": "canonical-sold-model"
   },
   {
@@ -81404,7 +81404,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         ]
       }
     ],
-    "fetchedAt": "2026-07-06T00:13:51.434Z",
+    "fetchedAt": "2026-07-06T23:30:15.004Z",
     "source": "canonical-sold-model"
   }
 ]
