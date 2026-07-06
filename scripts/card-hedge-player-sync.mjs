@@ -148,7 +148,46 @@ function cardHasRecentSalesSignal(card) {
   return (sevenDay ?? 0) > 0 || (thirtyDay ?? 0) > 0
 }
 
-function shouldFetchCardComps(card, requestedGrades, compScope) {
+function cardSearchText(card) {
+  return compact([
+    card.description,
+    card.set,
+    card.set_type,
+    card.variant,
+    card.category,
+    card.category_group,
+  ].filter(Boolean).join(' '))
+}
+
+function isLikelyAutoCard(card) {
+  return /\b(auto|autograph|autographs|autographed|signature|signed)\b/i.test(cardSearchText(card))
+}
+
+function isLikelyBaseAutoCard(card) {
+  const text = cardSearchText(card)
+  if (!isLikelyAutoCard(card)) return false
+  if (!/\bbowman\b/i.test(text)) return false
+  const baseAutoExclusion =
+    /\b(?:mega|mojo|sapphire|best|sterling|inception|hta|choice|rookies?|veterans?|top\s*100|scouts?|spotlight|invicta|snack|insert|refractor|superfractor|firefractor|printing\s+plates?|plate|shimmer|raywave|wave|lava|lunar|atomic|geometric|reptilian|speckle|sparkle|mini\s+diamond|logo(?:fractor)?|x-fractor|border|pattern|platinum|red|orange|gold|green|blue|purple|black|aqua|fuchsia|pink|yellow|rose|burgundy|navy|neon|steel|pearl|peanuts|popcorn|gumball)\b|\/\s*\d{1,4}\b/i
+  return !baseAutoExclusion.test(text)
+}
+
+function cardScopeMatches(card, cardScope) {
+  if (cardScope === 'base-auto-first') return isLikelyBaseAutoCard(card)
+  if (cardScope === 'auto') return isLikelyAutoCard(card)
+  return true
+}
+
+function cardPriority(card) {
+  const baseAuto = isLikelyBaseAutoCard(card) ? 0 : 100
+  const auto = isLikelyAutoCard(card) ? 0 : 30
+  const signal = cardHasRecentSalesSignal(card) ? 0 : 10
+  const price = cardHasRequestedGradePrice(card, ['Raw']) ? 0 : 5
+  return baseAuto + auto + signal + price + cardSearchText(card).length / 1_000
+}
+
+function shouldFetchCardComps(card, requestedGrades, compScope, cardScope) {
+  if (!cardScopeMatches(card, cardScope)) return false
   if (compScope === 'all') return true
   return cardHasRecentSalesSignal(card) || cardHasRequestedGradePrice(card, requestedGrades)
 }
@@ -717,7 +756,7 @@ async function fetchSearchCards({ apiKey, waitTurn, recordCall, playerName, sear
   for (const card of cards) {
     if (!unique.has(card.card_id)) unique.set(card.card_id, card)
   }
-  return [...unique.values()].slice(0, maxCards)
+  return [...unique.values()].sort((left, right) => cardPriority(left) - cardPriority(right)).slice(0, maxCards)
 }
 
 function loadPlayerNormalizedSales(db, playerName) {
@@ -877,6 +916,8 @@ async function main() {
     .filter(Boolean)
   const rawCompScope = compact(argValue('--comp-scope', 'market-signals')).toLowerCase()
   const compScope = rawCompScope === 'all' ? 'all' : 'market-signals'
+  const rawCardScope = compact(argValue('--card-scope', 'all')).toLowerCase()
+  const cardScope = rawCardScope === 'base-auto-first' || rawCardScope === 'auto' ? rawCardScope : 'all'
   const skipComps = hasFlag('--skip-comps')
   const rebuildCanonical = !hasFlag('--skip-canonical')
   const outputDir = resolve(cwd, 'local-data/card-hedge/players')
@@ -897,6 +938,7 @@ async function main() {
   let modelEligibleSales = 0
   let reclassifiedSales = 0
   let cardsSkippedForNoSignal = 0
+  let cardsSkippedForCardScope = 0
 
   if (reclassifyOnly) {
     db.exec('BEGIN')
@@ -924,7 +966,11 @@ async function main() {
 
   if (!reclassifyOnly && !skipComps) {
     for (const card of cards) {
-      if (!shouldFetchCardComps(card, requestedGrades, compScope)) {
+      if (!cardScopeMatches(card, cardScope)) {
+        cardsSkippedForCardScope += 1
+        continue
+      }
+      if (!shouldFetchCardComps(card, requestedGrades, compScope, cardScope)) {
         cardsSkippedForNoSignal += 1
         continue
       }
@@ -992,8 +1038,10 @@ async function main() {
         year,
         grades: requestedGrades,
         compScope,
+        cardScope,
         rpm,
         cardsFetched: cards.length,
+        cardsSkippedForCardScope,
         cardsSkippedForNoSignal,
         compRequests,
         compErrors,

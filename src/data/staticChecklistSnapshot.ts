@@ -1,6 +1,6 @@
 import type { ChecklistModel } from '../types'
 
-export const STATIC_CHECKLIST_GENERATED_AT = "2026-07-06T23:30:15.004Z"
+export const STATIC_CHECKLIST_GENERATED_AT = "2026-07-06T23:49:04.037Z"
 
 export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
   {
@@ -14,8 +14,8 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       {
         "variation": "Base Auto",
         "avgMultiplier": 1,
-        "playerCount": 68,
-        "totalSales": 5779,
+        "playerCount": 71,
+        "totalSales": 5829,
         "sortOrder": -1
       },
       {
@@ -69,9 +69,9 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Paper Purple /250",
-        "avgMultiplier": 1.964,
-        "playerCount": 3,
-        "totalSales": 7,
+        "avgMultiplier": 1.602,
+        "playerCount": 4,
+        "totalSales": 8,
         "sortOrder": 99750
       },
       {
@@ -90,9 +90,9 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Purple Mojo /199",
-        "avgMultiplier": 1.247,
-        "playerCount": 8,
-        "totalSales": 28,
+        "avgMultiplier": 1.119,
+        "playerCount": 9,
+        "totalSales": 29,
         "sortOrder": 99801
       },
       {
@@ -139,23 +139,23 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Blue Mojo /150",
-        "avgMultiplier": 1.51,
-        "playerCount": 11,
-        "totalSales": 28,
+        "avgMultiplier": 1.504,
+        "playerCount": 12,
+        "totalSales": 33,
         "sortOrder": 99850
       },
       {
         "variation": "HTA Choice Mojo /150",
-        "avgMultiplier": 1.76,
-        "playerCount": 6,
-        "totalSales": 8,
+        "avgMultiplier": 1.696,
+        "playerCount": 7,
+        "totalSales": 9,
         "sortOrder": 99850
       },
       {
         "variation": "HTA Choice /150",
-        "avgMultiplier": 2.221,
-        "playerCount": 40,
-        "totalSales": 104,
+        "avgMultiplier": 2.159,
+        "playerCount": 41,
+        "totalSales": 106,
         "sortOrder": 99850
       },
       {
@@ -195,9 +195,9 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Aqua Mojo /125",
-        "avgMultiplier": 1.797,
-        "playerCount": 6,
-        "totalSales": 12,
+        "avgMultiplier": 1.464,
+        "playerCount": 7,
+        "totalSales": 13,
         "sortOrder": 99875
       },
       {
@@ -223,9 +223,9 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Green Mojo /99",
-        "avgMultiplier": 1.973,
-        "playerCount": 7,
-        "totalSales": 25,
+        "avgMultiplier": 1.977,
+        "playerCount": 8,
+        "totalSales": 27,
         "sortOrder": 99901
       },
       {
@@ -639,6 +639,13 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "avgMultiplier": 1.491,
         "playerCount": 2,
         "totalSales": 2,
+        "sortOrder": 200112
+      },
+      {
+        "variation": "Purple Mojo",
+        "avgMultiplier": 1.91,
+        "playerCount": 1,
+        "totalSales": 1,
         "sortOrder": 200112
       },
       {
@@ -5906,7 +5913,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
           {
             "variation": "HTA Choice /150",
             "avgPrice": 22.35,
-            "multiplier": 2.221,
+            "multiplier": 2.159,
             "salesCount": 5
           },
           {
@@ -47230,7 +47237,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
           {
             "variation": "HTA Choice /150",
             "avgPrice": 7.36,
-            "multiplier": 2.221,
+            "multiplier": 2.159,
             "salesCount": 2
           },
           {
@@ -49059,7 +49066,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
           {
             "variation": "HTA Choice /150",
             "avgPrice": 148.05,
-            "multiplier": 2.221,
+            "multiplier": 2.159,
             "salesCount": 3
           },
           {
@@ -49146,7 +49153,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
           {
             "variation": "Aqua Mojo /125",
             "avgPrice": 45.09,
-            "multiplier": 1.797,
+            "multiplier": 1.464,
             "salesCount": 3
           },
           {
@@ -49176,7 +49183,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
           {
             "variation": "Purple Mojo /199",
             "avgPrice": 39.59,
-            "multiplier": 1.247,
+            "multiplier": 1.119,
             "salesCount": 2
           },
           {
@@ -49188,7 +49195,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
           {
             "variation": "Blue Mojo /150",
             "avgPrice": 35,
-            "multiplier": 1.51,
+            "multiplier": 1.504,
             "salesCount": 1
           },
           {
@@ -49212,7 +49219,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
           {
             "variation": "HTA Choice /150",
             "avgPrice": 70,
-            "multiplier": 2.221,
+            "multiplier": 2.159,
             "salesCount": 1
           },
           {
@@ -49857,7 +49864,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         ]
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.818Z",
+    "fetchedAt": "2026-07-06T23:49:03.851Z",
     "source": "canonical-sold-model"
   },
   {
@@ -51724,7 +51731,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.831Z",
+    "fetchedAt": "2026-07-06T23:49:03.863Z",
     "source": "canonical-sold-model"
   },
   {
@@ -53987,7 +53994,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.844Z",
+    "fetchedAt": "2026-07-06T23:49:03.876Z",
     "source": "canonical-sold-model"
   },
   {
@@ -53996,13 +54003,13 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
     "releaseYear": 2024,
     "totalPlayers": 61,
     "firstChromeAutos": 61,
-    "activeChecklistPlayers": 4,
+    "activeChecklistPlayers": 5,
     "multipliers": [
       {
         "variation": "Base Auto",
         "avgMultiplier": 1,
-        "playerCount": 10,
-        "totalSales": 265,
+        "playerCount": 11,
+        "totalSales": 303,
         "sortOrder": -1
       },
       {
@@ -54090,6 +54097,13 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "sortOrder": 99850
       },
       {
+        "variation": "HTA Choice /150",
+        "avgMultiplier": 2.788,
+        "playerCount": 8,
+        "totalSales": 43,
+        "sortOrder": 99850
+      },
+      {
         "variation": "HTA Choice Mojo /150",
         "avgMultiplier": 2.788,
         "playerCount": 2,
@@ -54108,13 +54122,6 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "avgMultiplier": 3.028,
         "playerCount": 2,
         "totalSales": 28,
-        "sortOrder": 99850
-      },
-      {
-        "variation": "HTA Choice /150",
-        "avgMultiplier": 3.178,
-        "playerCount": 7,
-        "totalSales": 33,
         "sortOrder": 99850
       },
       {
@@ -54148,6 +54155,13 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       {
         "variation": "Sparkle /100",
         "avgMultiplier": 2.067,
+        "playerCount": 1,
+        "totalSales": 1,
+        "sortOrder": 99900
+      },
+      {
+        "variation": "/100",
+        "avgMultiplier": 2.839,
         "playerCount": 1,
         "totalSales": 1,
         "sortOrder": 99900
@@ -54933,10 +54947,381 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "team": null,
         "status": "confirmed_1st",
         "prospectId": "carlos sanchez",
-        "baseAvgPrice": 0,
-        "baseSalesCount": 0,
-        "baseSales": [],
-        "variations": []
+        "baseAvgPrice": 3.52,
+        "baseSalesCount": 38,
+        "baseSales": [
+          {
+            "id": "177972006154",
+            "title": "2024 Bowman Chrome Carlos Sanchez Auto 1st #CPA-CS Marlins - Raw",
+            "salePrice": 4.99,
+            "soldAt": "2026-06-28T02:36:00.000Z",
+            "saleType": "Buy It Now",
+            "source": "market-movers",
+            "format": "bin"
+          },
+          {
+            "id": "377287597112",
+            "title": "2024 Bowman Chrome Carlos Sanchez Auto Autograph 1st Prospect #CPA-CS Marlins - Raw",
+            "salePrice": 3.02,
+            "soldAt": "2026-06-28T01:53:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "197115619223",
+            "title": "2024 1st Bowman Chrome Prospect Auto CARLOS SANCHEZ #CPA-CS - Miami Marlins - Raw",
+            "salePrice": 5,
+            "soldAt": "2026-06-11T06:45:00.000Z",
+            "saleType": "Best Offer",
+            "source": "market-movers",
+            "format": "bin"
+          },
+          {
+            "id": "127901898634",
+            "title": "2024 Bowman Chrome Carlos Sanchez Auto 1st #CPA-CS Marlins - Raw",
+            "salePrice": 2.25,
+            "soldAt": "2026-06-10T21:40:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "227316713232",
+            "title": "2024 1st Bowman Chrome Prospect Auto CARLOS SANCHEZ #CPA-CS - Miami Marlins - Raw",
+            "salePrice": 2.24,
+            "soldAt": "2026-05-10T01:50:00.000Z",
+            "saleType": "Best Offer",
+            "source": "market-movers",
+            "format": "bin"
+          },
+          {
+            "id": "277894095436",
+            "title": "2024 Bowman Chrome 1st Prospects Auto Carlos Sanchez #CPA-CS - Raw",
+            "salePrice": 4,
+            "soldAt": "2026-04-24T17:53:00.000Z",
+            "saleType": "Buy It Now",
+            "source": "market-movers",
+            "format": "bin"
+          },
+          {
+            "id": "397556525901",
+            "title": "Carlos Sanchez 2024 Bowman Chrome 1st Prospect Auto #CPA-CS (AU) - Raw",
+            "salePrice": 3,
+            "soldAt": "2026-02-18T00:00:00.000Z",
+            "saleType": "Best Offer",
+            "source": "market-movers",
+            "format": "bin"
+          },
+          {
+            "id": "336396459266",
+            "title": "Carlos Sanchez 2024 Bowman Chrome 1st Prospect Auto #CPA-CS - Raw",
+            "salePrice": 2.99,
+            "soldAt": "2026-02-03T20:51:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "376626659158",
+            "title": "2024 Bowman Chrome Carlos Sanchez Auto 1st Prospect #CPA-CS Marlins - Raw 10",
+            "salePrice": 1.8,
+            "soldAt": "2025-10-22T00:46:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "388939946516",
+            "title": "2024 Bowman Chrome Carlos Sanchez Auto 1st #CPA-CS Marlins - Raw 10",
+            "salePrice": 1.63,
+            "soldAt": "2025-09-14T23:49:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "376446241931",
+            "title": "2024 Bowman Chrome Carlos Sanchez Auto 1st #CPA-CS Marlins - Raw 10",
+            "salePrice": 4.25,
+            "soldAt": "2025-08-06T01:56:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "127222302330",
+            "title": "2024 1st Bowman Chrome #CPA-CS Carlos Sanchez Prospects Auto AU - Raw 10",
+            "salePrice": 1.07,
+            "soldAt": "2025-07-17T20:39:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "357180631316",
+            "title": "2024 Bowman Chrome Autograph CPA-CS CARLOS SANCHEZ 1st Auto - Marlins - Raw 10",
+            "salePrice": 5.59,
+            "soldAt": "2025-07-12T10:57:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "116582585427",
+            "title": "Carlos Sanchez (AU) 2024 Bowman Chrome Prospects 1st Auto #CPA-CS Marlins - Raw 10",
+            "salePrice": 3.79,
+            "soldAt": "2025-07-04T14:17:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "146181447299",
+            "title": "Carlos Sanchez 1st Bowman Auto 2024 Bowman Chrome #CPA-CS - Raw 10",
+            "salePrice": 3.75,
+            "soldAt": "2025-07-04T14:16:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "335898338271",
+            "title": "Carlos Sanchez 2024 Bowman Chrome Prospects 1st Auto #CPA-CS Marlins - Raw 10",
+            "salePrice": 2.99,
+            "soldAt": "2025-06-25T02:53:00.000Z",
+            "saleType": "Best Offer",
+            "source": "market-movers",
+            "format": "bin"
+          },
+          {
+            "id": "387757504193",
+            "title": "CARLOS SANCHEZ 2024 Bowman Chrome 1st RC Autograph Auto #CPA-CS Qty - Raw 10",
+            "salePrice": 2.99,
+            "soldAt": "2025-06-25T02:53:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "356761669385",
+            "title": "Carlos Sanchez 2024 Bowman Chrome Prospects 1st Auto #CPA-CS Marlins - Raw 10",
+            "salePrice": 2,
+            "soldAt": "2025-05-20T23:11:37.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "177051886011",
+            "title": "2024 Bowman Chrome Prospect Auto Carlos Sanchez #CPA-CS GS1-2 - Raw 10",
+            "salePrice": 3,
+            "soldAt": "2025-05-06T10:34:42.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "376197077463",
+            "title": "2024 Bowman Chrome Carlos Sanchez Prospect Auto 1st #CPA-CS Marlins - Raw 10",
+            "salePrice": 1.25,
+            "soldAt": "2025-04-29T20:10:55.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "197222373581",
+            "title": "2024 Bowman Chrome Carlos Sanchez Auto #CPA-CS 1st Prospect Marlins HD2 - Raw 10",
+            "salePrice": 1.25,
+            "soldAt": "2025-04-22T20:30:30.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "396486020767",
+            "title": "2024 Bowman Draft #CPA-CS Carlos Sanchez 1st Prospect Chrome Auto BJLU - Raw 10",
+            "salePrice": 4.25,
+            "soldAt": "2025-04-22T20:14:45.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "176956184909",
+            "title": "2024 Bowman Chrome Prospect Auto Carlos Sanchez #CPA-CS GS1-1 - Raw 10",
+            "salePrice": 2.4,
+            "soldAt": "2025-04-05T22:08:57.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126975036862",
+            "title": "2024 Bowman Chrome Carlos Sanchez Prospect Auto 1st #CPA-CS - Raw 10",
+            "salePrice": 2.42,
+            "soldAt": "2025-03-09T21:12:35.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "335823182323",
+            "title": "2024 Bowman Chrome 1st Auto Carlos Sanchez #CPA-CS - Raw 10",
+            "salePrice": 1.75,
+            "soldAt": "2025-02-27T17:08:41.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "376003623633",
+            "title": "2024 Bowman Chrome Carlos Sanchez Prospect Auto 1st #CPA-CS - Raw 10",
+            "salePrice": 2.59,
+            "soldAt": "2025-02-22T19:14:57.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126897546317",
+            "title": "2024 Bowman Chrome Carlos Sanchez 1st Prospect Auto Autograph #CPA-CS Marlins - Raw 10",
+            "salePrice": 3.14,
+            "soldAt": "2025-01-27T21:00:57.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "235885428568",
+            "title": "2024 Bowman Chrome Base Auto #CPA-CS Carlos Sanchez Miami Marlins - Raw 10",
+            "salePrice": 2.13,
+            "soldAt": "2025-01-05T18:54:47.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "116413198202",
+            "title": "2024 Bowman Chrome Prospect Autographs Carlos Sanchez Auto Miami Marlins #CPA-CS - Raw 10",
+            "salePrice": 2.25,
+            "soldAt": "2024-12-22T06:24:30.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "146276506941",
+            "title": "2024 Bowman Chrome Carlos Sanchez 2st Auto #CPA-CS - Raw 10",
+            "salePrice": 2.3,
+            "soldAt": "2024-12-22T06:24:30.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "186836125783",
+            "title": "2024 Bowman Chrome - #CPA-CS Carlos Sanchez Auto TS1 - Raw 10",
+            "salePrice": 3,
+            "soldAt": "2024-12-21T16:18:46.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "396002197172",
+            "title": "Carlos Sanchez 2024 Bowman Chrome Baseball 1st Auto #CPA-CS - Raw 10",
+            "salePrice": 2.25,
+            "soldAt": "2024-12-19T14:24:31.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "395942219644",
+            "title": "Carlos Sanchez 2024 Bowman Chrome Baseball 1st Base Auto #CPA-CS - Raw 10",
+            "salePrice": 2,
+            "soldAt": "2024-12-03T14:08:49.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126683943603",
+            "title": "Carlos Sanchez 1st Bowman Auto 2024 Bowman Chrome #CPA-CS - Raw 10",
+            "salePrice": 3.5,
+            "soldAt": "2024-10-31T08:44:33.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126742309680",
+            "title": "2024 Bowman Chrome Carlos Sanchez Prospect Auto #CPA-CS - Raw 10",
+            "salePrice": 4.25,
+            "soldAt": "2024-10-30T20:00:32.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "375733251264",
+            "title": "2024 Bowman Chrome Carlos Sanchez Chrome Prospect Auto #CPA-CS - Raw 10",
+            "salePrice": 4,
+            "soldAt": "2024-10-27T19:40:51.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "395799062066",
+            "title": "CARLOS SANCHEZ 2024 1st Bowman Chrome On-Card AUTO #CPACS Miami Marlins - Raw 10",
+            "salePrice": 2.99,
+            "soldAt": "2024-10-25T21:48:46.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "256657962087",
+            "title": "2024 BOWMAN CHROME CARLOS SANCHEZ RC AUTO #CPACS - Raw 10",
+            "salePrice": 2.2,
+            "soldAt": "2024-10-12T18:16:45.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "156422055384",
+            "title": "2024 Bowman Chrome 1st Carlos Sanchez Auto Miami Marlins #CPA-CS - Raw 10",
+            "salePrice": 3.8,
+            "soldAt": "2024-09-27T23:16:34.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          }
+        ],
+        "variations": [
+          {
+            "variation": "HTA Choice /150",
+            "avgPrice": 7.07,
+            "multiplier": 2.008,
+            "salesCount": 10
+          },
+          {
+            "variation": "/100",
+            "avgPrice": 9.99,
+            "multiplier": 2.839,
+            "salesCount": 1
+          },
+          {
+            "variation": "/299",
+            "avgPrice": 1.32,
+            "multiplier": 0.375,
+            "salesCount": 1
+          }
+        ]
       },
       {
         "playerName": "Carlos Silva",
@@ -56221,7 +56606,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.857Z",
+    "fetchedAt": "2026-07-06T23:49:03.888Z",
     "source": "canonical-sold-model"
   },
   {
@@ -56235,8 +56620,8 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       {
         "variation": "Base Auto",
         "avgMultiplier": 1,
-        "playerCount": 10,
-        "totalSales": 265,
+        "playerCount": 11,
+        "totalSales": 303,
         "sortOrder": -1
       },
       {
@@ -56324,6 +56709,13 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "sortOrder": 99850
       },
       {
+        "variation": "HTA Choice /150",
+        "avgMultiplier": 2.788,
+        "playerCount": 8,
+        "totalSales": 43,
+        "sortOrder": 99850
+      },
+      {
         "variation": "HTA Choice Mojo /150",
         "avgMultiplier": 2.788,
         "playerCount": 2,
@@ -56342,13 +56734,6 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "avgMultiplier": 3.028,
         "playerCount": 2,
         "totalSales": 28,
-        "sortOrder": 99850
-      },
-      {
-        "variation": "HTA Choice /150",
-        "avgMultiplier": 3.178,
-        "playerCount": 7,
-        "totalSales": 33,
         "sortOrder": 99850
       },
       {
@@ -56382,6 +56767,13 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       {
         "variation": "Sparkle /100",
         "avgMultiplier": 2.067,
+        "playerCount": 1,
+        "totalSales": 1,
+        "sortOrder": 99900
+      },
+      {
+        "variation": "/100",
+        "avgMultiplier": 2.839,
         "playerCount": 1,
         "totalSales": 1,
         "sortOrder": 99900
@@ -57896,7 +58288,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.869Z",
+    "fetchedAt": "2026-07-06T23:49:03.900Z",
     "source": "canonical-sold-model"
   },
   {
@@ -57910,8 +58302,8 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       {
         "variation": "Base Auto",
         "avgMultiplier": 1,
-        "playerCount": 10,
-        "totalSales": 265,
+        "playerCount": 11,
+        "totalSales": 303,
         "sortOrder": -1
       },
       {
@@ -57999,6 +58391,13 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "sortOrder": 99850
       },
       {
+        "variation": "HTA Choice /150",
+        "avgMultiplier": 2.788,
+        "playerCount": 8,
+        "totalSales": 43,
+        "sortOrder": 99850
+      },
+      {
         "variation": "HTA Choice Mojo /150",
         "avgMultiplier": 2.788,
         "playerCount": 2,
@@ -58017,13 +58416,6 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "avgMultiplier": 3.028,
         "playerCount": 2,
         "totalSales": 28,
-        "sortOrder": 99850
-      },
-      {
-        "variation": "HTA Choice /150",
-        "avgMultiplier": 3.178,
-        "playerCount": 7,
-        "totalSales": 33,
         "sortOrder": 99850
       },
       {
@@ -58057,6 +58449,13 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       {
         "variation": "Sparkle /100",
         "avgMultiplier": 2.067,
+        "playerCount": 1,
+        "totalSales": 1,
+        "sortOrder": 99900
+      },
+      {
+        "variation": "/100",
+        "avgMultiplier": 2.839,
         "playerCount": 1,
         "totalSales": 1,
         "sortOrder": 99900
@@ -60736,7 +61135,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.881Z",
+    "fetchedAt": "2026-07-06T23:49:03.913Z",
     "source": "canonical-sold-model"
   },
   {
@@ -60751,7 +61150,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variation": "Base Auto",
         "avgMultiplier": 1,
         "playerCount": 11,
-        "totalSales": 389,
+        "totalSales": 429,
         "sortOrder": -1
       },
       {
@@ -60945,7 +61344,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Yellow /75",
-        "avgMultiplier": 9.031,
+        "avgMultiplier": 9.042,
         "playerCount": 5,
         "totalSales": 20,
         "sortOrder": 99925
@@ -61356,8 +61755,8 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "team": null,
         "status": "confirmed_1st",
         "prospectId": "deyvison de los santos",
-        "baseAvgPrice": 16.61,
-        "baseSalesCount": 41,
+        "baseAvgPrice": 16.59,
+        "baseSalesCount": 81,
         "baseSales": [
           {
             "id": "236752671609",
@@ -61727,25 +62126,376 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
             "saleType": "Auction",
             "source": "market-movers",
             "format": "auction"
+          },
+          {
+            "id": "135681450269",
+            "title": "2023 1st Bowman Chrome - Prospect Autographs Deyvison De Los Santos #CPA-DD Auto - Raw 10",
+            "salePrice": 31.53,
+            "soldAt": "2025-05-04T19:32:50.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "116570918864",
+            "title": "2023 Bowman Chrome Prospect Auto Deyvison De Los Santos #CPA-DD Auto - Raw 10",
+            "salePrice": 30,
+            "soldAt": "2025-04-22T20:16:37.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "376166699373",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Auto 1st #CPA-DD - Raw 10",
+            "salePrice": 33,
+            "soldAt": "2025-04-19T21:58:42.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "176990819540",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Auto 1st Prospect #CPA-DD - Raw 10",
+            "salePrice": 20.52,
+            "soldAt": "2025-04-14T20:04:40.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "127039144876",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Auto 1st #CPA-DD - Raw 10",
+            "salePrice": 17.5,
+            "soldAt": "2025-04-12T20:54:32.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "297165239636",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Auto 1st Prospect #CPA-DD - Raw 10",
+            "salePrice": 27.55,
+            "soldAt": "2025-04-04T18:52:49.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "396333408413",
+            "title": "2023 Bowman Chrome #CPA-DD Deyvison De Los Santos 1st Prospect Chrome Auto BJCL - Raw 10",
+            "salePrice": 20.5,
+            "soldAt": "2025-03-24T20:19:52.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "335875021309",
+            "title": "Deyvison De Los Santo 2023 Bowman Chrome 1st Prospect Auto #CPA-DD - Raw 10",
+            "salePrice": 32.88,
+            "soldAt": "2025-03-23T13:34:40.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "176934163155",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Prospect Auto 1st #CPA-DD - Raw 10",
+            "salePrice": 31,
+            "soldAt": "2025-03-21T18:43:11.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126991860890",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Prospect Auto 1st #CPA-DD - Raw 10",
+            "salePrice": 26,
+            "soldAt": "2025-03-18T19:32:28.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "276915118658",
+            "title": "DEYVISON DE LOS SANTOS 2023 BOWMAN CHROME 1ST AUTOGRAPH #CPA-DD AUTO Q2754 - Raw 10",
+            "salePrice": 26,
+            "soldAt": "2025-03-09T19:12:29.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "376010715493",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Prospect Auto 1st #CPA-DD - Raw 10",
+            "salePrice": 37,
+            "soldAt": "2025-02-25T21:14:32.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126953113157",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Prospect Auto 1st #CPA-DD - Raw 10",
+            "salePrice": 34.08,
+            "soldAt": "2025-02-25T21:14:32.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "226598740569",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos RC 1st Prospects Auto #CPA-DD - Raw 10",
+            "salePrice": 40,
+            "soldAt": "2025-02-24T13:22:38.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "376003640298",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Prospect Auto 1st #CPA-DD - Raw 10",
+            "salePrice": 41.04,
+            "soldAt": "2025-02-22T20:58:43.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "375959966989",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Prospect Auto 1st #CPA-DD - Raw 10",
+            "salePrice": 36,
+            "soldAt": "2025-02-04T19:44:28.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "226333186288",
+            "title": "2023 Bowman Chrome 1st Deyvison De Los Santos Auto #CPA-DD Arizona Diamondbacks - Raw 10",
+            "salePrice": 50,
+            "soldAt": "2025-01-29T16:34:51.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "256789693247",
+            "title": "2023 Bowman Chrome Prospect Auto Deyvison De Los Santos #CPA-DD Auto - Raw 10",
+            "salePrice": 35.04,
+            "soldAt": "2025-01-20T17:48:27.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "226514679710",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos #CPA-DD Autograph Auto 1st JX63 - Raw 10",
+            "salePrice": 42,
+            "soldAt": "2025-01-05T20:11:48.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "116412465726",
+            "title": "2023 Bowman Chrome 1st Deyvison De Los Santos Auto #CPA-DD Arizona Diamondbacks - Raw 10",
+            "salePrice": 16.28,
+            "soldAt": "2024-12-05T23:48:27.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "116403827004",
+            "title": "2023 Bowman Chrome 1st Deyvison De Los Santos Auto #CPA-DD - Raw 10",
+            "salePrice": 44.75,
+            "soldAt": "2024-12-01T23:40:29.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "387620197914",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos Auto CPA-DD - Raw 10",
+            "salePrice": 45,
+            "soldAt": "2024-11-19T14:24:55.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "375795967334",
+            "title": "Deyvison De Los Santos 2023 Bowman 1st Chrome Auto Diamondbacks CPA-DD - Raw 10",
+            "salePrice": 34,
+            "soldAt": "2024-11-17T12:32:26.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "375782794577",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Prospect Auto #CPA-DD Diamondbacks - Raw 10",
+            "salePrice": 34,
+            "soldAt": "2024-11-16T21:40:51.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "156501596853",
+            "title": "2023 Bowman Chrome 1st Deyvison De Los Santos Auto #CPA-DD C17 - Raw 10",
+            "salePrice": 32,
+            "soldAt": "2024-11-14T21:36:49.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "116369986181",
+            "title": "2023 Bowman Chrome 1st Deyvison De Los Santos Auto #CPA-DD Arizona Diamondbacks - Raw 10",
+            "salePrice": 42,
+            "soldAt": "2024-10-29T22:28:45.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126723667189",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Prospect Auto #CPA-DD Diamondbacks - Raw 10",
+            "salePrice": 41,
+            "soldAt": "2024-10-19T20:24:44.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126703229381",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Auto #CPA-DD Diamondbacks (a) - Raw 10",
+            "salePrice": 37,
+            "soldAt": "2024-10-07T21:56:59.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126703229434",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Auto #CPA-DD Diamondbacks (b) - Raw 10",
+            "salePrice": 34,
+            "soldAt": "2024-10-07T21:56:59.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "146069164270",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Auto - #CPA-DD - AZ Diamondbacks - Raw 10",
+            "salePrice": 40,
+            "soldAt": "2024-10-06T00:40:47.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "256654689803",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Prospect Auto #CPA-DD Diamondbacks - Raw 10",
+            "salePrice": 45,
+            "soldAt": "2024-10-03T06:12:58.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "387409441001",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Auto - #CPA-DD - AZ Diamondbacks - Raw 10",
+            "salePrice": 46,
+            "soldAt": "2024-09-28T12:56:53.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "326265253447",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Prospect Auto #CPA-DD Marlins - Raw 10",
+            "salePrice": 22.51,
+            "soldAt": "2024-09-17T16:16:35.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126657373444",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Prospect Auto #CPA-DD Diamondbacks - Raw 10",
+            "salePrice": 49,
+            "soldAt": "2024-09-08T21:52:59.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "166940413817",
+            "title": "2023 Bowman Chrome 1st Deyvison De Los Santos Auto #CPA-DD Arizona Diamondbacks - Raw 10",
+            "salePrice": 52,
+            "soldAt": "2024-08-31T10:20:45.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "335371873643",
+            "title": "2023 Bowman Chrome Prospect Auto Deyvison De Los Santos #CPA-DD Auto - Raw 10",
+            "salePrice": 50.85,
+            "soldAt": "2024-08-27T22:12:45.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "156372036541",
+            "title": "Deyvison De Los Santos 2023 Bowman Chrome - Prospect Auto #CPA-DD Rookie RC - Raw 10",
+            "salePrice": 55,
+            "soldAt": "2024-08-25T10:12:48.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "387223337890",
+            "title": "2023 Bowman Chrome 1st Deyvison De Los Santos Auto #CPA-DD Arizona Diamondbacks - Raw 10",
+            "salePrice": 65,
+            "soldAt": "2024-08-23T11:44:26.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "276600735036",
+            "title": "2023 Bowman Chrome Deyvison De Los Santos 1st Auto #CPA-DD - Raw 10",
+            "salePrice": 49.99,
+            "soldAt": "2024-08-22T10:00:43.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
           }
         ],
         "variations": [
           {
             "variation": "Purple /250",
             "avgPrice": 55.6,
-            "multiplier": 3.348,
+            "multiplier": 3.352,
             "salesCount": 11
           },
           {
             "variation": "Refractor /499",
             "avgPrice": 30.01,
-            "multiplier": 1.807,
+            "multiplier": 1.809,
             "salesCount": 11
           },
           {
             "variation": "Yellow /75",
             "avgPrice": 149.99,
-            "multiplier": 9.031,
+            "multiplier": 9.042,
             "salesCount": 5
           }
         ]
@@ -64103,7 +64853,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.895Z",
+    "fetchedAt": "2026-07-06T23:49:03.927Z",
     "source": "canonical-sold-model"
   },
   {
@@ -64118,7 +64868,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variation": "Base Auto",
         "avgMultiplier": 1,
         "playerCount": 11,
-        "totalSales": 389,
+        "totalSales": 429,
         "sortOrder": -1
       },
       {
@@ -64312,7 +65062,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Yellow /75",
-        "avgMultiplier": 9.031,
+        "avgMultiplier": 9.042,
         "playerCount": 5,
         "totalSales": 20,
         "sortOrder": 99925
@@ -65615,7 +66365,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.908Z",
+    "fetchedAt": "2026-07-06T23:49:03.940Z",
     "source": "canonical-sold-model"
   },
   {
@@ -65630,7 +66380,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variation": "Base Auto",
         "avgMultiplier": 1,
         "playerCount": 11,
-        "totalSales": 389,
+        "totalSales": 429,
         "sortOrder": -1
       },
       {
@@ -65824,7 +66574,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Yellow /75",
-        "avgMultiplier": 9.031,
+        "avgMultiplier": 9.042,
         "playerCount": 5,
         "totalSales": 20,
         "sortOrder": 99925
@@ -69199,7 +69949,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.921Z",
+    "fetchedAt": "2026-07-06T23:49:03.953Z",
     "source": "canonical-sold-model"
   },
   {
@@ -69213,8 +69963,8 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       {
         "variation": "Base Auto",
         "avgMultiplier": 1,
-        "playerCount": 5,
-        "totalSales": 91,
+        "playerCount": 6,
+        "totalSales": 108,
         "sortOrder": -1
       },
       {
@@ -71074,7 +71824,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.933Z",
+    "fetchedAt": "2026-07-06T23:49:03.965Z",
     "source": "canonical-sold-model"
   },
   {
@@ -71088,8 +71838,8 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       {
         "variation": "Base Auto",
         "avgMultiplier": 1,
-        "playerCount": 5,
-        "totalSales": 91,
+        "playerCount": 6,
+        "totalSales": 108,
         "sortOrder": -1
       },
       {
@@ -71833,7 +72583,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.945Z",
+    "fetchedAt": "2026-07-06T23:49:03.977Z",
     "source": "canonical-sold-model"
   },
   {
@@ -71842,13 +72592,13 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
     "releaseYear": 2022,
     "totalPlayers": 104,
     "firstChromeAutos": 104,
-    "activeChecklistPlayers": 3,
+    "activeChecklistPlayers": 4,
     "multipliers": [
       {
         "variation": "Base Auto",
         "avgMultiplier": 1,
-        "playerCount": 5,
-        "totalSales": 91,
+        "playerCount": 6,
+        "totalSales": 108,
         "sortOrder": -1
       },
       {
@@ -72798,9 +73548,163 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "team": null,
         "status": "confirmed_1st",
         "prospectId": "jacob miller",
-        "baseAvgPrice": 0,
-        "baseSalesCount": 0,
-        "baseSales": [],
+        "baseAvgPrice": 2.52,
+        "baseSalesCount": 17,
+        "baseSales": [
+          {
+            "id": "257504860576",
+            "title": "2022 Bowman Draft Chrome Draft Pick Auto Jacob Miller #CDA-JMR Auto yf1 - Raw",
+            "salePrice": 2.52,
+            "soldAt": "2026-05-19T20:02:00.000Z",
+            "saleType": "Buy It Now",
+            "source": "market-movers",
+            "format": "bin"
+          },
+          {
+            "id": "326078349132",
+            "title": "Jacob Miller 2022 Bowman Draft Chrome Draft Pick Auto 1st #CDA-JMR Marlins Card - Raw 10",
+            "salePrice": 5,
+            "soldAt": "2024-04-29T15:16:28.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "126444606926",
+            "title": "2022 Bowman Draft Jacob Miller 1st Prospect Auto #CDA-JMR Marlins - Raw 10",
+            "salePrice": 4,
+            "soldAt": "2024-04-22T08:48:34.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "374952058003",
+            "title": "2022 Bowman Chrome Draft Jacob Miller 1st Prospect Auto #CDA-JMR Marlins - Raw 10",
+            "salePrice": 1.25,
+            "soldAt": "2023-10-01T20:44:52.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "275753919038",
+            "title": "2022 Bowman Draft Chrome Jacob Miller Auto CDA-JMR Marlins - Raw 10",
+            "salePrice": 9.44,
+            "soldAt": "2023-07-08T07:16:38.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "304882987467",
+            "title": "Jacob Miller 2022 Bowman Draft Chrome 1st Auto CDA-JMR Marlins - Raw 10",
+            "salePrice": 9.99,
+            "soldAt": "2023-05-11T07:04:39.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "125905489860",
+            "title": "2022 Bowman Chrome Draft Jacob Miller 1st Prospect Auto #CDA-JMR Marlins - Raw 10",
+            "salePrice": 2.33,
+            "soldAt": "2023-05-01T20:36:40.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "285229489867",
+            "title": "2022 Bowman Chrome Draft Jacob Miller 1st Prospect Auto #CDA-JMR Marlins - Raw 10",
+            "salePrice": 7.05,
+            "soldAt": "2023-04-15T22:48:48.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "374589013348",
+            "title": "2022 Bowman Chrome Draft Jacob Miller 1st Prospect Auto #CDA-JMR Marlins - Raw 10",
+            "salePrice": 5,
+            "soldAt": "2023-04-01T21:04:29.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "155427479355",
+            "title": "2022 Bowman Draft Jacob Miller 1st Chrome Base Auto - Miami Marlins CDA-JMR - Raw 10",
+            "salePrice": 10,
+            "soldAt": "2023-03-03T15:12:28.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "195617651560",
+            "title": "Jacob Miller 2022 Bowman Draft Chrome Auto #CDA-JMR - Raw 10",
+            "salePrice": 2.33,
+            "soldAt": "2023-02-27T19:48:51.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "125746414244",
+            "title": "2022 Bowman Draft Jacob Miller 1st Chrome Base Auto - Miami Marlins CDA-JMR - Raw 10",
+            "salePrice": 3.58,
+            "soldAt": "2023-02-05T22:37:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "374478763947",
+            "title": "2022 Bowman Draft Jacob Miller 1st Chrome Base Auto - Miami Marlins CDA-JMR - Raw 10",
+            "salePrice": 4.76,
+            "soldAt": "2023-01-31T23:45:08.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "304782198332",
+            "title": "2022 Bowman Draft Jacob Miller 1st Chrome Base Auto - Miami Marlins CDA-JMR - Raw 10",
+            "salePrice": 5,
+            "soldAt": "2023-01-30T21:25:12.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "255954239493",
+            "title": "2022 bowman chrome draft jacob miller auto cda-jmr 1st bowman - Raw 10",
+            "salePrice": 7.49,
+            "soldAt": "2023-01-30T17:29:23.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "325500567267",
+            "title": "2022 Bowman Draft Jacob Miller 1st Chrome Base Auto - Miami Marlins CDA-JMR - Raw 10",
+            "salePrice": 7.99,
+            "soldAt": "2023-01-19T22:01:15.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "314305220746",
+            "title": "2022 BOWMAN CHROME DRAFT AUTO #CDA-JMR JACOB MILLER - Raw 10",
+            "salePrice": 4.69,
+            "soldAt": "2023-01-11T22:17:02.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          }
+        ],
         "variations": []
       },
       {
@@ -73898,7 +74802,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.957Z",
+    "fetchedAt": "2026-07-06T23:49:03.989Z",
     "source": "canonical-sold-model"
   },
   {
@@ -77226,7 +78130,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.969Z",
+    "fetchedAt": "2026-07-06T23:49:04.002Z",
     "source": "canonical-sold-model"
   },
   {
@@ -78526,7 +79430,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.981Z",
+    "fetchedAt": "2026-07-06T23:49:04.013Z",
     "source": "canonical-sold-model"
   },
   {
@@ -78541,14 +79445,14 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variation": "Base Auto",
         "avgMultiplier": 1,
         "playerCount": 3,
-        "totalSales": 64,
+        "totalSales": 79,
         "sortOrder": -1
       },
       {
         "variation": "Refractor /499",
-        "avgMultiplier": 1.758,
+        "avgMultiplier": 1.733,
         "playerCount": 4,
-        "totalSales": 58,
+        "totalSales": 59,
         "sortOrder": 99501
       },
       {
@@ -78581,7 +79485,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Green /99",
-        "avgMultiplier": 2.015,
+        "avgMultiplier": 2.014,
         "playerCount": 4,
         "totalSales": 21,
         "sortOrder": 99901
@@ -80129,7 +81033,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "status": "confirmed_1st",
         "prospectId": "owen caissie",
         "baseAvgPrice": 80.33,
-        "baseSalesCount": 25,
+        "baseSalesCount": 40,
         "baseSales": [
           {
             "id": "388981077028",
@@ -80355,14 +81259,149 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
             "saleType": "Auction",
             "source": "market-movers",
             "format": "auction"
+          },
+          {
+            "id": "176211455284",
+            "title": "Owen Caissie 2020 Bowman Chrome Draft 1st Prospect AUTO CUBS - Raw 10",
+            "salePrice": 68,
+            "soldAt": "2024-02-01T13:51:56.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "256372659227",
+            "title": "2020 BOWMAN CHROME DRAFT AUTO OWEN CAISSIE 1ST AUTOGRAPH CHICAGO CUBS - Raw 10",
+            "salePrice": 69.99,
+            "soldAt": "2024-01-17T20:15:59.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "176176433058",
+            "title": "Owen Caissie 2020 Bowman Chrome Draft 1st Prospect AUTO CUBS - Raw 10",
+            "salePrice": 65,
+            "soldAt": "2024-01-14T22:30:47.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "145085962214",
+            "title": "2020 Bowman Draft Chrome Owen Caissie #CDA-OC Chicago Cubs AUTO - Raw 10",
+            "salePrice": 45,
+            "soldAt": "2023-05-17T10:33:16.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "166018147777",
+            "title": "2020 Bowman Draft Chrome OWEN CAISSIE 1st Bowman Auto SD PADRES - Raw 10",
+            "salePrice": 69.99,
+            "soldAt": "2023-04-12T21:28:40.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "155475112847",
+            "title": "2020 Bowman Draft Chrome Owen Caissie 1st Bowman Auto CDA-OC Chicago Cubs - Raw 10",
+            "salePrice": 45,
+            "soldAt": "2023-03-28T18:00:56.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "364046337310",
+            "title": "2020 Bowman Draft Chrome Owen Caissie Auto 1st Bowman Cubs Padres - Raw 10",
+            "salePrice": 34.99,
+            "soldAt": "2022-11-18T18:37:09.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "134313497491",
+            "title": "2020 Bowman Chrome Draft Autographs #CDAOC Owen Caissie ROOKIE 1st AUTO PADRES - Raw 10",
+            "salePrice": 35.99,
+            "soldAt": "2022-11-10T21:05:19.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "134079934536",
+            "title": "2020 Bowman Chrome Draft Owen Caissie Auto RC Rookie - Raw 10",
+            "salePrice": 79.99,
+            "soldAt": "2022-04-16T17:21:09.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "284667029640",
+            "title": "2020 Bowman Chrome Draft Owen Caissie Prospect Auto Autograph #CDAOC Padres - Raw 10",
+            "salePrice": 60,
+            "soldAt": "2022-03-02T19:05:00.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "373945084129",
+            "title": "2020 Bowman Chrome Draft Owen Caissie Prospect Auto Autograph #CDAOC Padres G434 - Raw 10",
+            "salePrice": 63,
+            "soldAt": "2022-02-28T01:25:14.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "284576949132",
+            "title": "2020 BOWMAN DRAFT OWEN CAISSIE Auto 1st Bowman Chrome CUBS CARD#CDA-OC - Raw 10",
+            "salePrice": 70,
+            "soldAt": "2021-12-24T22:28:58.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "174903974888",
+            "title": "🔥2020 Bowman Chrome Draft OWEN CAISSIE 1st RC Auto SD Padres🔥 - Raw 10",
+            "salePrice": 77.99,
+            "soldAt": "2021-08-25T20:16:30.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "114620754546",
+            "title": "🔥2020 Bowman Chrome Draft OWEN CAISSIE 1st RC Auto SD Padres🔥 - Raw 10",
+            "salePrice": 79.99,
+            "soldAt": "2021-08-16T18:08:56.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
+          },
+          {
+            "id": "324742199044",
+            "title": "2020 Bowman Chrome Draft Owen Caissie Auto #CDA-OC Padres 1st Bowman Rookie - Raw 10",
+            "salePrice": 70,
+            "soldAt": "2021-08-06T13:24:50.000Z",
+            "saleType": "Auction",
+            "source": "market-movers",
+            "format": "auction"
           }
         ],
         "variations": [
           {
             "variation": "Refractor /499",
-            "avgPrice": 49.69,
-            "multiplier": 0.619,
-            "salesCount": 26
+            "avgPrice": 45.67,
+            "multiplier": 0.569,
+            "salesCount": 27
           },
           {
             "variation": "Purple /250",
@@ -80391,7 +81430,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
           {
             "variation": "Black /75",
             "avgPrice": 349,
-            "multiplier": 4.345,
+            "multiplier": 4.344,
             "salesCount": 2
           },
           {
@@ -80751,7 +81790,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variations": []
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:14.993Z",
+    "fetchedAt": "2026-07-06T23:49:04.025Z",
     "source": "canonical-sold-model"
   },
   {
@@ -80766,14 +81805,14 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         "variation": "Base Auto",
         "avgMultiplier": 1,
         "playerCount": 3,
-        "totalSales": 64,
+        "totalSales": 79,
         "sortOrder": -1
       },
       {
         "variation": "Refractor /499",
-        "avgMultiplier": 1.758,
+        "avgMultiplier": 1.733,
         "playerCount": 4,
-        "totalSales": 58,
+        "totalSales": 59,
         "sortOrder": 99501
       },
       {
@@ -80806,7 +81845,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
       },
       {
         "variation": "Green /99",
-        "avgMultiplier": 2.015,
+        "avgMultiplier": 2.014,
         "playerCount": 4,
         "totalSales": 21,
         "sortOrder": 99901
@@ -81404,7 +82443,7 @@ export const STATIC_CHECKLIST_MODELS: ChecklistModel[] = [
         ]
       }
     ],
-    "fetchedAt": "2026-07-06T23:30:15.004Z",
+    "fetchedAt": "2026-07-06T23:49:04.037Z",
     "source": "canonical-sold-model"
   }
 ]

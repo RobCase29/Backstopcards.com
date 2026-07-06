@@ -298,4 +298,40 @@ describe('checklist ledger proxy', () => {
       action: 'Try alternate query',
     })
   })
+
+  it('holds recently checked no-lane players out of the refresh queue', async () => {
+    const env = tempEnv()
+    await seedChecklistDb(env.BACKSTOP_SALES_DB ?? '')
+    const sqlite = await import('node:sqlite')
+    const db = new sqlite.DatabaseSync(env.BACKSTOP_SALES_DB ?? '')
+    db.prepare(
+      'INSERT INTO checklist_cards (checklist_card_key, release_key, release_year, source_sheet, section, card_no, player_key, player_name, team, is_auto, chase_category, first_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('card-dillon-auto', '2026-bowman', 2026, 'Wax Pack Hero First Bowman', 'Chrome Prospect Autographs', 'CPA-DL', 'dillon lewis', 'Dillon Lewis', 'Miami Marlins', 1, 'flagship-auto', 'confirmed_1st')
+    db.prepare('INSERT INTO canonical_refresh_queue (player_name, release_year, status, last_success_at, error) VALUES (?, ?, ?, ?, ?)').run(
+      'Dillon Lewis',
+      2026,
+      'done',
+      new Date().toISOString(),
+      '',
+    )
+    db.close()
+
+    const response = await handleChecklistRoute(
+      'coverage',
+      new Request('http://localhost/api/checklist/coverage?minYear=2026&source=waxpackhero&players=Dillon%20Lewis&retryCooldownDays=7'),
+      env,
+    )
+    const payload = (await response.json()) as {
+      nextRefresh: Array<{ playerName: string; laneState: string }>
+      players: Array<{ playerName: string; laneState: string; priorityScore: number }>
+    }
+
+    expect(response.status).toBe(200)
+    expect(payload.players[0]).toMatchObject({
+      playerName: 'Dillon Lewis',
+      laneState: 'recently-checked-no-lane',
+      priorityScore: 0,
+    })
+    expect(payload.nextRefresh).toEqual([])
+  })
 })

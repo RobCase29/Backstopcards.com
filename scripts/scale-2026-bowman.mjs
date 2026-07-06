@@ -258,6 +258,8 @@ const maxCards = intOption('max-cards', 120, 1, 300)
 const maxConsecutiveFailures = intOption('max-consecutive-failures', 3, 1, 50)
 const grades = compact(option('grades', 'Raw')) || 'Raw'
 const compScope = compact(option('comp-scope', 'market-signals')).toLowerCase() === 'all' ? 'all' : 'market-signals'
+const rawCardScope = compact(option('card-scope', 'base-auto-first')).toLowerCase()
+const cardScope = rawCardScope === 'all' || rawCardScope === 'auto' || rawCardScope === 'base-auto-first' ? rawCardScope : 'base-auto-first'
 const statuses = compact(option('status', 'queued,error')) || 'queued,error'
 const dryRun = flag('dry-run')
 const resetRunning = flag('reset-running')
@@ -282,6 +284,7 @@ console.log(
       maxConsecutiveFailures,
       grades,
       compScope,
+      cardScope,
       statuses,
       resetErrors,
       before: {
@@ -325,6 +328,8 @@ for (let batch = 0; batch < batches; batch += 1) {
     grades,
     '--comp-scope',
     compScope,
+    '--card-scope',
+    cardScope,
     '--count',
     String(count),
     '--max-cards',
@@ -376,6 +381,7 @@ const report = {
     maxConsecutiveFailures,
     grades,
     compScope,
+    cardScope,
     statuses,
     dryRun,
     resetErrors,

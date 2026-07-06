@@ -35,6 +35,8 @@ const players = listArg('--players', DEFAULT_PLAYERS)
 const year = Number(argValue('--year', '2026')) || 2026
 const grades = compact(argValue('--grades', 'Raw')) || 'Raw'
 const compScope = compact(argValue('--comp-scope', 'market-signals')).toLowerCase() === 'all' ? 'all' : 'market-signals'
+const rawCardScope = compact(argValue('--card-scope', 'base-auto-first')).toLowerCase()
+const cardScope = rawCardScope === 'all' || rawCardScope === 'auto' || rawCardScope === 'base-auto-first' ? rawCardScope : 'base-auto-first'
 const count = Math.min(100, Math.max(1, Number(argValue('--count', '100')) || 100))
 const maxCards = Math.max(1, Number(argValue('--max-cards', '120')) || 120)
 const rpm = Math.min(500, Math.max(1, Number(argValue('--rpm', process.env.CARD_HEDGE_RATE_LIMIT_PER_MINUTE ?? '80')) || 80))
@@ -49,6 +51,7 @@ console.log(
       year,
       grades,
       compScope,
+      cardScope,
       count,
       maxCards,
       rpm,
@@ -70,6 +73,8 @@ for (const player of players) {
     grades,
     '--comp-scope',
     compScope,
+    '--card-scope',
+    cardScope,
     '--count',
     String(count),
     '--max-cards',

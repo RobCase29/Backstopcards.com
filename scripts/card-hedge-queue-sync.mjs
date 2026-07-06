@@ -46,6 +46,11 @@ function compact(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim()
 }
 
+function cardScopeOption(fallback = 'base-auto-first') {
+  const raw = compact(stringOption('card-scope', fallback)).toLowerCase()
+  return raw === 'all' || raw === 'auto' || raw === 'base-auto-first' ? raw : fallback
+}
+
 function statusList() {
   return stringOption('status', 'queued,error')
     .split(',')
@@ -160,6 +165,8 @@ function syncPlayer(task, options) {
     String(options.rpm),
     '--comp-scope',
     options.compScope,
+    '--card-scope',
+    options.cardScope,
     '--skip-canonical',
   ]
   if (options.reclassifyOnly) args.push('--reclassify-only')
@@ -183,6 +190,7 @@ const options = {
   player: compact(stringOption('player', '')),
   grades: compact(stringOption('grades', 'Raw')) || 'Raw',
   compScope: compact(stringOption('comp-scope', 'market-signals')).toLowerCase() === 'all' ? 'all' : 'market-signals',
+  cardScope: cardScopeOption(),
   count: Math.min(100, Math.max(1, numberOption('count', 100))),
   maxCards: Math.max(1, numberOption('max-cards', 120)),
   rpm: Math.min(500, Math.max(1, numberOption('rpm', process.env.CARD_HEDGE_RATE_LIMIT_PER_MINUTE ?? 80))),
@@ -231,6 +239,7 @@ console.log(
       player: options.player || null,
       grades: options.grades,
       compScope: options.compScope,
+      cardScope: options.cardScope,
       count: options.count,
       maxCards: options.maxCards,
       rpm: options.rpm,

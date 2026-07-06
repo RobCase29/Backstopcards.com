@@ -2168,6 +2168,10 @@ function coverageAgeDays(value: string, nowMs = Date.now()) {
   return Math.max(0, Math.round((nowMs - parsed) / 86_400_000))
 }
 
+function coverageLatestCheckedDays(row: SqliteRow) {
+  return coverageAgeDays(rowString(row, 'lastSuccessAt') || rowString(row, 'lastAttemptAt'))
+}
+
 function coverageConfidenceTier(row: SqliteRow, staleDays: number) {
   const price = rowNumber(row, 'basePrice')
   if (price <= 0) return 'Unpriced'
@@ -2181,14 +2185,18 @@ function coverageConfidenceTier(row: SqliteRow, staleDays: number) {
   return 'D'
 }
 
-function coverageState(row: SqliteRow, staleDays: number) {
+function coverageState(row: SqliteRow, staleDays: number, retryCooldownDays: number) {
   const price = rowNumber(row, 'basePrice')
   const saleCount = rowNumber(row, 'baseSaleCount')
   const status = rowString(row, 'queueStatus') || 'unqueued'
   const error = rowString(row, 'queueError')
   const ageDays = coverageAgeDays(rowString(row, 'latestSoldAt'))
   const stale = ageDays !== null && ageDays > staleDays
+  const checkedDays = coverageLatestCheckedDays(row)
+  const recentlyChecked = retryCooldownDays > 0 && status === 'done' && checkedDays !== null && checkedDays <= retryCooldownDays
 
+  if (recentlyChecked && price > 0) return 'recently-checked'
+  if (recentlyChecked) return 'recently-checked-no-lane'
   if (price > 0 && stale) return 'stale'
   if (price > 0 && saleCount > 0 && saleCount < 5) return 'thin'
   if (price > 0) return 'priced'
@@ -2200,8 +2208,8 @@ function coverageState(row: SqliteRow, staleDays: number) {
   return 'missing'
 }
 
-function coveragePriorityScore(row: SqliteRow, staleDays: number) {
-  const state = coverageState(row, staleDays)
+function coveragePriorityScore(row: SqliteRow, staleDays: number, retryCooldownDays: number) {
+  const state = coverageState(row, staleDays, retryCooldownDays)
   const saleCount = rowNumber(row, 'baseSaleCount')
   const releaseYear = rowNumber(row, 'releaseYear')
   const yearSignal = Math.max(0, releaseYear - 2020) * 1.5
@@ -2211,12 +2219,16 @@ function coveragePriorityScore(row: SqliteRow, staleDays: number) {
     missing: 88,
     queued: 84,
     'no-clean-base': 74,
-    running: 62,
     stale: 58,
     thin: 48,
-    priced: 8,
+    running: 0,
+    priced: 0,
+    'recently-checked': 0,
+    'recently-checked-no-lane': 0,
   }
-  return Math.round((stateScore[state] ?? 0) + yearSignal + Math.min(8, saleCount / 6))
+  const base = stateScore[state] ?? 0
+  if (base <= 0) return 0
+  return Math.round(base + yearSignal + Math.min(8, saleCount / 6))
 }
 
 function coverageActionForState(state: string) {
@@ -2226,12 +2238,14 @@ function coverageActionForState(state: string) {
   if (state === 'stale') return 'Refresh sold comps'
   if (state === 'thin') return 'Add comp depth'
   if (state === 'running') return 'Let current sync finish'
+  if (state === 'recently-checked' || state === 'recently-checked-no-lane') return 'Monitor cooldown'
   return 'Monitor'
 }
 
-function coverageReasonForState(row: SqliteRow, staleDays: number) {
-  const state = coverageState(row, staleDays)
+function coverageReasonForState(row: SqliteRow, staleDays: number, retryCooldownDays: number) {
+  const state = coverageState(row, staleDays, retryCooldownDays)
   const ageDays = coverageAgeDays(rowString(row, 'latestSoldAt'))
+  const checkedDays = coverageLatestCheckedDays(row)
   if (state === 'stale' && ageDays !== null) return `Latest modeled comp is ${ageDays.toLocaleString()}d old`
   if (state === 'thin') return `${rowNumber(row, 'baseSaleCount').toLocaleString()} strict base-auto sale${rowNumber(row, 'baseSaleCount') === 1 ? '' : 's'}`
   if (state === 'timeout') return 'Previous comp search timed out'
@@ -2240,11 +2254,14 @@ function coverageReasonForState(row: SqliteRow, staleDays: number) {
   if (state === 'queued') return 'Waiting in the comp refresh queue'
   if (state === 'missing') return 'No comp refresh queue row yet'
   if (state === 'running') return 'Comp refresh currently running'
+  if (state === 'recently-checked' || state === 'recently-checked-no-lane') {
+    return checkedDays === null ? 'Recently checked by comp sync' : `Checked ${checkedDays.toLocaleString()}d ago`
+  }
   return 'Modeled price lane is usable'
 }
 
-function mapChecklistCoverageRow(row: SqliteRow, staleDays: number) {
-  const state = coverageState(row, staleDays)
+function mapChecklistCoverageRow(row: SqliteRow, staleDays: number, retryCooldownDays: number) {
+  const state = coverageState(row, staleDays, retryCooldownDays)
   const price = rowNumber(row, 'basePrice')
   const latestSoldAt = rowString(row, 'latestSoldAt') || null
   const saleCount = rowNumber(row, 'baseSaleCount')
@@ -2268,9 +2285,9 @@ function mapChecklistCoverageRow(row: SqliteRow, staleDays: number) {
     ageDays: latestSoldAt ? coverageAgeDays(latestSoldAt) : null,
     laneState: state,
     confidenceTier: coverageConfidenceTier(row, staleDays),
-    priorityScore: coveragePriorityScore(row, staleDays),
+    priorityScore: coveragePriorityScore(row, staleDays, retryCooldownDays),
     action: coverageActionForState(state),
-    reason: coverageReasonForState(row, staleDays),
+    reason: coverageReasonForState(row, staleDays, retryCooldownDays),
   }
 }
 
@@ -4595,6 +4612,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
     if (route === 'coverage') {
       const minYear = clampInt(params.get('minYear'), 2020, 1900, 9999)
       const staleDays = clampInt(params.has('staleDays') ? params.get('staleDays') : undefined, 60, 7, 730)
+      const retryCooldownDays = clampInt(params.has('retryCooldownDays') ? params.get('retryCooldownDays') : undefined, 7, 0, 90)
       const requestedRelease = compactSqlText(String(params.get('release') ?? params.get('releaseKey') ?? ''))
       const source = compactSqlText(String(params.get('source') ?? ''))
       const team = compactSqlText(String(params.get('team') ?? ''))
@@ -4738,7 +4756,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
         LIMIT ?
       `).all(...values, ...baseParams, limit)
 
-      const coverageRows = rows.map((row) => mapChecklistCoverageRow(row, staleDays))
+      const coverageRows = rows.map((row) => mapChecklistCoverageRow(row, staleDays, retryCooldownDays))
       coverageRows.sort((left, right) => right.priorityScore - left.priorityScore || right.releaseYear - left.releaseYear || left.playerName.localeCompare(right.playerName))
       const summary = summarizeChecklistCoverage(coverageRows)
       const releaseMap = new Map<string, {
@@ -4775,6 +4793,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
         filters: {
           minYear,
           staleDays,
+          retryCooldownDays,
           release: requestedRelease,
           source,
           team,
@@ -4789,7 +4808,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
           retry: 'Timeout/error rows retry with smaller Card Hedge searches and alternate query wording.',
         },
         releases: [...releaseMap.values()].sort((left, right) => right.releaseYear - left.releaseYear || left.releaseName.localeCompare(right.releaseName)),
-        nextRefresh: coverageRows.filter((row) => row.laneState !== 'priced').slice(0, Math.min(30, limit)),
+        nextRefresh: coverageRows.filter((row) => row.priorityScore > 0 && row.laneState !== 'priced').slice(0, Math.min(30, limit)),
         players: coverageRows,
       })
     }

@@ -266,6 +266,7 @@ type ChecklistCoveragePayload = {
   filters?: {
     minYear: number
     staleDays: number
+    retryCooldownDays?: number
     release: string
     source: string
     team: string
@@ -1063,6 +1064,7 @@ async function fetchChecklistStatus(signal?: AbortSignal) {
 async function fetchChecklistCoverage(options: {
   minYear?: number
   staleDays?: number
+  retryCooldownDays?: number
   source?: string
   team?: string
   players?: string[]
@@ -1072,6 +1074,7 @@ async function fetchChecklistCoverage(options: {
   const url = new URL('/api/checklist/coverage', window.location.origin)
   url.searchParams.set('minYear', String(options.minYear ?? CHECKLIST_MIN_YEAR))
   url.searchParams.set('staleDays', String(options.staleDays ?? 60))
+  if (options.retryCooldownDays != null) url.searchParams.set('retryCooldownDays', String(options.retryCooldownDays))
   if (options.source) url.searchParams.set('source', options.source)
   if (options.team) url.searchParams.set('team', options.team)
   if (options.players?.length) url.searchParams.set('players', options.players.join('|'))
@@ -1899,9 +1902,14 @@ function buildTeamPlayerScanCoverage(
             : 'D'
       : 'Unpriced'
 
-    let statusLabel = 'Queued'
-    let statusTone: TeamPlayerScanStatusTone = 'empty'
-    let detail = hasScanSource ? 'No live auto listing found' : 'Waiting on full sweep'
+    let statusLabel = opportunity.bestRow ? 'Model ready' : 'Needs price lane'
+    let statusTone: TeamPlayerScanStatusTone = opportunity.bestRow ? 'listed' : 'gap'
+    let detail = opportunity.bestRow ? 'Ready for live sweep' : 'Price lane pending'
+    if (hasScanSource) {
+      statusLabel = 'No live listing'
+      statusTone = opportunity.bestRow ? 'empty' : 'gap'
+      detail = opportunity.bestRow ? 'No live auto listing found' : 'Scanned, price lane still pending'
+    }
 
     if (buyGradeEntry) {
       statusLabel = 'Buy-grade live'
@@ -3163,7 +3171,7 @@ function TeamScanCoveragePanel({
           <strong>
             {hasLiveSource
               ? `${coverage.length.toLocaleString()} Marlins checked across live marketplaces`
-              : `${coverage.length.toLocaleString()} Marlins queued for a full live sweep`}
+              : `${pricedPlayerCount.toLocaleString()} / ${coverage.length.toLocaleString()} Marlins model-ready`}
           </strong>
           <small>Every loaded checklist player has a row; buy-grade requires positive modeled edge and a trusted card match.</small>
         </div>
@@ -3185,7 +3193,7 @@ function TeamScanCoveragePanel({
       ) : !hasLiveSource ? (
         <div className="team-coverage-banner muted">
           <Radio size={16} />
-          <span>Run the full sweep to populate live hit counts for every Marlins checklist player.</span>
+          <span>Run the live sweep to populate marketplace hits for every Marlins checklist player.</span>
         </div>
       ) : null}
 
@@ -3711,7 +3719,7 @@ function MarlinsTeamPage({
       <section className="team-scan-console" aria-label="Marlins full checklist scan">
         <div className="team-scan-copy">
           <span>Full Checklist Sweep</span>
-          <strong>{checklistPlayerCount.toLocaleString()} Marlins players queued</strong>
+          <strong>{checklistPlayerCount.toLocaleString()} Marlins players in sweep universe</strong>
           <small>
             This button scans every loaded Miami checklist player we know about, not just the {pricedPlayerCount.toLocaleString()} priced
             player{pricedPlayerCount === 1 ? '' : 's'} on the target board.
@@ -8096,6 +8104,7 @@ function App() {
       const coverage = await fetchChecklistCoverage({
         minYear: CHECKLIST_MIN_YEAR,
         staleDays: 60,
+        retryCooldownDays: 7,
         source: 'waxpackhero',
         players: marlinsChecklistPlayerNames,
         limit: Math.max(160, marlinsChecklistPlayerNames.length),

@@ -47,6 +47,11 @@ function compact(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim()
 }
 
+function cardScopeOption(fallback = 'base-auto-first') {
+  const raw = compact(textOption('card-scope', fallback)).toLowerCase()
+  return raw === 'all' || raw === 'auto' || raw === 'base-auto-first' ? raw : fallback
+}
+
 function tableExists(db, tableName) {
   return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1").get(tableName))
 }
@@ -60,12 +65,20 @@ function ageDays(value) {
   return Number.isFinite(parsed) ? Math.max(0, Math.round((Date.now() - parsed) / 86_400_000)) : null
 }
 
-function laneState(row, staleDays) {
+function latestCheckedDays(row) {
+  return ageDays(compact(row.lastSuccessAt) || compact(row.lastAttemptAt))
+}
+
+function laneState(row, staleDays, retryCooldownDays) {
   const price = Number(row.basePrice) || 0
   const saleCount = Number(row.baseSaleCount) || 0
   const status = compact(row.queueStatus) || 'unqueued'
   const error = compact(row.queueError)
   const days = ageDays(row.latestSoldAt)
+  const checkedDays = latestCheckedDays(row)
+  const recentlyChecked = retryCooldownDays > 0 && status === 'done' && checkedDays !== null && checkedDays <= retryCooldownDays
+  if (recentlyChecked && price > 0) return 'recently-checked'
+  if (recentlyChecked) return 'recently-checked-no-lane'
   if (price > 0 && days !== null && days > staleDays) return 'stale'
   if (price > 0 && saleCount > 0 && saleCount < 5) return 'thin'
   if (price > 0) return 'priced'
@@ -77,8 +90,8 @@ function laneState(row, staleDays) {
   return 'missing'
 }
 
-function priorityScore(row, staleDays) {
-  const state = laneState(row, staleDays)
+function priorityScore(row, staleDays, retryCooldownDays) {
+  const state = laneState(row, staleDays, retryCooldownDays)
   const releaseYear = Number(row.releaseYear) || 0
   const saleCount = Number(row.baseSaleCount) || 0
   const base = {
@@ -89,9 +102,12 @@ function priorityScore(row, staleDays) {
     'no-clean-base': 74,
     stale: 58,
     thin: 48,
+    'recently-checked': 0,
+    'recently-checked-no-lane': 0,
     running: 0,
     priced: 0,
   }[state] ?? 0
+  if (base <= 0) return 0
   return Math.round(base + Math.max(0, releaseYear - 2020) * 1.5 + Math.min(8, saleCount / 6))
 }
 
@@ -100,14 +116,16 @@ function coverageRows(db, options) {
   const hasQueue = tableExists(db, 'canonical_refresh_queue')
   const queueHasError = columnExists(db, 'canonical_refresh_queue', 'error')
   const queueHasLastAttempt = columnExists(db, 'canonical_refresh_queue', 'last_attempt_at')
+  const queueHasLastSuccess = columnExists(db, 'canonical_refresh_queue', 'last_success_at')
   const sourceFilter = options.source === 'waxpackhero' && hasSourceSheet ? "AND c.source_sheet = 'Wax Pack Hero First Bowman'" : ''
   const playerNames = options.players.length ? options.players.map((player) => player.toLowerCase()) : []
   const playerFilter = playerNames.length ? `AND lower(c.player_name) IN (${playerNames.map(() => '?').join(', ')})` : ''
   const queueSelect = hasQueue
     ? `COALESCE(q.status, 'unqueued') AS queueStatus,
        ${queueHasError ? "COALESCE(q.error, '')" : "''"} AS queueError,
-       ${queueHasLastAttempt ? "COALESCE(q.last_attempt_at, '')" : "''"} AS lastAttemptAt`
-    : "'unqueued' AS queueStatus, '' AS queueError, '' AS lastAttemptAt"
+       ${queueHasLastAttempt ? "COALESCE(q.last_attempt_at, '')" : "''"} AS lastAttemptAt,
+       ${queueHasLastSuccess ? "COALESCE(q.last_success_at, '')" : "''"} AS lastSuccessAt`
+    : "'unqueued' AS queueStatus, '' AS queueError, '' AS lastAttemptAt, '' AS lastSuccessAt"
   const queueJoin = hasQueue
     ? `LEFT JOIN canonical_refresh_queue q
          ON q.release_year = p.release_year AND lower(q.player_name) = lower(p.player_name)`
@@ -190,6 +208,23 @@ function setQueueStatus(db, task, status, fields = {}) {
   )
 }
 
+function resetRunningTasks(db, options) {
+  if (!tableExists(db, 'canonical_refresh_queue')) return 0
+  const playerNames = options.players.length ? options.players.map((player) => player.toLowerCase()) : []
+  const playerFilter = playerNames.length ? `AND lower(player_name) IN (${playerNames.map(() => '?').join(', ')})` : ''
+  const nowIso = new Date().toISOString()
+  const result = db.prepare(`
+    UPDATE canonical_refresh_queue
+    SET status = 'queued',
+      error = '',
+      updated_at = ?
+    WHERE release_year >= ?
+      AND status = 'running'
+      ${playerFilter}
+  `).run(nowIso, options.minYear, ...playerNames)
+  return Number(result.changes) || 0
+}
+
 function runCommand(args, options = {}) {
   console.log(`\n${process.execPath} ${args.map((arg) => (/\s/.test(arg) ? JSON.stringify(arg) : arg)).join(' ')}`)
   if (options.dryRun) return { status: 0, skipped: true }
@@ -202,6 +237,7 @@ function runCommand(args, options = {}) {
 const options = {
   minYear: numberOption('min-year', 2020, 1900, 9999),
   staleDays: numberOption('stale-days', 60, 7, 730),
+  retryCooldownDays: numberOption('retry-cooldown-days', 7, 0, 90),
   limit: numberOption('limit', 20, 1, 500),
   source: compact(textOption('source', 'waxpackhero')),
   players: textOption('players', '')
@@ -214,7 +250,9 @@ const options = {
   rpm: numberOption('rpm', process.env.CARD_HEDGE_RATE_LIMIT_PER_MINUTE ?? 80, 1, 500),
   timeoutMs: numberOption('timeout-ms', 60_000, 10_000, 300_000),
   compScope: compact(textOption('comp-scope', 'market-signals')) === 'all' ? 'all' : 'market-signals',
+  cardScope: cardScopeOption(),
   dryRun: flag('dry-run'),
+  resetRunning: flag('reset-running'),
   skipFinalCanonical: flag('skip-final-canonical'),
   skipSnapshot: flag('skip-snapshot'),
 }
@@ -225,12 +263,15 @@ if (!tableExists(db, 'checklist_cards') || !tableExists(db, 'canonical_cards') |
   throw new Error('Coverage sync requires checklist and canonical market tables.')
 }
 
+let resetRunning = 0
+if (options.resetRunning && !options.dryRun) resetRunning = resetRunningTasks(db, options)
+
 const rows = coverageRows(db, options)
   .map((row) => ({
     ...row,
     releaseYear: Number(row.releaseYear) || options.minYear,
-    laneState: laneState(row, options.staleDays),
-    priorityScore: priorityScore(row, options.staleDays),
+    laneState: laneState(row, options.staleDays, options.retryCooldownDays),
+    priorityScore: priorityScore(row, options.staleDays, options.retryCooldownDays),
   }))
   .filter((row) => row.priorityScore > 0 && row.laneState !== 'running' && row.laneState !== 'priced')
   .sort((left, right) => right.priorityScore - left.priorityScore || right.releaseYear - left.releaseYear || String(left.playerName).localeCompare(String(right.playerName)))
@@ -240,6 +281,7 @@ console.log(JSON.stringify({
   action: options.dryRun ? 'coverage-sync-dry-run' : 'coverage-sync',
   dbFile,
   options,
+  resetRunning,
   targets: rows.map((row) => ({
     playerName: row.playerName,
     releaseYear: row.releaseYear,
@@ -274,6 +316,8 @@ for (const row of rows) {
     String(options.rpm),
     '--comp-scope',
     options.compScope,
+    '--card-scope',
+    options.cardScope,
     '--skip-canonical',
   ], { dryRun: options.dryRun, timeoutMs: options.timeoutMs })
 
