@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 const ROOT = process.cwd()
 const DB_PATH = resolve(ROOT, process.argv[2] ?? 'local-data/backstop-sales.sqlite')
 const OUTPUT_PATH = resolve(ROOT, process.argv[3] ?? 'src/data/staticChecklistSnapshot.ts')
-const MIN_YEAR = Number(process.env.STATIC_CHECKLIST_MIN_YEAR ?? 2021)
+const MIN_YEAR = Number(process.env.STATIC_CHECKLIST_MIN_YEAR ?? 2020)
 const MAX_BASE_SALES_PER_PLAYER = 80
 
 if (!existsSync(DB_PATH)) {

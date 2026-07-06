@@ -201,6 +201,7 @@ type QuickGradeKey =
   | 'cgc-10'
 type WorkMode = 'lookup' | 'deals' | 'price' | 'health' | 'case-hits' | 'wax'
 type FreshnessTone = 'fresh' | 'watch' | 'stale' | 'empty' | 'offline'
+type AppRoute = 'desk' | 'marlins'
 type BinVariationOption = {
   key: string
   label: string
@@ -234,6 +235,76 @@ type ChecklistStatusPayload = {
   queue?: Array<{ status: string; players: number }>
 }
 
+type ChecklistCoverageRow = {
+  playerName: string
+  playerKey: string
+  releaseYear: number
+  releaseName: string
+  releaseKey: string
+  team: string | null
+  checklistRows: number
+  queueStatus: string
+  queueError: string
+  lastAttemptAt: string | null
+  lastSuccessAt: string | null
+  basePrice: number
+  baseSaleCount: number
+  baseSales30: number
+  baseSales90: number
+  latestSoldAt: string | null
+  ageDays: number | null
+  laneState: string
+  confidenceTier: string
+  priorityScore: number
+  action: string
+  reason: string
+}
+
+type ChecklistCoveragePayload = {
+  available: boolean
+  message?: string
+  filters?: {
+    minYear: number
+    staleDays: number
+    release: string
+    source: string
+    team: string
+    playerCount: number
+    limit: number
+  }
+  summary: {
+    totalPlayers: number
+    pricedPlayers: number
+    missingPriceLanePlayers: number
+    stalePlayers: number
+    thinPlayers: number
+    retryPlayers: number
+    coveragePct: number
+    healthyPct: number
+    latestCompAt: string
+    byState: Array<{ state: string; players: number }>
+    byTier: Array<{ tier: string; players: number }>
+    byQueue: Array<{ status: string; players: number }>
+  }
+  cadence: {
+    hot: string
+    priority: string
+    longTail: string
+    retry: string
+  }
+  releases: Array<{
+    releaseKey: string
+    releaseYear: number
+    releaseName: string
+    players: number
+    pricedPlayers: number
+    missingPriceLanePlayers: number
+    stalePlayers: number
+  }>
+  nextRefresh: ChecklistCoverageRow[]
+  players: ChecklistCoverageRow[]
+}
+
 type ObservabilitySnapshot = {
   checkedAt: string
   salesCache: SalesCacheStatus | null
@@ -254,6 +325,7 @@ const SOURCE_LABELS: Record<BasePriceSource, string> = {
   'blended-sales': 'Blended',
   'variation-implied': 'Implied',
   'twma-fallback': 'Baseline',
+  unpriced: 'Needs comps',
 }
 
 const SORT_LABELS: Record<SortMode, string> = {
@@ -400,7 +472,12 @@ function dynastyValueMultiple(row: PricingRow) {
   return impliedBase / row.baseTwmaPrice
 }
 
+function rowHasModel(row: Pick<PricingRow, 'basePriceSource' | 'baseTwmaPrice'>) {
+  return row.basePriceSource !== 'unpriced' && row.baseTwmaPrice > 0
+}
+
 function dynastyValueSortScore(row: PricingRow) {
+  if (!rowHasModel(row)) return -1
   const multiple = dynastyValueMultiple(row)
   const valueScore = scoreDynastyBaseValue(row)
   if (multiple <= 0 || valueScore < 0) return -1
@@ -506,7 +583,7 @@ const FALLBACK_RELEASE_OPTIONS: ReleaseOption[] = [
 ]
 
 const CHECKLIST_CATEGORIES: ChecklistModel['category'][] = ['bowman', 'chrome', 'draft']
-const CHECKLIST_MIN_YEAR = 2021
+const CHECKLIST_MIN_YEAR = 2020
 const CHECKLIST_LOAD_CONCURRENCY = 6
 const BIN_SCAN_CONCURRENCY = 2
 const LEADERBOARD_RENDER_LIMIT = 25
@@ -522,6 +599,16 @@ const SHOW_LOOKUP_SUPPORT_PANELS = false
 const AUCTION_MAX_HOURS_TO_CLOSE = 24
 const CASE_HIT_RENDER_LIMIT = 24
 const BIN_ALL_MODELS_KEY = 'all-checklists'
+const MARLINS_TEAM_CODE = 'MIA'
+const MARLINS_ROUTE_PATH = '/teams/marlins'
+
+function appRouteFromPath(pathname: string): AppRoute {
+  return pathname.replace(/\/+$/, '').toLowerCase() === MARLINS_ROUTE_PATH ? 'marlins' : 'desk'
+}
+
+function pathForAppRoute(route: AppRoute) {
+  return route === 'marlins' ? MARLINS_ROUTE_PATH : '/'
+}
 
 function scoreSettingsForSearchMode(settings: ScoreSettings, searchMode: BinSearchMode): ScoreSettings {
   return {
@@ -626,6 +713,10 @@ function cleanModelLanguage(value: string) {
 
 function formatBaseMethod(method: string) {
   return cleanModelLanguage(method)
+}
+
+function formatBasePrice(row: Pick<PricingRow, 'baseTwmaPrice' | 'basePriceSource'>) {
+  return row.basePriceSource === 'unpriced' || row.baseTwmaPrice <= 0 ? 'Needs comps' : money(row.baseTwmaPrice)
 }
 
 function formatBaseSource(source: BasePriceSource) {
@@ -805,8 +896,10 @@ function formatStsLine(row: PricingRow) {
   if (row.stsDynastyScore !== null || row.stsRank !== null || row.stsProspectRank !== null) {
     const impliedBase = impliedDynastyBasePrice(row)
     const multiple = impliedBase > 0 && row.baseTwmaPrice > 0 ? impliedBase / row.baseTwmaPrice : 0
-    parts.push(`${scoreDynastyBaseValue(row).toFixed(0)} value`)
+    const valueScore = scoreDynastyBaseValue(row)
+    if (valueScore > 0) parts.push(`${valueScore.toFixed(0)} value`)
     if (multiple > 0) parts.push(`${money(impliedBase)} implied / ${multiple.toFixed(multiple >= 10 ? 1 : 2)}x base`)
+    else if (impliedBase > 0 && !rowHasModel(row)) parts.push(`${money(impliedBase)} implied base`)
   }
   if (row.stsBinTargetScore !== null) parts.push(`${row.stsBinTargetScore.toFixed(1)} target`)
   return parts.join(' / ')
@@ -853,6 +946,15 @@ function ageLabel(value?: string | null, now = Date.now()) {
 type ModelTrustTone = 'strong' | 'solid' | 'watch' | 'thin'
 
 function modelTrustSignal(row: PricingRow) {
+  if (row.basePriceSource === 'unpriced' || row.baseTwmaPrice <= 0) {
+    const rankLabel = primaryRankLabel(row) ?? 'checklist player'
+    return {
+      tone: 'thin' as ModelTrustTone,
+      label: 'Needs comps',
+      detail: `${rankLabel} loaded`,
+      action: 'Seed sold data',
+    }
+  }
   const source = row.baseMethod.toLowerCase().includes('sold comp')
     ? 'sold-comp'
     : row.basePriceSource
@@ -958,6 +1060,292 @@ async function fetchChecklistStatus(signal?: AbortSignal) {
   return payload
 }
 
+async function fetchChecklistCoverage(options: {
+  minYear?: number
+  staleDays?: number
+  source?: string
+  team?: string
+  players?: string[]
+  limit?: number
+  signal?: AbortSignal
+} = {}) {
+  const url = new URL('/api/checklist/coverage', window.location.origin)
+  url.searchParams.set('minYear', String(options.minYear ?? CHECKLIST_MIN_YEAR))
+  url.searchParams.set('staleDays', String(options.staleDays ?? 60))
+  if (options.source) url.searchParams.set('source', options.source)
+  if (options.team) url.searchParams.set('team', options.team)
+  if (options.players?.length) url.searchParams.set('players', options.players.join('|'))
+  if (options.limit) url.searchParams.set('limit', String(options.limit))
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal: options.signal,
+  })
+  const payload = (await response.json().catch(() => null)) as ({ error?: string } & ChecklistCoveragePayload) | null
+  if (!response.ok) throw new Error(payload?.error ?? `Checklist coverage failed (${response.status})`)
+  if (!payload) throw new Error('Checklist coverage returned an empty response')
+  if (!payload.available) throw new Error(payload.message ?? 'Checklist coverage is not available')
+  if (!payload.summary || !payload.releases || !payload.nextRefresh || !payload.players) {
+    throw new Error('Checklist coverage returned an incomplete response')
+  }
+  return payload
+}
+
+function checklistCoverageReleaseKey(model: ChecklistModel) {
+  return model.release
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function checklistSaleTimestamp(sale: NonNullable<ChecklistModel['players'][number]['baseSales']>[number]) {
+  const raw = sale.soldAt ?? sale.sold_at ?? sale.saleDate ?? sale.sale_date ?? sale.date ?? sale.created_at
+  const parsed = raw ? Date.parse(String(raw)) : Number.NaN
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function checklistSaleCountsByWindow(
+  sales: NonNullable<ChecklistModel['players'][number]['baseSales']> | undefined,
+  nowMs = Date.now(),
+) {
+  let latest = 0
+  let sales30 = 0
+  let sales90 = 0
+  for (const sale of sales ?? []) {
+    const timestamp = checklistSaleTimestamp(sale)
+    if (timestamp === null) continue
+    latest = Math.max(latest, timestamp)
+    const ageDays = Math.max(0, (nowMs - timestamp) / 86_400_000)
+    if (ageDays <= 30) sales30 += 1
+    if (ageDays <= 90) sales90 += 1
+  }
+  return {
+    latestSoldAt: latest ? new Date(latest).toISOString() : null,
+    sales30,
+    sales90,
+  }
+}
+
+function coverageRowAgeDays(value: string | null, nowMs = Date.now()) {
+  const parsed = value ? Date.parse(value) : Number.NaN
+  if (!Number.isFinite(parsed)) return null
+  return Math.max(0, Math.round((nowMs - parsed) / 86_400_000))
+}
+
+function coverageRowState(row: Pick<ChecklistCoverageRow, 'basePrice' | 'baseSaleCount' | 'latestSoldAt' | 'queueStatus' | 'queueError'>, staleDays: number) {
+  const stale = coverageRowAgeDays(row.latestSoldAt) !== null && (coverageRowAgeDays(row.latestSoldAt) ?? 0) > staleDays
+  if (row.basePrice > 0 && stale) return 'stale'
+  if (row.basePrice > 0 && row.baseSaleCount > 0 && row.baseSaleCount < 5) return 'thin'
+  if (row.basePrice > 0) return 'priced'
+  if (row.queueStatus === 'running') return 'running'
+  if (/timeout/i.test(row.queueError) || row.queueStatus === 'timeout') return 'timeout'
+  if (row.queueStatus === 'error') return 'error'
+  if (row.queueStatus === 'done') return 'no-clean-base'
+  if (row.queueStatus === 'queued') return 'queued'
+  return 'missing'
+}
+
+function coverageRowConfidenceTier(row: Pick<ChecklistCoverageRow, 'basePrice' | 'baseSaleCount' | 'baseSales30' | 'baseSales90' | 'latestSoldAt'>, staleDays: number) {
+  if (row.basePrice <= 0) return 'Unpriced'
+  const ageDays = coverageRowAgeDays(row.latestSoldAt)
+  if (row.baseSaleCount >= 40 && (ageDays === null || ageDays <= staleDays) && row.baseSales30 >= 3) return 'A'
+  if (row.baseSaleCount >= 15 && (ageDays === null || ageDays <= staleDays * 2) && row.baseSales90 >= 4) return 'B'
+  if (row.baseSaleCount >= 4 || row.baseSales90 > 0) return 'C'
+  return 'D'
+}
+
+function coverageRowPriorityScore(row: ChecklistCoverageRow, staleDays: number) {
+  const state = coverageRowState(row, staleDays)
+  const stateScore: Record<string, number> = {
+    timeout: 96,
+    error: 92,
+    missing: 88,
+    queued: 84,
+    'no-clean-base': 74,
+    running: 62,
+    stale: 58,
+    thin: 48,
+    priced: 8,
+  }
+  return Math.round((stateScore[state] ?? 0) + Math.max(0, row.releaseYear - 2020) * 1.5 + Math.min(8, row.baseSaleCount / 6))
+}
+
+function coverageRowAction(state: string) {
+  if (state === 'timeout' || state === 'error') return 'Retry smaller comp sync'
+  if (state === 'missing' || state === 'queued') return 'Run comp sync'
+  if (state === 'no-clean-base') return 'Try alternate query'
+  if (state === 'stale') return 'Refresh sold comps'
+  if (state === 'thin') return 'Add comp depth'
+  if (state === 'running') return 'Let current sync finish'
+  return 'Monitor'
+}
+
+function coverageRowReason(row: ChecklistCoverageRow, staleDays: number) {
+  const state = coverageRowState(row, staleDays)
+  const ageDays = coverageRowAgeDays(row.latestSoldAt)
+  if (state === 'stale' && ageDays !== null) return `Latest modeled comp is ${ageDays.toLocaleString()}d old`
+  if (state === 'thin') return `${row.baseSaleCount.toLocaleString()} strict base-auto sale${row.baseSaleCount === 1 ? '' : 's'}`
+  if (state === 'timeout') return 'Previous comp search timed out'
+  if (state === 'error') return row.queueError || 'Previous comp search errored'
+  if (state === 'no-clean-base') return 'Sales imported, but no trusted raw base-auto lane'
+  if (state === 'queued') return 'Waiting in the comp refresh queue'
+  if (state === 'missing') return 'No trusted raw base-auto lane in bundled snapshot'
+  if (state === 'running') return 'Comp refresh currently running'
+  return 'Modeled price lane is usable'
+}
+
+function coverageTierOrder(tier: string) {
+  if (tier === 'A') return 0
+  if (tier === 'B') return 1
+  if (tier === 'C') return 2
+  if (tier === 'D') return 3
+  return 4
+}
+
+function summarizeCoverageRows(rows: ChecklistCoverageRow[]): ChecklistCoveragePayload['summary'] {
+  const byState = new Map<string, number>()
+  const byTier = new Map<string, number>()
+  const byQueue = new Map<string, number>()
+  for (const row of rows) {
+    byState.set(row.laneState, (byState.get(row.laneState) ?? 0) + 1)
+    byTier.set(row.confidenceTier, (byTier.get(row.confidenceTier) ?? 0) + 1)
+    byQueue.set(row.queueStatus, (byQueue.get(row.queueStatus) ?? 0) + 1)
+  }
+  const pricedPlayers = rows.filter((row) => row.basePrice > 0).length
+  const stalePlayers = rows.filter((row) => row.laneState === 'stale').length
+  const latestCompAt = rows
+    .map((row) => (row.latestSoldAt ? Date.parse(row.latestSoldAt) : Number.NaN))
+    .filter(Number.isFinite)
+    .sort((left, right) => right - left)[0]
+
+  return {
+    totalPlayers: rows.length,
+    pricedPlayers,
+    missingPriceLanePlayers: rows.filter((row) => row.basePrice <= 0).length,
+    stalePlayers,
+    thinPlayers: rows.filter((row) => row.laneState === 'thin').length,
+    retryPlayers: rows.filter((row) => row.laneState === 'timeout' || row.laneState === 'error').length,
+    coveragePct: rows.length ? Number(((pricedPlayers / rows.length) * 100).toFixed(1)) : 0,
+    healthyPct: rows.length ? Number((((pricedPlayers - stalePlayers) / rows.length) * 100).toFixed(1)) : 0,
+    latestCompAt: Number.isFinite(latestCompAt) ? new Date(latestCompAt).toISOString() : '',
+    byState: [...byState.entries()].map(([state, players]) => ({ state, players })).sort((left, right) => right.players - left.players),
+    byTier: [...byTier.entries()].map(([tier, players]) => ({ tier, players })).sort((left, right) => coverageTierOrder(left.tier) - coverageTierOrder(right.tier)),
+    byQueue: [...byQueue.entries()].map(([status, players]) => ({ status, players })).sort((left, right) => right.players - left.players),
+  }
+}
+
+function coverageReleases(rows: ChecklistCoverageRow[]): ChecklistCoveragePayload['releases'] {
+  const releases = new Map<string, ChecklistCoveragePayload['releases'][number]>()
+  for (const row of rows) {
+    const current = releases.get(row.releaseKey) ?? {
+      releaseKey: row.releaseKey,
+      releaseYear: row.releaseYear,
+      releaseName: row.releaseName,
+      players: 0,
+      pricedPlayers: 0,
+      missingPriceLanePlayers: 0,
+      stalePlayers: 0,
+    }
+    current.players += 1
+    if (row.basePrice > 0) current.pricedPlayers += 1
+    else current.missingPriceLanePlayers += 1
+    if (row.laneState === 'stale') current.stalePlayers += 1
+    releases.set(row.releaseKey, current)
+  }
+  return [...releases.values()].sort((left, right) => right.releaseYear - left.releaseYear || left.releaseName.localeCompare(right.releaseName))
+}
+
+function buildStaticChecklistCoverage(
+  models: ChecklistModel[],
+  playerNames: string[],
+  options: { minYear?: number; staleDays?: number; limit?: number } = {},
+): ChecklistCoveragePayload {
+  const minYear = options.minYear ?? CHECKLIST_MIN_YEAR
+  const staleDays = options.staleDays ?? 60
+  const playerKeys = new Set(playerNames.map(scanNameKey).filter(Boolean))
+  const rowsByKey = new Map<string, ChecklistCoverageRow>()
+
+  for (const model of sortChecklistModels(models).filter((candidate) => candidate.releaseYear >= minYear)) {
+    const releaseKey = checklistCoverageReleaseKey(model)
+    for (const player of model.players) {
+      const playerKey = scanNameKey(player.playerName)
+      if (!playerKey || (playerKeys.size > 0 && !playerKeys.has(playerKey))) continue
+      const key = `${releaseKey}:${playerKey}`
+      const existing = rowsByKey.get(key)
+      const baseSales = player.baseSales ?? player.base_sales ?? player.sales ?? player.saleHistory ?? player.sale_history ?? []
+      const saleWindows = checklistSaleCountsByWindow(baseSales)
+      const saleCount = Math.max(0, player.baseSalesCount || baseSales.length || 0)
+      const basePrice = positiveNumber(player.baseAvgPrice) ? Number(player.baseAvgPrice.toFixed(2)) : 0
+      const queueStatus = basePrice > 0 ? 'snapshot' : 'missing'
+      const draftRow: ChecklistCoverageRow = {
+        playerName: player.playerName,
+        playerKey,
+        releaseYear: model.releaseYear,
+        releaseName: checklistModelLabel(model),
+        releaseKey,
+        team: player.team ?? findStsRanking(player.playerName)?.team ?? null,
+        checklistRows: (existing?.checklistRows ?? 0) + 1,
+        queueStatus,
+        queueError: '',
+        lastAttemptAt: null,
+        lastSuccessAt: model.fetchedAt || null,
+        basePrice,
+        baseSaleCount: saleCount,
+        baseSales30: saleWindows.sales30,
+        baseSales90: saleWindows.sales90,
+        latestSoldAt: saleWindows.latestSoldAt,
+        ageDays: coverageRowAgeDays(saleWindows.latestSoldAt),
+        laneState: 'missing',
+        confidenceTier: 'Unpriced',
+        priorityScore: 0,
+        action: 'Run comp sync',
+        reason: 'No trusted raw base-auto lane in bundled snapshot',
+      }
+      const laneState = coverageRowState(draftRow, staleDays)
+      const completeRow = {
+        ...draftRow,
+        laneState,
+        confidenceTier: coverageRowConfidenceTier(draftRow, staleDays),
+        priorityScore: coverageRowPriorityScore({ ...draftRow, laneState }, staleDays),
+        action: coverageRowAction(laneState),
+        reason: coverageRowReason({ ...draftRow, laneState }, staleDays),
+      }
+      rowsByKey.set(key, completeRow)
+    }
+  }
+
+  const rows = [...rowsByKey.values()].sort(
+    (left, right) =>
+      right.priorityScore - left.priorityScore ||
+      right.releaseYear - left.releaseYear ||
+      left.playerName.localeCompare(right.playerName),
+  )
+  const nextRefresh = rows.filter((row) => row.laneState !== 'priced').slice(0, options.limit ?? Math.max(160, rows.length))
+  return {
+    available: true,
+    message: 'Using bundled checklist snapshot coverage.',
+    filters: {
+      minYear,
+      staleDays,
+      release: '',
+      source: 'static-snapshot',
+      team: '',
+      playerCount: playerNames.length,
+      limit: options.limit ?? Math.max(160, rows.length),
+    },
+    summary: summarizeCoverageRows(rows),
+    cadence: {
+      hot: 'Hourly for live-hit gaps once the local comp worker is connected.',
+      priority: 'Nightly for ranked, team-page, and recently listed players.',
+      longTail: 'Weekly for the remaining 2020+ checklist backlog.',
+      retry: 'Timeout/error rows retry with smaller Card Hedge searches and alternate query wording.',
+    },
+    releases: coverageReleases(rows),
+    nextRefresh,
+    players: rows,
+  }
+}
+
 function rankingObservability() {
   const rows = getStsLeaderboard()
   const latestUpdated = latestIso(rows.map((row) => row.updated))
@@ -1039,12 +1427,25 @@ function playerNamesForPricingRows(rows: PricingRow[]) {
   const seen = new Set<string>()
   const names: string[] = []
   for (const row of rows) {
+    if (!rowHasModel(row)) continue
     const key = scanNameKey(row.playerName)
     if (!key || seen.has(key)) continue
     seen.add(key)
     names.push(row.playerName)
   }
   return names
+}
+
+function listingTitleMentionsTeam(title: string, teamCode: string) {
+  if (normalizeTeamCode(teamCode) === MARLINS_TEAM_CODE) return /\b(?:miami|marlins)\b/i.test(title)
+  return false
+}
+
+function opportunityMatchesTeamUniverse(opportunity: Opportunity, teamCode: string, playerKeys: Set<string>) {
+  const canonicalTeam = normalizeTeamCode(teamCode)
+  if (normalizeTeamCode(opportunity.listing.prospect?.team) === canonicalTeam) return true
+  if (playerKeys.has(scanNameKey(opportunity.listing.playerName))) return true
+  return listingTitleMentionsTeam(opportunity.listing.title, canonicalTeam)
 }
 
 function modelsContainingPlayerNames(models: ChecklistModel[], playerNames: string[]) {
@@ -1069,7 +1470,7 @@ function targetRowsByModelFromGroups(groups: Map<string, PricingRow[]>, limit = 
 
 function targetRowsFromRows(rows: PricingRow[], limit = 50) {
   return rows
-    .filter((row) => row.stsBinTargetScore !== null)
+    .filter((row) => rowHasModel(row) && row.stsBinTargetScore !== null)
     .sort(
       (left, right) =>
         (right.stsBinTargetScore ?? -1) - (left.stsBinTargetScore ?? -1) ||
@@ -1099,7 +1500,7 @@ function valueRowsFromRows(rows: PricingRow[], limit = 25) {
 
 function prospectRowsFromRows(rows: PricingRow[], limit = 100) {
   const selectedRows = rows
-    .filter((row) => row.stsProspectRank !== null)
+    .filter((row) => rowHasModel(row) && row.stsProspectRank !== null)
     .sort(
       (left, right) =>
         rankOrInfinity(left.stsProspectRank) - rankOrInfinity(right.stsProspectRank) ||
@@ -1148,6 +1549,425 @@ function binConvictionScore(opportunity: Opportunity, sts = opportunityStsContex
   const rankSignal = sts.primaryRank ? clampNumber((1_200 - Math.min(sts.primaryRank, 1_200)) / 1_200, 0, 1) * 7 : 0
   const slabSignal = opportunity.gradingMultiplier ? clampNumber((opportunity.gradingMultiplier - 1) / 1.55, 0, 1) * 6 : 0
   return Math.round(roiSignal + dollarSignal + trustSignal + momentumSignal + rankSignal + slabSignal)
+}
+
+type OpportunityStsContext = ReturnType<typeof opportunityStsContext>
+
+type TeamDealEntry = {
+  opportunity: Opportunity
+  type: 'BIN' | 'Auction'
+  sts: OpportunityStsContext
+  modelRow: PricingRow | null
+  dealScore: number
+  dynastyValueScore: number
+  momentumScore: number | null
+  rankLabel: string | null
+}
+
+type TeamChecklistModelSummary = {
+  key: string
+  label: string
+  playerCount: number
+}
+
+type TeamChecklistOpportunity = {
+  playerName: string
+  checklistCount: number
+  modelLabels: string[]
+  ranking: ReturnType<typeof findStsRanking>
+  bestRow: PricingRow | null
+  score: number
+  rankLabel: string | null
+  reasons: string[]
+}
+
+type TeamPlayerScanStatusTone = 'buy' | 'watch' | 'listed' | 'gap' | 'empty' | 'error'
+
+type TeamPlayerScanCoverage = {
+  playerName: string
+  opportunity: TeamChecklistOpportunity
+  bestEntry: TeamDealEntry | null
+  buyGradeEntry: TeamDealEntry | null
+  modelTrust: ReturnType<typeof modelTrustSignal> | null
+  confidenceTier: string
+  binListingCount: number
+  auctionListingCount: number
+  modeledListingCount: number
+  totalListingCount: number
+  scanIssueCount: number
+  statusLabel: string
+  statusTone: TeamPlayerScanStatusTone
+  detail: string
+  modelState: string
+}
+
+function pricingRowsByPlayer(rows: PricingRow[]) {
+  const byPlayer = new Map<string, PricingRow[]>()
+  for (const row of rows) {
+    const key = scanNameKey(row.playerName)
+    if (!key) continue
+    const playerRows = byPlayer.get(key) ?? []
+    playerRows.push(row)
+    byPlayer.set(key, playerRows)
+  }
+  return byPlayer
+}
+
+function rowOpportunityMatchScore(row: PricingRow, opportunity: Opportunity) {
+  const listingYear = opportunity.listing.releaseYear
+  const listingText = scanNameKey(`${opportunity.listing.releaseLabel} ${opportunity.listing.title}`)
+  let score = 0
+
+  if (listingYear && row.releaseYear === listingYear) score += 36
+  if (listingText.includes(String(row.releaseYear))) score += 8
+  if (row.category === 'chrome' && listingText.includes('chrome')) score += 8
+  if (row.category === 'draft' && listingText.includes('draft')) score += 8
+  if (row.category === 'bowman' && listingText.includes('bowman') && !listingText.includes('draft')) score += 5
+
+  const releaseKey = scanNameKey(row.release)
+  if (releaseKey && listingText.includes(releaseKey)) score += 10
+
+  return score
+}
+
+function bestPricingRowForOpportunity(opportunity: Opportunity, rowsByPlayer: Map<string, PricingRow[]>) {
+  const playerRows = (rowsByPlayer.get(scanNameKey(opportunity.listing.playerName)) ?? []).filter(rowHasModel)
+  if (playerRows.length === 0) return null
+
+  return [...playerRows].sort(
+    (left, right) =>
+      rowOpportunityMatchScore(right, opportunity) - rowOpportunityMatchScore(left, opportunity) ||
+      scoreDynastyValueOpportunity(right) - scoreDynastyValueOpportunity(left) ||
+      (right.stsBinTargetScore ?? -1) - (left.stsBinTargetScore ?? -1) ||
+      (right.stsMomentumScore ?? -1) - (left.stsMomentumScore ?? -1) ||
+      comparePrimaryRank(left, right) ||
+      right.baseTwmaPrice - left.baseTwmaPrice,
+  )[0] ?? null
+}
+
+function marlinsModeledDealScore(opportunity: Opportunity, modelRow: PricingRow | null, sts = opportunityStsContext(opportunity)) {
+  const convictionSignal = binConvictionScore(opportunity, sts) * 0.82
+  const edgeSignal = clampNumber(opportunity.edgeDollars / Math.max(60, opportunity.fairValue * 0.45), 0, 1) * 14
+  const roiSignal = clampNumber((opportunity.expectedRoiPct - 0.04) / 0.56, 0, 1) * 12
+  const trustSignal = clampNumber((opportunity.trustScore - 48) / 44, 0, 1) * 8
+  const dynastySignal = modelRow ? clampNumber(scoreDynastyValueOpportunity(modelRow) / 72, 0, 1) * 16 : 0
+  const targetSignal = modelRow?.stsBinTargetScore != null ? clampNumber(modelRow.stsBinTargetScore / 100, 0, 1) * 11 : 0
+  const momentumSource = modelRow?.stsMomentumScore ?? sts.momentumScore
+  const momentumSignal = momentumSource != null ? clampNumber((momentumSource - 40) / 40, 0, 1) * 8 : 0
+  const primaryRank = modelRow ? primaryStsRank({ rank: modelRow.stsRank, prospectRank: modelRow.stsProspectRank }) : sts.primaryRank
+  const rankSignal = primaryRank ? clampNumber((650 - Math.min(primaryRank, 650)) / 650, 0, 1) * 8 : 0
+  const prospectRank = modelRow?.stsProspectRank ?? sts.prospectRank
+  const prospectSignal = prospectRank ? clampNumber((175 - Math.min(prospectRank, 175)) / 175, 0, 1) * 5 : 0
+  const auctionSignal = opportunity.listing.kind === 'live' && opportunity.listing.hoursToClose ? clampNumber((24 - opportunity.listing.hoursToClose) / 24, 0, 1) * 3 : 0
+  const gradeSignal = opportunity.grade === 'A+' ? 4 : opportunity.grade === 'A' ? 2 : 0
+
+  return Math.round(
+    convictionSignal +
+      edgeSignal +
+      roiSignal +
+      trustSignal +
+      dynastySignal +
+      targetSignal +
+      momentumSignal +
+      rankSignal +
+      prospectSignal +
+      auctionSignal +
+      gradeSignal,
+  )
+}
+
+function buildTeamDealEntries(binOpportunities: Opportunity[], auctionOpportunities: Opportunity[], pricingRows: PricingRow[]) {
+  const rowsByPlayer = pricingRowsByPlayer(pricingRows)
+  const entries: TeamDealEntry[] = [
+    ...binOpportunities.map((opportunity) => ({ opportunity, type: 'BIN' as const })),
+    ...auctionOpportunities.map((opportunity) => ({ opportunity, type: 'Auction' as const })),
+  ].map(({ opportunity, type }) => {
+    const sts = opportunityStsContext(opportunity)
+    const modelRow = bestPricingRowForOpportunity(opportunity, rowsByPlayer)
+    const momentumScore = modelRow?.stsMomentumScore ?? sts.momentumScore
+    return {
+      opportunity,
+      type,
+      sts,
+      modelRow,
+      dealScore: marlinsModeledDealScore(opportunity, modelRow, sts),
+      dynastyValueScore: modelRow ? scoreDynastyValueOpportunity(modelRow) : 0,
+      momentumScore,
+      rankLabel: modelRow ? primaryRankLabel(modelRow) : sts.primaryRankLabel,
+    }
+  })
+
+  return entries.sort(
+    (left, right) =>
+      right.dealScore - left.dealScore ||
+      right.opportunity.edgeDollars - left.opportunity.edgeDollars ||
+      right.opportunity.expectedRoiPct - left.opportunity.expectedRoiPct ||
+      right.opportunity.trustScore - left.opportunity.trustScore ||
+      right.opportunity.score - left.opportunity.score,
+  )
+}
+
+function buildTeamChecklistOpportunities(
+  playerNames: string[],
+  playerNamesByModel: Map<string, string[]>,
+  models: ChecklistModel[],
+  rows: PricingRow[],
+) {
+  const modelLabelsByPlayer = new Map<string, string[]>()
+  const canonicalNameByKey = new Map<string, string>()
+  const rowsByPlayer = pricingRowsByPlayer(rows)
+  const modelByKey = new Map(models.map((model) => [checklistModelKey(model), model]))
+
+  for (const playerName of playerNames) {
+    const key = scanNameKey(playerName)
+    if (key && !canonicalNameByKey.has(key)) canonicalNameByKey.set(key, playerName)
+  }
+
+  for (const [modelKey, names] of playerNamesByModel) {
+    const model = modelByKey.get(modelKey)
+    const label = model ? checklistModelLabel(model) : modelKey
+    for (const playerName of names) {
+      const key = scanNameKey(playerName)
+      if (!key) continue
+      if (!canonicalNameByKey.has(key)) canonicalNameByKey.set(key, playerName)
+      const labels = modelLabelsByPlayer.get(key) ?? []
+      labels.push(label)
+      modelLabelsByPlayer.set(key, labels)
+    }
+  }
+
+  return [...canonicalNameByKey.entries()]
+    .map(([key, playerName]) => {
+      const playerRows = rowsByPlayer.get(key) ?? []
+      const pricedRows = playerRows.filter(rowHasModel)
+      const bestRow =
+        [...pricedRows].sort(
+          (left, right) =>
+            scoreDynastyValueOpportunity(right) - scoreDynastyValueOpportunity(left) ||
+            (right.stsBinTargetScore ?? -1) - (left.stsBinTargetScore ?? -1) ||
+            (right.stsMomentumScore ?? -1) - (left.stsMomentumScore ?? -1) ||
+            comparePrimaryRank(left, right) ||
+            right.baseTwmaPrice - left.baseTwmaPrice,
+        )[0] ?? null
+      const contextRow =
+        bestRow ??
+        [...playerRows].sort(
+          (left, right) =>
+            comparePrimaryRank(left, right) ||
+            (right.stsMomentumScore ?? -1) - (left.stsMomentumScore ?? -1) ||
+            right.releaseYear - left.releaseYear,
+        )[0] ??
+        null
+      const ranking = findStsRanking(playerName)
+      const rankLabel = contextRow ? primaryRankLabel(contextRow) : ranking ? primaryStsRankLabel(ranking) : null
+      const primaryRank = contextRow ? primaryStsRank({ rank: contextRow.stsRank, prospectRank: contextRow.stsProspectRank }) : ranking ? primaryStsRank(ranking) : null
+      const prospectRank = contextRow?.stsProspectRank ?? ranking?.prospectRank ?? null
+      const dynastyValueScore = bestRow ? scoreDynastyValueOpportunity(bestRow) : 0
+      const targetScore = bestRow?.stsBinTargetScore ?? 0
+      const momentumScore = contextRow?.stsMomentumScore ?? (ranking ? scoreStsMomentum(ranking) : null)
+      const modelLabels = [...new Set(modelLabelsByPlayer.get(key) ?? [])]
+      const rankSignal = primaryRank ? clampNumber((700 - Math.min(primaryRank, 700)) / 700, 0, 1) * 24 : 0
+      const prospectSignal = prospectRank ? clampNumber((180 - Math.min(prospectRank, 180)) / 180, 0, 1) * 14 : 0
+      const dynastySignal = clampNumber(dynastyValueScore / 75, 0, 1) * 22
+      const targetSignal = clampNumber(targetScore / 100, 0, 1) * 16
+      const momentumSignal = momentumScore != null ? clampNumber((momentumScore - 40) / 40, 0, 1) * 9 : 0
+      const coverageSignal = clampNumber(modelLabels.length / 4, 0, 1) * 7
+      const pricedSignal = bestRow ? 8 : ranking ? 2 : 0
+      const currentTeamSignal = normalizeTeamCode(ranking?.team) === MARLINS_TEAM_CODE ? 4 : 0
+      const score = Math.round(rankSignal + prospectSignal + dynastySignal + targetSignal + momentumSignal + coverageSignal + pricedSignal + currentTeamSignal)
+      const reasons = [
+        rankLabel,
+        dynastyValueScore > 0 ? `Dynasty value ${dynastyValueScore.toFixed(0)}` : null,
+        targetScore > 0 ? `Target ${targetScore.toFixed(1)}` : null,
+        momentumScore != null ? `Momentum ${momentumScore.toFixed(1)}` : null,
+        bestRow ? `${formatBasePrice(bestRow)} modeled base` : 'Needs priced lane',
+        `${modelLabels.length.toLocaleString()} checklist${modelLabels.length === 1 ? '' : 's'}`,
+      ].filter(Boolean) as string[]
+
+      return {
+        playerName,
+        checklistCount: modelLabels.length,
+        modelLabels,
+        ranking,
+        bestRow,
+        score,
+        rankLabel,
+        reasons,
+      }
+    })
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        (right.bestRow ? scoreDynastyValueOpportunity(right.bestRow) : 0) - (left.bestRow ? scoreDynastyValueOpportunity(left.bestRow) : 0) ||
+        rankOrInfinity(left.bestRow ? primaryStsRank({ rank: left.bestRow.stsRank, prospectRank: left.bestRow.stsProspectRank }) : left.ranking ? primaryStsRank(left.ranking) : null) -
+          rankOrInfinity(right.bestRow ? primaryStsRank({ rank: right.bestRow.stsRank, prospectRank: right.bestRow.stsProspectRank }) : right.ranking ? primaryStsRank(right.ranking) : null) ||
+        left.playerName.localeCompare(right.playerName),
+  )
+}
+
+function isTeamBuyGradeEntry(entry: TeamDealEntry) {
+  return entry.opportunity.edgeDollars > 0 && entry.opportunity.expectedRoiPct > 0 && entry.opportunity.lane !== 'risk'
+}
+
+function teamDealEntryPlayerKey(entry: TeamDealEntry) {
+  return scanNameKey(entry.opportunity.listing.playerName)
+}
+
+function playerFirstTeamDealEntries(entries: TeamDealEntry[]) {
+  const seen = new Set<string>()
+  const leaders: TeamDealEntry[] = []
+  const repeats: TeamDealEntry[] = []
+
+  for (const entry of entries) {
+    const key = teamDealEntryPlayerKey(entry)
+    if (key && !seen.has(key)) {
+      seen.add(key)
+      leaders.push(entry)
+    } else {
+      repeats.push(entry)
+    }
+  }
+
+  return [...leaders, ...repeats]
+}
+
+function rawListingPlayerName(listing: ProspectPulseListing) {
+  return String(listing.player_name ?? listing.prospect?.name ?? listing.prospect?.normalized_name ?? '').trim()
+}
+
+function normalizedWordSet(value: string) {
+  return new Set(scanNameKey(value).split(' ').filter(Boolean))
+}
+
+function rawListingMatchesPlayer(listing: ProspectPulseListing, playerName: string) {
+  const playerKey = scanNameKey(playerName)
+  if (!playerKey) return false
+
+  const listingNameKey = scanNameKey(rawListingPlayerName(listing))
+  if (listingNameKey === playerKey) return true
+
+  const listingWords = normalizedWordSet(`${rawListingPlayerName(listing)} ${listing.title ?? ''}`)
+  const playerWords = playerKey.split(' ').filter(Boolean)
+  return playerWords.length > 0 && playerWords.every((word) => listingWords.has(word))
+}
+
+function scanErrorMatchesPlayer(error: { query?: string }, playerName: string) {
+  const playerWords = scanNameKey(playerName).split(' ').filter(Boolean)
+  if (playerWords.length === 0) return false
+  const queryWords = normalizedWordSet(error.query ?? '')
+  return playerWords.every((word) => queryWords.has(word))
+}
+
+function buildTeamPlayerScanCoverage(
+  checklistOpportunities: TeamChecklistOpportunity[],
+  dealEntries: TeamDealEntry[],
+  binScan: EbayBinScanResult | null,
+  auctionScan: EbayBinScanResult | null,
+) {
+  const entriesByPlayer = new Map<string, TeamDealEntry[]>()
+  for (const entry of dealEntries) {
+    const key = teamDealEntryPlayerKey(entry)
+    if (!key) continue
+    entriesByPlayer.set(key, [...(entriesByPlayer.get(key) ?? []), entry])
+  }
+
+  const hasScanSource = Boolean(binScan || auctionScan)
+  const coverage = checklistOpportunities.map((opportunity) => {
+    const key = scanNameKey(opportunity.playerName)
+    const playerEntries = entriesByPlayer.get(key) ?? []
+    const bestEntry = playerEntries[0] ?? null
+    const buyGradeEntry = playerEntries.find(isTeamBuyGradeEntry) ?? null
+    const binListingCount = binScan?.listings.filter((listing) => rawListingMatchesPlayer(listing, opportunity.playerName)).length ?? 0
+    const auctionListingCount = auctionScan?.listings.filter((listing) => rawListingMatchesPlayer(listing, opportunity.playerName)).length ?? 0
+    const scanIssueCount =
+      (binScan?.errors.filter((error) => scanErrorMatchesPlayer(error, opportunity.playerName)).length ?? 0) +
+      (auctionScan?.errors.filter((error) => scanErrorMatchesPlayer(error, opportunity.playerName)).length ?? 0)
+    const totalListingCount = binListingCount + auctionListingCount
+    const modelState = opportunity.bestRow
+      ? `${formatBasePrice(opportunity.bestRow)} priced lane`
+      : opportunity.ranking
+        ? `${opportunity.rankLabel ?? 'Ranked'} / needs price lane`
+        : 'Needs price lane'
+    const modelTrust = opportunity.bestRow ? modelTrustSignal(opportunity.bestRow) : null
+    const confidenceTier = modelTrust
+      ? modelTrust.tone === 'strong'
+        ? 'A'
+        : modelTrust.tone === 'solid'
+          ? 'B'
+          : modelTrust.tone === 'watch'
+            ? 'C'
+            : 'D'
+      : 'Unpriced'
+
+    let statusLabel = 'Queued'
+    let statusTone: TeamPlayerScanStatusTone = 'empty'
+    let detail = hasScanSource ? 'No live auto listing found' : 'Waiting on full sweep'
+
+    if (buyGradeEntry) {
+      statusLabel = 'Buy-grade live'
+      statusTone = 'buy'
+      detail = `${money(buyGradeEntry.opportunity.edgeDollars)} edge / ${money(buyGradeEntry.opportunity.listing.allInPrice)} ask`
+    } else if (bestEntry) {
+      statusLabel = bestEntry.opportunity.edgeDollars >= 0 ? 'Modeled watch' : 'Above model'
+      statusTone = 'watch'
+      detail = `${money(bestEntry.opportunity.listing.allInPrice)} ask / ${percent(bestEntry.opportunity.expectedRoiPct)} edge`
+    } else if (totalListingCount > 0 && opportunity.bestRow) {
+      statusLabel = 'Live inventory'
+      statusTone = 'listed'
+      detail = `${totalListingCount.toLocaleString()} live listing${totalListingCount === 1 ? '' : 's'} found`
+    } else if (totalListingCount > 0) {
+      statusLabel = 'Needs price lane'
+      statusTone = 'gap'
+      detail = `${totalListingCount.toLocaleString()} live listing${totalListingCount === 1 ? '' : 's'} found`
+    } else if (scanIssueCount > 0) {
+      statusLabel = 'Coverage warning'
+      statusTone = 'error'
+      detail = `${scanIssueCount.toLocaleString()} query issue${scanIssueCount === 1 ? '' : 's'}`
+    } else if (hasScanSource && opportunity.bestRow) {
+      statusLabel = 'No live listing'
+      statusTone = 'empty'
+    } else if (hasScanSource) {
+      statusLabel = 'No live listing'
+      statusTone = 'gap'
+      detail = 'Scanned, price lane still pending'
+    }
+
+    return {
+      playerName: opportunity.playerName,
+      opportunity,
+      bestEntry,
+      buyGradeEntry,
+      modelTrust,
+      confidenceTier,
+      binListingCount,
+      auctionListingCount,
+      modeledListingCount: playerEntries.length,
+      totalListingCount,
+      scanIssueCount,
+      statusLabel,
+      statusTone,
+      detail,
+      modelState,
+    }
+  })
+
+  const toneRank: Record<TeamPlayerScanStatusTone, number> = {
+    buy: 0,
+    watch: 1,
+    listed: 2,
+    gap: 3,
+    error: 4,
+    empty: 5,
+  }
+
+  return coverage.sort(
+    (left, right) =>
+      toneRank[left.statusTone] - toneRank[right.statusTone] ||
+      right.totalListingCount - left.totalListingCount ||
+      right.modeledListingCount - left.modeledListingCount ||
+      right.opportunity.score - left.opportunity.score ||
+      left.playerName.localeCompare(right.playerName),
+  )
 }
 
 function sortBinOpportunities(opportunities: Opportunity[], sortMode: BinResultSort) {
@@ -1380,6 +2200,8 @@ function downloadMatrixCsv(rows: PricingRow[]) {
   ]
   const csvRows = rows.flatMap((row) => {
     const hasDynastySignal = row.stsDynastyScore !== null || row.stsRank !== null || row.stsProspectRank !== null
+    const dynastyValueScore = scoreDynastyValueOpportunity(row)
+    const hasModel = rowHasModel(row)
     return row.ladder.map((quote) => [
       row.rank,
       row.playerName,
@@ -1387,7 +2209,7 @@ function downloadMatrixCsv(rows: PricingRow[]) {
       row.stsRank ?? '',
       row.stsProspectRank ?? '',
       row.stsDynastyScore?.toFixed(1) ?? '',
-      hasDynastySignal ? scoreDynastyValueOpportunity(row).toFixed(1) : '',
+      hasDynastySignal && dynastyValueScore > 0 ? dynastyValueScore.toFixed(1) : '',
       hasDynastySignal ? impliedDynastyBasePrice(row).toFixed(2) : '',
       row.stsMomentumScore?.toFixed(1) ?? '',
       row.stsRiserValueScore?.toFixed(1) ?? '',
@@ -1401,7 +2223,7 @@ function downloadMatrixCsv(rows: PricingRow[]) {
       row.stsChange7d ?? '',
       row.stsChange14d ?? '',
       row.stsChange30d ?? '',
-      row.baseTwmaPrice.toFixed(2),
+      hasModel ? row.baseTwmaPrice.toFixed(2) : '',
       row.pulseBasePrice.toFixed(2),
       formatBaseSource(row.basePriceSource),
       row.baseSales30,
@@ -1432,6 +2254,7 @@ function downloadMatrixCsv(rows: PricingRow[]) {
 function WorkflowCommand({
   mode,
   onModeChange,
+  totalRows,
   pricedRows,
   topBase,
   dealCount,
@@ -1440,6 +2263,7 @@ function WorkflowCommand({
 }: {
   mode: WorkMode
   onModeChange: (mode: WorkMode) => void
+  totalRows: number
   pricedRows: number
   topBase: number
   dealCount: number
@@ -1475,7 +2299,8 @@ function WorkflowCommand({
         <p>{modeDescription}</p>
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
-          <span>{pricedRows.toLocaleString()} players</span>
+          <span>{totalRows.toLocaleString()} players</span>
+          <span>{pricedRows.toLocaleString()} priced lanes</span>
           <span>
             {mode === 'lookup'
               ? 'Value first'
@@ -1505,7 +2330,7 @@ function WorkflowCommand({
             <strong>Daily Board</strong>
             <small>Ranked players and teams</small>
           </span>
-          <span className="workflow-value">{pricedRows.toLocaleString()}</span>
+          <span className="workflow-value">{totalRows.toLocaleString()}</span>
         </button>
 
         <button
@@ -1875,6 +2700,7 @@ function Leaderboard({
       <div className="leaderboard-list">
         {rows.map((row, index) => {
           const displayRank = rankById?.get(row.id) ?? index + 1
+          const hasModel = rowHasModel(row)
           const valueScore = scoreDynastyValueOpportunity(row)
           const impliedBase = impliedDynastyBasePrice(row)
           const valueGapPct = impliedBase > 0 && row.baseTwmaPrice > 0 ? impliedBase / row.baseTwmaPrice - 1 : null
@@ -1895,19 +2721,21 @@ function Leaderboard({
               <span className="rank-chip">{displayRank}</span>
               <span className="player-chip">
                 <button
-                  className="leaderboard-player-button"
+                  className={`leaderboard-player-button ${hasModel ? '' : 'needs-model'}`}
                   type="button"
+                  disabled={!hasModel}
                   onClick={(event) => {
                     event.stopPropagation()
+                    if (!hasModel) return
                     onSelect(row.id)
                     onScanPlayer(row)
                   }}
-                  aria-label={`Scan live listings for ${row.playerName}`}
+                  aria-label={hasModel ? `Scan live listings for ${row.playerName}` : `${row.playerName} needs sold comps before deal scanning`}
                 >
                   <strong>{row.playerName}</strong>
                   <span>
                     <Radio size={12} />
-                    Scan deals
+                    {hasModel ? 'Scan deals' : 'Needs comps'}
                   </span>
                 </button>
                 <small>
@@ -1926,7 +2754,7 @@ function Leaderboard({
                 )}
               </span>
               <span className="money-chip">
-                <strong>{money(row.baseTwmaPrice)}</strong>
+                <strong>{formatBasePrice(row)}</strong>
                 <small>{formatBaseMethod(row.baseMethod)}</small>
               </span>
               <span className="value-signal-cell">
@@ -1946,6 +2774,1061 @@ function Leaderboard({
         })}
       </div>
     </div>
+  )
+}
+
+function TeamOpportunityQueue({
+  entries,
+  binCount,
+  auctionCount,
+  loading,
+  auctionLoading,
+  error,
+  auctionError,
+  hasLiveSource,
+  liveListingCount,
+  modelCount,
+  checklistPlayerCount,
+  lastRejectedListing,
+  onRejectListing,
+  onUndoRejectListing,
+}: {
+  entries: TeamDealEntry[]
+  binCount: number
+  auctionCount: number
+  loading: boolean
+  auctionLoading: boolean
+  error: string | null
+  auctionError: string | null
+  hasLiveSource: boolean
+  liveListingCount: number
+  modelCount: number
+  checklistPlayerCount: number
+  lastRejectedListing: ListingRejection | null
+  onRejectListing: (opportunity: Opportunity) => void
+  onUndoRejectListing: () => void
+}) {
+  const busy = loading || auctionLoading
+  const buyGradeEntries = entries.filter(isTeamBuyGradeEntry)
+  const buyGradePlayerCount = new Set(buyGradeEntries.map(teamDealEntryPlayerKey).filter(Boolean)).size
+  const liveDealPlayerCount = new Set(entries.map(teamDealEntryPlayerKey).filter(Boolean)).size
+  const sourceEntries = buyGradeEntries.length > 0 ? buyGradeEntries : entries
+  const visibleEntries = playerFirstTeamDealEntries(sourceEntries).slice(0, 28)
+  const topScore = entries[0]?.dealScore ?? null
+
+  return (
+    <section className="team-opportunity-panel" aria-label="Best active Marlins deals">
+      <div className="team-section-head">
+        <div>
+          <span>Best Live Marlins Buys</span>
+          <strong>
+            {buyGradeEntries.length
+              ? `${buyGradePlayerCount.toLocaleString()} Marlins with buy-grade live deals`
+              : entries.length
+                ? 'No buy-grade live deals yet'
+                : 'Miami live board waiting'}
+          </strong>
+          <small>
+            {buyGradeEntries.length
+              ? 'Positive modeled edge only, ranked by deal score, dynasty value, prospect rank, momentum, trust, and auction timing.'
+              : 'Showing the closest modeled live listings below while the full checklist scan keeps searching for better Miami edges.'}
+          </small>
+        </div>
+        <div className="team-section-pills">
+          {topScore !== null ? <span>Top score {topScore}</span> : null}
+          <span>{buyGradeEntries.length.toLocaleString()} buy-grade</span>
+          <span>{buyGradePlayerCount.toLocaleString()} buy players</span>
+          <span>{liveDealPlayerCount.toLocaleString()} live players</span>
+          <span>{binCount.toLocaleString()} BINs</span>
+          <span>{auctionCount.toLocaleString()} auctions</span>
+          <span>{liveListingCount.toLocaleString()} live dots</span>
+          <span>{checklistPlayerCount.toLocaleString()} players / {modelCount.toLocaleString()} sets</span>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="bin-radar-alert">
+          <ShieldCheck size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {auctionError ? (
+        <div className="bin-radar-alert">
+          <ShieldCheck size={16} />
+          <span>{auctionError}</span>
+        </div>
+      ) : null}
+
+      {lastRejectedListing ? (
+        <div className="bin-radar-alert bin-radar-alert-success">
+          <Ban size={16} />
+          <span>
+            Rejected: {lastRejectedListing.playerName || 'listing'}
+            {lastRejectedListing.title ? ` / ${lastRejectedListing.title}` : ''}
+          </span>
+          <button className="inline-undo-button" type="button" onClick={onUndoRejectListing}>
+            <Undo2 size={14} />
+            Undo
+          </button>
+        </div>
+      ) : null}
+
+      {busy && visibleEntries.length === 0 ? (
+        <div className="bin-empty-state ready compact-empty">
+          <RefreshCw size={24} className="spin" />
+          <div>
+            <strong>Modeling Miami listings now.</strong>
+            <span>The page will fill in as active listings clear the Marlins deal score.</span>
+          </div>
+        </div>
+      ) : !hasLiveSource ? (
+        <div className="bin-empty-state ready compact-empty">
+          <Radio size={24} />
+          <div>
+            <strong>Run a Miami sweep to build the modeled deal board.</strong>
+            <span>Fresh results are scored across the stored Marlins checklist universe, then cached briefly for this page.</span>
+          </div>
+        </div>
+      ) : visibleEntries.length === 0 ? (
+        <div className="bin-empty-state muted compact-empty">
+          <Activity size={24} />
+          <div>
+            <strong>No active Marlins listing is inside the model window.</strong>
+            <span>Try refreshing the page scan or lowering the minimum price if you want a wider review set.</span>
+          </div>
+        </div>
+      ) : (
+        <div className="bin-opportunity-list team-opportunity-list">
+          <div className="bin-opportunity-head">
+            <span>Rank</span>
+            <span>Listing</span>
+            <span>All In</span>
+            <span>Model</span>
+            <span>Spread</span>
+            <span>Signal</span>
+          </div>
+          {visibleEntries.map(({ opportunity, type, sts, modelRow, dealScore, dynastyValueScore, momentumScore, rankLabel }, index) => {
+            const gradingLabel = listingGradingLabel(opportunity.listing)
+            const signal = type === 'Auction' ? closeTimeLabel(opportunity.listing.hoursToClose) : opportunity.action
+            const releaseLabel = modelRow ? `${modelRow.releaseYear} ${CATEGORY_LABELS[modelRow.category]}` : null
+            return (
+              <article className={`bin-opportunity-row lane-${opportunity.lane}`} key={`team:${type}:${opportunity.listing.id}:${index}`}>
+                <div className="bin-rank-cell">
+                  <strong>#{index + 1}</strong>
+                  <span>{type}</span>
+                </div>
+                <div className="bin-listing-cell">
+                  <strong>{opportunity.listing.playerName}</strong>
+                  <span>{opportunity.listing.title}</span>
+                  <div className="bin-evidence-strip">
+                    <small>{opportunity.matchedVariation ?? opportunity.listing.variationLabel}</small>
+                    <small className="deal-score-chip">Deal Score {dealScore}</small>
+                    {dynastyValueScore > 0 ? <small className="dynasty-chip">Dynasty value {dynastyValueScore.toFixed(0)}</small> : null}
+                    {modelRow?.stsBinTargetScore != null ? <small className="target-chip">Target {modelRow.stsBinTargetScore.toFixed(1)}</small> : null}
+                    {momentumScore != null ? <small className="sts-chip">Momentum {momentumScore.toFixed(1)}</small> : null}
+                    <small className={opportunity.trustScore >= 72 ? 'trust-chip good' : opportunity.trustScore >= 58 ? 'trust-chip' : 'trust-chip warning'}>
+                      Trust {opportunity.trustScore}
+                    </small>
+                    {gradingLabel ? <small className="graded-chip">{gradingLabel}</small> : null}
+                    {releaseLabel ? <small>{releaseLabel}</small> : null}
+                    <small>{formatModelSource(opportunity.valuationSource)}</small>
+                    {opportunity.compSaleCount ? <small className="sold-lane-chip">{opportunity.compSaleCount.toLocaleString()} sold lane</small> : null}
+                    {opportunity.compLast5Avg ? <small className="sold-lane-chip">Last 5 {money(opportunity.compLast5Avg)}</small> : null}
+                    {rankLabel ? <small className="sts-chip">{rankLabel}</small> : sts.primaryRankLabel ? <small className="sts-chip">{sts.primaryRankLabel}</small> : <small className="warning">Unranked</small>}
+                    {modelRow?.stsChange30d !== null && modelRow?.stsChange30d !== undefined ? (
+                      <small className={`sts-chip ${changeClassName(modelRow.stsChange30d)}`}>30D {formatSigned(modelRow.stsChange30d)}</small>
+                    ) : sts.change30d !== null ? (
+                      <small className={`sts-chip ${changeClassName(sts.change30d)}`}>30D {formatSigned(sts.change30d)}</small>
+                    ) : null}
+                    {opportunity.warnings[0] ? <small className="warning">{opportunity.warnings[0]}</small> : null}
+                  </div>
+                </div>
+                <div className="bin-money-cell">
+                  <strong>{money(opportunity.listing.allInPrice)}</strong>
+                  <span>{type === 'Auction' ? auctionBidShipLabel(opportunity.listing) : 'BIN + ship'}</span>
+                </div>
+                <div className="bin-money-cell">
+                  <strong>{money(opportunity.fairValue)}</strong>
+                  <span>{formatModelSource(opportunity.valuationSource)}</span>
+                </div>
+                <div className={`bin-money-cell ${opportunity.edgeDollars >= 0 ? 'edge' : 'near-model'}`}>
+                  <strong>{money(opportunity.edgeDollars)}</strong>
+                  <span>{percent(opportunity.expectedRoiPct)} model edge</span>
+                </div>
+                <div className="bin-signal-cell">
+                  <span>{signal}</span>
+                  {opportunity.listing.listingUrl ? (
+                    <a href={opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink size={14} />
+                      {listingMarketplaceLabel(opportunity.listing)}
+                    </a>
+                  ) : null}
+                  <button
+                    className="listing-reject-button"
+                    type="button"
+                    onClick={() => onRejectListing(opportunity)}
+                    title="Hide this incorrect listing from future Miami runs"
+                  >
+                    <Ban size={14} />
+                    Reject
+                  </button>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function TeamChecklistOpportunityBoard({
+  opportunities,
+  liveDealEntries,
+  onScanPlayer,
+}: {
+  opportunities: TeamChecklistOpportunity[]
+  liveDealEntries: TeamDealEntry[]
+  onScanPlayer: (playerName: string) => void
+}) {
+  const visibleOpportunities = opportunities.slice(0, 24)
+  const pricedCount = opportunities.filter((opportunity) => opportunity.bestRow).length
+  const rankedCount = opportunities.filter(
+    (opportunity) => opportunity.ranking || opportunity.bestRow?.stsRank != null || opportunity.bestRow?.stsProspectRank != null,
+  ).length
+  const livePlayerKeys = new Set(liveDealEntries.map((entry) => scanNameKey(entry.opportunity.listing.playerName)))
+
+  return (
+    <section className="team-opportunity-board" aria-label="Marlins opportunity board">
+      <div className="team-section-head">
+        <div>
+          <span>Marlins Opportunity Board</span>
+          <strong>Best Miami targets across the full checklist universe</strong>
+          <small>Ranked before the live marketplace layer, so thin pricing coverage cannot hide better Marlins targets.</small>
+        </div>
+        <div className="team-section-pills">
+          <span>{opportunities.length.toLocaleString()} players</span>
+          <span>{rankedCount.toLocaleString()} ranked</span>
+          <span>{pricedCount.toLocaleString()} priced</span>
+          <span>{Math.max(0, opportunities.length - pricedCount).toLocaleString()} need price lanes</span>
+        </div>
+      </div>
+
+      {visibleOpportunities.length === 0 ? (
+        <div className="bin-empty-state ready compact-empty">
+          <Database size={24} />
+          <div>
+            <strong>Marlins checklist universe is still loading.</strong>
+            <span>Once the checklist feed resolves, this board will rank every Miami player we know about.</span>
+          </div>
+        </div>
+      ) : (
+        <div className="team-target-grid">
+          {visibleOpportunities.map((opportunity, index) => {
+            const liveActive = livePlayerKeys.has(scanNameKey(opportunity.playerName))
+            return (
+              <article className={`team-target-card ${opportunity.bestRow ? 'priced' : 'unpriced'}`} key={`marlins-target:${scanNameKey(opportunity.playerName)}`}>
+                <div className="team-target-rank">
+                  <strong>#{index + 1}</strong>
+                  <span>{opportunity.score}</span>
+                </div>
+                <div className="team-target-main">
+                  <div className="team-target-title">
+                    <div>
+                      <strong>{opportunity.playerName}</strong>
+                      <small>
+                        {opportunity.rankLabel ?? 'Rank pending'} / {opportunity.checklistCount.toLocaleString()} checklist
+                        {opportunity.checklistCount === 1 ? '' : 's'}
+                      </small>
+                    </div>
+                    <button className="ghost-button icon-lite-button" type="button" onClick={() => onScanPlayer(opportunity.playerName)}>
+                      <Radio size={14} />
+                      Scan
+                    </button>
+                  </div>
+                  <div className="bin-evidence-strip team-target-evidence">
+                    <small className="deal-score-chip">Opportunity {opportunity.score}</small>
+                    {liveActive ? <small className="sold-lane-chip good">Live lead active</small> : null}
+                    {opportunity.reasons.map((reason) => (
+                      <small className={reason === 'Needs priced lane' ? 'warning' : reason.startsWith('Dynasty') ? 'dynasty-chip' : 'sts-chip'} key={`${opportunity.playerName}:${reason}`}>
+                        {reason}
+                      </small>
+                    ))}
+                  </div>
+                  <div className="team-target-sets">
+                    {opportunity.modelLabels.slice(0, 4).map((label) => (
+                      <span key={`${opportunity.playerName}:${label}`}>{label}</span>
+                    ))}
+                    {opportunity.modelLabels.length > 4 ? <span>+{(opportunity.modelLabels.length - 4).toLocaleString()} more</span> : null}
+                  </div>
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function TeamScanCoveragePanel({
+  coverage,
+  busy,
+  hasLiveSource,
+  onScanPlayer,
+}: {
+  coverage: TeamPlayerScanCoverage[]
+  busy: boolean
+  hasLiveSource: boolean
+  onScanPlayer: (playerName: string) => void
+}) {
+  const buyGradePlayerCount = coverage.filter((item) => item.buyGradeEntry).length
+  const liveInventoryPlayerCount = coverage.filter((item) => item.totalListingCount > 0 || item.modeledListingCount > 0).length
+  const pricedPlayerCount = coverage.filter((item) => item.opportunity.bestRow).length
+  const priceLaneGapCount = coverage.filter((item) => !item.opportunity.bestRow).length
+  const warningCount = coverage.filter((item) => item.scanIssueCount > 0).length
+  const listingCount = coverage.reduce((total, item) => total + item.totalListingCount, 0)
+  const modeledCoverage = coverage.filter((item) => item.opportunity.bestRow || item.bestEntry || item.buyGradeEntry)
+  const modeledKeys = new Set(modeledCoverage.map((item) => scanNameKey(item.playerName)))
+  const pricingBacklog = coverage.filter((item) => !modeledKeys.has(scanNameKey(item.playerName)))
+  const backlogLiveHits = pricingBacklog.reduce((total, item) => total + item.totalListingCount, 0)
+
+  const renderCoverageRow = (item: TeamPlayerScanCoverage) => {
+    const liveHitLabel =
+      item.totalListingCount > 0
+        ? `${item.binListingCount.toLocaleString()} BIN / ${item.auctionListingCount.toLocaleString()} auc`
+        : item.modeledListingCount > 0
+          ? `${item.modeledListingCount.toLocaleString()} modeled`
+          : '0 live'
+    const bestUrl = item.bestEntry?.opportunity.listing.listingUrl
+    return (
+      <article className={`team-scan-player-row ${item.statusTone}`} key={`scan-coverage:${scanNameKey(item.playerName)}`}>
+        <div className="team-scan-player-main">
+          <strong>{item.playerName}</strong>
+          <small>
+            {item.opportunity.rankLabel ?? 'Rank pending'} / {item.opportunity.checklistCount.toLocaleString()} checklist
+            {item.opportunity.checklistCount === 1 ? '' : 's'}
+          </small>
+        </div>
+        <div className="team-scan-player-status">
+          <span>{item.statusLabel}</span>
+          <small>{item.detail}</small>
+        </div>
+        <div className="team-scan-player-counts">
+          <strong>{liveHitLabel}</strong>
+          <small>{item.buyGradeEntry ? `Deal score ${item.buyGradeEntry.dealScore}` : `Opportunity ${item.opportunity.score}`}</small>
+        </div>
+        <div className="team-scan-player-model">
+          <strong>{item.modelState}</strong>
+          {item.modelTrust ? (
+            <small className={`team-confidence-chip ${item.modelTrust.tone}`}>
+              Tier {item.confidenceTier} / {item.modelTrust.label}
+            </small>
+          ) : (
+            <small>{item.opportunity.modelLabels.slice(0, 2).join(' / ') || 'Checklist source pending'}</small>
+          )}
+        </div>
+        <div className="team-scan-player-actions">
+          {bestUrl ? (
+            <a className="ghost-button icon-lite-button" href={bestUrl} target="_blank" rel="noreferrer" title={`Open best ${item.playerName} listing`}>
+              <ExternalLink size={14} />
+              Open
+            </a>
+          ) : null}
+          <button className="ghost-button icon-lite-button" type="button" onClick={() => onScanPlayer(item.playerName)}>
+            <Radio size={14} />
+            Scan
+          </button>
+        </div>
+      </article>
+    )
+  }
+
+  const coverageHead = (
+    <div className="team-scan-coverage-head">
+      <span>Player</span>
+      <span>Status</span>
+      <span>Live Hits</span>
+      <span>Model</span>
+      <span>Action</span>
+    </div>
+  )
+
+  return (
+    <section className="team-scan-coverage" aria-label="Full Marlins scan coverage">
+      <div className="team-section-head">
+        <div>
+          <span>Full Player Scan Coverage</span>
+          <strong>
+            {hasLiveSource
+              ? `${coverage.length.toLocaleString()} Marlins checked across live marketplaces`
+              : `${coverage.length.toLocaleString()} Marlins queued for a full live sweep`}
+          </strong>
+          <small>Every loaded checklist player has a row; buy-grade requires positive modeled edge and a trusted card match.</small>
+        </div>
+        <div className="team-section-pills">
+          <span>{buyGradePlayerCount.toLocaleString()} buy players</span>
+          <span>{pricedPlayerCount.toLocaleString()} priced players</span>
+          <span>{liveInventoryPlayerCount.toLocaleString()} with live hits</span>
+          <span>{listingCount.toLocaleString()} scanned listings</span>
+          <span>{priceLaneGapCount.toLocaleString()} need price lanes</span>
+          {warningCount > 0 ? <span>{warningCount.toLocaleString()} warnings</span> : null}
+        </div>
+      </div>
+
+      {busy ? (
+        <div className="team-coverage-banner">
+          <RefreshCw size={16} className="spin" />
+          <span>Full Miami sweep running.</span>
+        </div>
+      ) : !hasLiveSource ? (
+        <div className="team-coverage-banner muted">
+          <Radio size={16} />
+          <span>Run the full sweep to populate live hit counts for every Marlins checklist player.</span>
+        </div>
+      ) : null}
+
+      <div className="team-scan-coverage-list">
+        {coverageHead}
+        {(modeledCoverage.length > 0 ? modeledCoverage : coverage).map(renderCoverageRow)}
+      </div>
+
+      {pricingBacklog.length > 0 && modeledCoverage.length > 0 ? (
+        <details className="team-pricing-backlog">
+          <summary>
+            <span>Pricing Backlog</span>
+            <strong>{pricingBacklog.length.toLocaleString()} players still need price lanes</strong>
+            <small>{backlogLiveHits.toLocaleString()} scanned listings waiting on sold-comp models</small>
+          </summary>
+          <div className="team-scan-coverage-list team-pricing-backlog-list">
+            {coverageHead}
+            {pricingBacklog.map(renderCoverageRow)}
+          </div>
+        </details>
+      ) : null}
+    </section>
+  )
+}
+
+function coverageStateLabel(state: string) {
+  if (state === 'no-clean-base') return 'No clean base'
+  if (state === 'missing') return 'Missing lane'
+  if (state === 'queued') return 'Queued'
+  if (state === 'running') return 'Running'
+  if (state === 'timeout') return 'Timeout'
+  if (state === 'error') return 'Error'
+  if (state === 'stale') return 'Stale'
+  if (state === 'thin') return 'Thin'
+  if (state === 'priced') return 'Priced'
+  return state.replace(/-/g, ' ')
+}
+
+function coverageStateTone(state: string) {
+  if (state === 'priced') return 'priced'
+  if (state === 'stale' || state === 'thin' || state === 'no-clean-base') return 'watch'
+  if (state === 'timeout' || state === 'error') return 'error'
+  if (state === 'queued' || state === 'running') return 'queued'
+  return 'missing'
+}
+
+function TeamCoverageEnginePanel({
+  coverage,
+  loading,
+  error,
+  checklistPlayerCount,
+  onRefresh,
+  onScanPlayer,
+}: {
+  coverage: ChecklistCoveragePayload | null
+  loading: boolean
+  error: string | null
+  checklistPlayerCount: number
+  onRefresh: () => void
+  onScanPlayer: (playerName: string) => void
+}) {
+  const summary = coverage?.summary
+  const totalPlayers = summary?.totalPlayers ?? checklistPlayerCount
+  const pricedPlayers = summary?.pricedPlayers ?? 0
+  const missingPlayers = summary?.missingPriceLanePlayers ?? Math.max(0, totalPlayers - pricedPlayers)
+  const coveragePct = summary?.coveragePct ?? (totalPlayers ? Number(((pricedPlayers / totalPlayers) * 100).toFixed(1)) : 0)
+  const healthyPct = summary?.healthyPct ?? coveragePct
+  const nextRefresh = coverage?.nextRefresh ?? []
+  const tierRows = summary?.byTier ?? []
+  const stateRows = summary?.byState ?? []
+  const releaseRows = coverage?.releases.slice(0, 8) ?? []
+  const latestCompLabel = summary?.latestCompAt ? ageLabel(summary.latestCompAt) : 'never'
+
+  return (
+    <section className="team-coverage-engine" aria-label="Pricing coverage engine">
+      <div className="team-section-head">
+        <div>
+          <span>Pricing Coverage Engine</span>
+          <strong>{coverage ? `${pricedPlayers.toLocaleString()} / ${totalPlayers.toLocaleString()} modeled lanes` : 'Coverage state loading'}</strong>
+          <small>{coverage ? `${missingPlayers.toLocaleString()} players in comp backlog / latest comp ${latestCompLabel}` : 'Reading checklist queue and modeled lane health.'}</small>
+        </div>
+        <div className="team-section-pills">
+          <span>{coveragePct.toFixed(1)}% priced</span>
+          <span>{healthyPct.toFixed(1)}% healthy</span>
+          <span>{(summary?.retryPlayers ?? 0).toLocaleString()} retries</span>
+          <span>{(summary?.stalePlayers ?? 0).toLocaleString()} stale</span>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="team-coverage-banner error">
+          <Ban size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      <div className="team-coverage-engine-grid">
+        <div className="coverage-engine-card main">
+          <span>Modeled Coverage</span>
+          <strong>{coveragePct.toFixed(1)}%</strong>
+          <div className="coverage-engine-meter" aria-label="Modeled coverage meter">
+            <i style={{ width: `${clampNumber(coveragePct, 0, 100)}%` }} />
+          </div>
+          <small>{pricedPlayers.toLocaleString()} priced / {missingPlayers.toLocaleString()} backlog / {totalPlayers.toLocaleString()} total</small>
+        </div>
+        <div className="coverage-engine-card">
+          <span>Lane Quality</span>
+          <div className="coverage-state-list">
+            {tierRows.length > 0 ? (
+              tierRows.map((row) => (
+                <small className={`coverage-state-chip tier-${row.tier.toLowerCase()}`} key={`tier:${row.tier}`}>
+                  Tier {row.tier}: {row.players.toLocaleString()}
+                </small>
+              ))
+            ) : (
+              <small className="coverage-state-chip missing">No tiers yet</small>
+            )}
+          </div>
+        </div>
+        <div className="coverage-engine-card">
+          <span>Queue State</span>
+          <div className="coverage-state-list">
+            {stateRows.slice(0, 5).map((row) => (
+              <small className={`coverage-state-chip ${coverageStateTone(row.state)}`} key={`state:${row.state}`}>
+                {coverageStateLabel(row.state)}: {row.players.toLocaleString()}
+              </small>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="coverage-cadence" aria-label="Refresh cadence">
+        <div>
+          <span>Hot</span>
+          <small>{coverage?.cadence.hot ?? 'Hourly for live-hit gaps'}</small>
+        </div>
+        <div>
+          <span>Priority</span>
+          <small>{coverage?.cadence.priority ?? 'Nightly for ranked and team-page players'}</small>
+        </div>
+        <div>
+          <span>Long Tail</span>
+          <small>{coverage?.cadence.longTail ?? 'Weekly for remaining checklist players'}</small>
+        </div>
+      </div>
+
+      <div className="coverage-next-list" aria-label="Next comp refresh candidates">
+        <div className="coverage-next-head">
+          <div>
+            <span>Next Comp Refresh Queue</span>
+            <strong>{nextRefresh.length.toLocaleString()} priority candidates</strong>
+          </div>
+          <button className="ghost-button icon-lite-button" type="button" onClick={onRefresh} disabled={loading}>
+            <RefreshCw size={14} className={loading ? 'spin' : undefined} />
+            Refresh
+          </button>
+        </div>
+        {nextRefresh.slice(0, 10).map((row) => (
+          <article className="coverage-next-row" key={`coverage-next:${row.releaseYear}:${scanNameKey(row.playerName)}`}>
+            <div>
+              <strong>{row.playerName}</strong>
+              <small>{row.releaseYear} / {row.releaseName}</small>
+            </div>
+            <span className={`coverage-state-chip ${coverageStateTone(row.laneState)}`}>{coverageStateLabel(row.laneState)}</span>
+            <div>
+              <strong>{row.action}</strong>
+              <small>{row.reason}</small>
+            </div>
+            <button className="ghost-button icon-lite-button" type="button" onClick={() => onScanPlayer(row.playerName)}>
+              <Radio size={14} />
+              Scan
+            </button>
+          </article>
+        ))}
+        {!loading && nextRefresh.length === 0 ? (
+          <div className="empty-state compact">
+            <strong>Coverage backlog is clear.</strong>
+            <span>Modeled lanes are available for the selected checklist universe.</span>
+          </div>
+        ) : null}
+      </div>
+
+      {releaseRows.length > 0 ? (
+        <div className="coverage-release-bars" aria-label="Coverage by release">
+          {releaseRows.map((release) => {
+            const pct = release.players ? (release.pricedPlayers / release.players) * 100 : 0
+            return (
+              <div key={`coverage-release:${release.releaseKey}`}>
+                <span>{release.releaseName}</span>
+                <strong>{release.pricedPlayers.toLocaleString()} / {release.players.toLocaleString()}</strong>
+                <i><b style={{ width: `${clampNumber(pct, 0, 100)}%` }} /></i>
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function teamOpportunityProspectRank(opportunity: TeamChecklistOpportunity) {
+  return opportunity.bestRow?.stsProspectRank ?? opportunity.ranking?.prospectRank ?? null
+}
+
+function teamOpportunityPrimaryRank(opportunity: TeamChecklistOpportunity) {
+  return opportunity.bestRow
+    ? primaryStsRank({ rank: opportunity.bestRow.stsRank, prospectRank: opportunity.bestRow.stsProspectRank })
+    : opportunity.ranking
+      ? primaryStsRank(opportunity.ranking)
+      : null
+}
+
+function TeamDealCommandCenter({
+  checklistOpportunities,
+  dealEntries,
+  canScan,
+  busy,
+  onScanTeam,
+  onScanPlayer,
+}: {
+  checklistOpportunities: TeamChecklistOpportunity[]
+  dealEntries: TeamDealEntry[]
+  canScan: boolean
+  busy: boolean
+  onScanTeam: () => void
+  onScanPlayer: (playerName: string) => void
+}) {
+  const buyGradeEntries = dealEntries.filter(
+    (entry) => entry.opportunity.edgeDollars > 0 && entry.opportunity.expectedRoiPct > 0 && entry.opportunity.lane !== 'risk',
+  )
+  const topBuy = buyGradeEntries[0] ?? null
+  const topTarget = checklistOpportunities[0] ?? null
+  const topProspect =
+    checklistOpportunities.find((opportunity) => {
+      const prospectRank = teamOpportunityProspectRank(opportunity)
+      return prospectRank != null && prospectRank <= 100
+    }) ?? null
+  const topValue =
+    checklistOpportunities.find((opportunity) => opportunity.bestRow && scoreDynastyValueOpportunity(opportunity.bestRow) > 0) ?? null
+  const coverageGap =
+    checklistOpportunities.find((opportunity) => !opportunity.bestRow && (teamOpportunityPrimaryRank(opportunity) ?? Number.POSITIVE_INFINITY) <= 400) ??
+    checklistOpportunities.find((opportunity) => !opportunity.bestRow) ??
+    null
+  const huntQueue = checklistOpportunities
+    .filter((opportunity) => scanNameKey(opportunity.playerName) !== scanNameKey(topBuy?.opportunity.listing.playerName ?? ''))
+    .slice(0, 8)
+
+  const primaryTitle = topBuy?.opportunity.listing.playerName ?? topTarget?.playerName ?? 'Marlins checklist loading'
+  const primarySubtitle = topBuy
+    ? `${money(topBuy.opportunity.edgeDollars)} modeled edge / ${percent(topBuy.opportunity.expectedRoiPct)} ROI / ${listingMarketplaceLabel(topBuy.opportunity.listing)}`
+    : topTarget
+      ? `${topTarget.rankLabel ?? 'Rank pending'} / opportunity ${topTarget.score} / ${topTarget.checklistCount.toLocaleString()} checklist${topTarget.checklistCount === 1 ? '' : 's'}`
+      : 'Waiting on Miami targets'
+  const primaryChips = topBuy
+    ? [
+        `Deal Score ${topBuy.dealScore}`,
+        `Ask ${money(topBuy.opportunity.listing.allInPrice)}`,
+        `Model ${money(topBuy.opportunity.fairValue)}`,
+        topBuy.rankLabel,
+        topBuy.dynastyValueScore > 0 ? `Dynasty ${topBuy.dynastyValueScore.toFixed(0)}` : null,
+      ].filter(Boolean)
+    : topTarget?.reasons ?? []
+
+  return (
+    <section className="team-command-center" aria-label="Marlins deal command center">
+      <div className="team-command-primary">
+        <div className="team-command-copy">
+          <span>{topBuy ? 'Best Live Buy' : 'Best Marlins Play'}</span>
+          <strong>{primaryTitle}</strong>
+          <small>{primarySubtitle}</small>
+        </div>
+        <div className="team-command-chip-row">
+          {primaryChips.slice(0, 6).map((chip) => (
+            <span key={`primary-chip:${chip}`}>{chip}</span>
+          ))}
+        </div>
+        <div className="team-command-actions">
+          {topBuy?.opportunity.listing.listingUrl ? (
+            <a className="primary-button" href={topBuy.opportunity.listing.listingUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={15} />
+              Open Best Listing
+            </a>
+          ) : topTarget ? (
+            <button className="primary-button" type="button" onClick={() => onScanPlayer(topTarget.playerName)}>
+              <Radio size={15} />
+              Scan {topTarget.playerName}
+            </button>
+          ) : null}
+          <button className="ghost-button" type="button" onClick={onScanTeam} disabled={!canScan}>
+            <RefreshCw size={15} className={busy ? 'spin' : undefined} />
+            Full Sweep
+          </button>
+        </div>
+      </div>
+
+      <div className="team-command-lanes">
+        <div className="team-command-lane buy">
+          <span>Buy-Grade Live</span>
+          <strong>{buyGradeEntries.length.toLocaleString()}</strong>
+          <small>{topBuy ? `${topBuy.opportunity.listing.playerName} leads` : 'No live buy clears the edge bar'}</small>
+        </div>
+        <div className="team-command-lane target">
+          <span>Best Target</span>
+          <strong>{topTarget?.playerName ?? '--'}</strong>
+          <small>{topTarget ? `Opportunity ${topTarget.score}` : 'Checklist loading'}</small>
+        </div>
+        <div className="team-command-lane prospect">
+          <span>Prospect Bet</span>
+          <strong>{topProspect?.playerName ?? '--'}</strong>
+          <small>{topProspect ? topProspect.rankLabel ?? `Prospect #${teamOpportunityProspectRank(topProspect)}` : 'No ranked prospect yet'}</small>
+        </div>
+        <div className="team-command-lane gap">
+          <span>Price Gap</span>
+          <strong>{coverageGap?.playerName ?? topValue?.playerName ?? '--'}</strong>
+          <small>{coverageGap ? 'Needs priced lane' : topValue?.bestRow ? `Dynasty value ${scoreDynastyValueOpportunity(topValue.bestRow).toFixed(0)}` : 'Coverage clean'}</small>
+        </div>
+      </div>
+
+      {huntQueue.length > 0 ? (
+        <div className="team-hunt-strip" aria-label="Marlins hunt queue">
+          <span>Hunt Queue</span>
+          <div>
+            {huntQueue.map((opportunity) => (
+              <button type="button" onClick={() => onScanPlayer(opportunity.playerName)} key={`hunt:${scanNameKey(opportunity.playerName)}`}>
+                <strong>{opportunity.playerName}</strong>
+                <small>{opportunity.rankLabel ?? `Opportunity ${opportunity.score}`}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function MarlinsTeamPage({
+  rows,
+  selectedId,
+  rankById,
+  binOpportunities,
+  auctionOpportunities,
+  binScan,
+  auctionScan,
+  cachedObservedAt,
+  checklistLoading,
+  binLoading,
+  auctionLoading,
+  binError,
+  auctionError,
+  ebayStatus,
+  modelCount,
+  checklistPlayerCount,
+  checklistPlayers,
+  checklistModelSummaries,
+  checklistOpportunities,
+  coverageEngine,
+  coverageLoading,
+  coverageError,
+  lastRejectedListing,
+  resultsRef,
+  onScanTeam,
+  onRefreshCoverage,
+  onOpenDesk,
+  onSelectRow,
+  onScanPlayer,
+  onScanChecklistPlayer,
+  onRejectListing,
+  onUndoRejectListing,
+}: {
+  rows: PricingRow[]
+  selectedId?: string
+  rankById: Map<string, number>
+  binOpportunities: Opportunity[]
+  auctionOpportunities: Opportunity[]
+  binScan: EbayBinScanResult | null
+  auctionScan: EbayBinScanResult | null
+  cachedObservedAt?: string | null
+  checklistLoading: boolean
+  binLoading: boolean
+  auctionLoading: boolean
+  binError: string | null
+  auctionError: string | null
+  ebayStatus: EbayStatus | null
+  modelCount: number
+  checklistPlayerCount: number
+  checklistPlayers: string[]
+  checklistModelSummaries: TeamChecklistModelSummary[]
+  checklistOpportunities: TeamChecklistOpportunity[]
+  coverageEngine: ChecklistCoveragePayload | null
+  coverageLoading: boolean
+  coverageError: string | null
+  lastRejectedListing: ListingRejection | null
+  resultsRef: RefObject<HTMLDivElement | null>
+  onScanTeam: () => void
+  onRefreshCoverage: () => void
+  onOpenDesk: () => void
+  onSelectRow: (rowId: string) => void
+  onScanPlayer: (row: PricingRow) => void
+  onScanChecklistPlayer: (playerName: string) => void
+  onRejectListing: (opportunity: Opportunity) => void
+  onUndoRejectListing: () => void
+}) {
+  const pricedPlayerCount = new Set(rows.map((row) => scanNameKey(row.playerName))).size
+  const rankedCount = rows.filter((row) => row.stsRank !== null || row.stsProspectRank !== null).length
+  const checklistRankedCount = checklistPlayers.filter((playerName) => findStsRanking(playerName)).length
+  const sortedChecklistPlayers = useMemo(() => [...checklistPlayers].sort((left, right) => left.localeCompare(right)), [checklistPlayers])
+  const baseSales30 = rows.reduce((total, row) => total + row.baseSales30, 0)
+  const rawCompCount = rows.reduce((total, row) => total + row.rawBaseSales, 0)
+  const bestTarget = rows[0] ?? null
+  const liveEntries = [...binOpportunities, ...auctionOpportunities]
+  const dealEntries = useMemo(() => buildTeamDealEntries(binOpportunities, auctionOpportunities, rows), [auctionOpportunities, binOpportunities, rows])
+  const scanCoverage = useMemo(
+    () => buildTeamPlayerScanCoverage(checklistOpportunities, dealEntries, binScan, auctionScan),
+    [auctionScan, binScan, checklistOpportunities, dealEntries],
+  )
+  const topDeal = dealEntries[0] ?? null
+  const topLive = topDeal?.opportunity
+  const latestScanTime = [binScan?.fetchedAt, auctionScan?.fetchedAt, cachedObservedAt]
+    .map((value) => (value ? Date.parse(value) : Number.NaN))
+    .filter(Number.isFinite)
+    .sort((left, right) => right - left)[0]
+  const latestLabel = latestScanTime ? new Date(latestScanTime).toLocaleTimeString() : 'No live scan'
+  const marketplaceCounts = marketplaceCountsFromOpportunities(liveEntries)
+  const configured = Boolean(ebayStatus?.configured)
+  const busy = binLoading || auctionLoading
+  const canScan = configured && checklistPlayerCount > 0 && !busy && !checklistLoading
+  const scanButtonLabel = busy
+    ? 'Scanning Full Miami Checklist'
+    : checklistLoading
+      ? 'Checklist loading'
+      : configured
+        ? 'Scan All Marlins Checklists'
+        : 'eBay offline'
+  const hasLiveSource = Boolean(binScan || auctionScan || cachedObservedAt)
+  const liveListingCount = binOpportunities.length + auctionOpportunities.length
+  const scanQueryCount = (binScan?.stats.queriesRun ?? 0) + (auctionScan?.stats.queriesRun ?? 0)
+
+  return (
+    <section className="team-page marlins-page" aria-label="Miami Marlins team deals">
+      <div className="team-page-nav">
+        <button className="ghost-button" type="button" onClick={onOpenDesk}>
+          <Search size={15} />
+          Daily Board
+        </button>
+      </div>
+
+      <section className="team-hero" aria-label="Miami Marlins live deal desk">
+        <div className="team-hero-copy">
+          <span className="workflow-kicker">
+            <Store size={14} />
+            Team Deal Desk
+          </span>
+          <h2>Miami Marlins Deals</h2>
+          <p>
+            The best active Marlins buys we can model right now. The scan uses every loaded Miami checklist player across Bowman, Bowman Chrome,
+            and Draft, then ranks live BINs and auctions with dynasty value, prospect rank, sold comp lanes, and modeled edge.
+          </p>
+          <div className="team-hero-actions">
+            <button className="primary-button" type="button" onClick={onScanTeam} disabled={!canScan}>
+              <RefreshCw size={16} className={busy ? 'spin' : undefined} />
+              {scanButtonLabel}
+            </button>
+            {topLive?.listing.listingUrl ? (
+              <a className="ghost-button" href={topLive.listing.listingUrl} target="_blank" rel="noreferrer">
+                <ExternalLink size={15} />
+                Top Listing
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="team-hero-scoreboard" aria-label="Marlins model coverage">
+          <div>
+            <span>Checklist Players</span>
+            <strong>{checklistPlayerCount.toLocaleString()}</strong>
+            <small>{rows.length.toLocaleString()} priced rows</small>
+          </div>
+          <div>
+            <span>Ranked Signals</span>
+            <strong>{checklistRankedCount.toLocaleString()}</strong>
+            <small>{rankedCount.toLocaleString()} priced rows with rank</small>
+          </div>
+          <div>
+            <span>Ranked Deals</span>
+            <strong>{dealEntries.length.toLocaleString()}</strong>
+            <small>{topDeal ? `Top deal score ${topDeal.dealScore}` : latestLabel}</small>
+          </div>
+          <div>
+            <span>Comp Depth</span>
+            <strong>{rawCompCount.toLocaleString()}</strong>
+            <small>{baseSales30.toLocaleString()} base comps in 30D lanes</small>
+          </div>
+        </div>
+      </section>
+
+      <div className="team-signal-grid" aria-label="Miami deal signals">
+        <div>
+          <span>Best Modeled Deal</span>
+          <strong>{topLive?.listing.playerName ?? 'Model loading'}</strong>
+          <small>
+            {topDeal
+              ? `Score ${topDeal.dealScore} / ${money(topDeal.opportunity.edgeDollars)} edge / ${money(topDeal.opportunity.listing.allInPrice)} ask`
+              : 'Waiting on active Miami listings'}
+          </small>
+        </div>
+        <div>
+          <span>Best Priced Target</span>
+          <strong>{bestTarget?.playerName ?? 'Target loading'}</strong>
+          <small>{bestTarget ? `${formatBasePrice(bestTarget)} base auto / ${formatStsLine(bestTarget) || 'rank pending'}` : 'Waiting on checklist rows'}</small>
+        </div>
+        <div>
+          <span>Marketplaces</span>
+          <strong>{marketplaceCounts.length ? marketplaceCounts.map((marketplace) => marketplace.label).join(' / ') : 'Ready to scan'}</strong>
+          <small>{marketplaceCounts.length ? marketplaceCounts.map((marketplace) => `${marketplace.count} ${marketplace.label}`).join(' / ') : 'eBay, Fanatics Collect, and auctions when available'}</small>
+        </div>
+        <div>
+          <span>Loaded Checklists</span>
+          <strong>{modelCount.toLocaleString()}</strong>
+          <small>{configured ? 'Live marketplace access configured' : ebayStatus?.message ?? 'Live marketplace access pending'}</small>
+        </div>
+      </div>
+
+      <section className="team-scan-console" aria-label="Marlins full checklist scan">
+        <div className="team-scan-copy">
+          <span>Full Checklist Sweep</span>
+          <strong>{checklistPlayerCount.toLocaleString()} Marlins players queued</strong>
+          <small>
+            This button scans every loaded Miami checklist player we know about, not just the {pricedPlayerCount.toLocaleString()} priced
+            player{pricedPlayerCount === 1 ? '' : 's'} on the target board.
+          </small>
+        </div>
+        <div className="team-scan-actions">
+          <button className="primary-button" type="button" onClick={onScanTeam} disabled={!canScan}>
+            <RefreshCw size={16} className={busy ? 'spin' : undefined} />
+            {scanButtonLabel}
+          </button>
+          <small>
+            {scanQueryCount > 0
+              ? `${scanQueryCount.toLocaleString()} latest marketplace queries`
+              : checklistModelSummaries.length
+                ? `${checklistModelSummaries.length.toLocaleString()} loaded checklist lanes`
+                : 'Waiting on checklist coverage'}
+          </small>
+        </div>
+        <div className="team-scan-models" aria-label="Loaded Marlins checklist lanes">
+          {checklistModelSummaries.map((summary) => (
+            <span key={summary.key}>
+              {summary.label} / {summary.playerCount.toLocaleString()}
+            </span>
+          ))}
+        </div>
+        <div className="team-checklist-chip-list" aria-label="Marlins checklist players">
+          {sortedChecklistPlayers.map((playerName) => (
+            <span key={`marlins-checklist:${scanNameKey(playerName)}`}>{playerName}</span>
+          ))}
+        </div>
+      </section>
+
+      <TeamCoverageEnginePanel
+        coverage={coverageEngine}
+        loading={coverageLoading}
+        error={coverageError}
+        checklistPlayerCount={checklistPlayerCount}
+        onRefresh={onRefreshCoverage}
+        onScanPlayer={onScanChecklistPlayer}
+      />
+
+      <TeamDealCommandCenter
+        checklistOpportunities={checklistOpportunities}
+        dealEntries={dealEntries}
+        canScan={canScan}
+        busy={busy}
+        onScanTeam={onScanTeam}
+        onScanPlayer={onScanChecklistPlayer}
+      />
+
+      <TeamChecklistOpportunityBoard
+        opportunities={checklistOpportunities}
+        liveDealEntries={dealEntries}
+        onScanPlayer={onScanChecklistPlayer}
+      />
+
+      <TeamScanCoveragePanel
+        coverage={scanCoverage}
+        busy={busy}
+        hasLiveSource={hasLiveSource}
+        onScanPlayer={onScanChecklistPlayer}
+      />
+
+      <div ref={resultsRef} className="bin-results-anchor team-results-anchor" tabIndex={-1} aria-label="Miami live deal results" />
+
+      <div className="team-live-layout">
+        <TeamOpportunityQueue
+          entries={dealEntries}
+          binCount={binOpportunities.length}
+          auctionCount={auctionOpportunities.length}
+          loading={binLoading}
+          auctionLoading={auctionLoading}
+          error={binError}
+          auctionError={auctionError}
+          hasLiveSource={hasLiveSource}
+          liveListingCount={liveListingCount}
+          modelCount={modelCount}
+          checklistPlayerCount={checklistPlayerCount}
+          lastRejectedListing={lastRejectedListing}
+          onRejectListing={onRejectListing}
+          onUndoRejectListing={onUndoRejectListing}
+        />
+        <LiveMarketMap
+          binOpportunities={binOpportunities}
+          auctionOpportunities={auctionOpportunities}
+          binScan={binScan}
+          auctionScan={auctionScan}
+          cachedObservedAt={cachedObservedAt}
+          compact
+        />
+      </div>
+
+      <section className="team-board-band" aria-label="Marlins target board">
+        <div className="team-section-head">
+          <div>
+            <span>Miami Target Board</span>
+            <strong>Priced Marlins card rows</strong>
+            <small>These are the Marlins with full base-auto pricing. The scan universe above is larger.</small>
+          </div>
+          <div className="team-section-pills">
+            <span>{rows.length.toLocaleString()} rows</span>
+            <span>{pricedPlayerCount.toLocaleString()} priced players</span>
+            <span>{checklistPlayerCount.toLocaleString()} checklist players</span>
+            <span>{modelCount.toLocaleString()} sets</span>
+          </div>
+        </div>
+        <Leaderboard
+          rows={rows.slice(0, 36)}
+          rankById={rankById}
+          selectedId={selectedId}
+          onSelect={onSelectRow}
+          onScanPlayer={onScanPlayer}
+          emptyTitle="No Marlins card rows are loaded yet."
+          emptyText="Refresh the checklist universe to load Miami Bowman targets."
+        />
+      </section>
+    </section>
   )
 }
 
@@ -1984,7 +3867,16 @@ function LadderDetail({ row }: { row?: PricingRow }) {
     )
   }
 
-  const topQuote = row.ladder.reduce((best, quote) => (quote.price > best.price ? quote : best), row.ladder[0])
+  const hasModel = rowHasModel(row)
+  const fallbackQuote: VariationQuote = {
+    key: 'base',
+    label: 'Base Auto',
+    multiplier: 1,
+    price: row.baseTwmaPrice,
+    sortOrder: null,
+    synthesizedBase: true,
+  }
+  const topQuote = row.ladder.reduce((best, quote) => (quote.price > best.price ? quote : best), row.ladder[0] ?? fallbackQuote)
   const stsChangeItems: Array<[string, number | null]> = [
     ['3D', row.stsChange3d],
     ['7D', row.stsChange7d],
@@ -2007,7 +3899,7 @@ function LadderDetail({ row }: { row?: PricingRow }) {
       <div className="formula-strip">
         <div>
           <span>Base Auto Model</span>
-          <strong>{money(row.baseTwmaPrice)}</strong>
+          <strong>{formatBasePrice(row)}</strong>
         </div>
         <div>
           <span>Method</span>
@@ -2066,7 +3958,7 @@ function LadderDetail({ row }: { row?: PricingRow }) {
       )}
 
       <div className="base-source-note">
-        <span>Checklist baseline {money(row.pulseBasePrice)}</span>
+        {row.pulseBasePrice > 0 ? <span>Checklist baseline {money(row.pulseBasePrice)}</span> : <span>No base comp baseline yet</span>}
         <span>{formatBaseMethod(row.baseMethod)}</span>
         {row.baseAuctionSales + row.baseBinSales > 0 ? (
           <span>
@@ -2076,17 +3968,25 @@ function LadderDetail({ row }: { row?: PricingRow }) {
         {row.baseEffectiveSales > 0 ? <span>{row.baseEffectiveSales.toFixed(1)} effective sales</span> : null}
       </div>
 
-      <div className="variation-grid">
-        {row.ladder.map((quote) => (
-          <div className={`variation-card ${quote.key === topQuote.key ? 'top' : ''}`} key={`${row.id}:detail:${quote.key}`}>
-            <span>{compactVariation(quote.label)}</span>
-            <strong>{money(quote.price)}</strong>
-            <small>
-              {money(row.baseTwmaPrice)} x {formatMultiplier(quote.multiplier)}
-            </small>
-          </div>
-        ))}
-      </div>
+      {hasModel ? (
+        <div className="variation-grid">
+          {row.ladder.map((quote) => (
+            <div className={`variation-card ${quote.key === topQuote.key ? 'top' : ''}`} key={`${row.id}:detail:${quote.key}`}>
+              <span>{compactVariation(quote.label)}</span>
+              <strong>{money(quote.price)}</strong>
+              <small>
+                {formatBasePrice(row)} x {formatMultiplier(quote.multiplier)}
+              </small>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state compact">
+          <Database size={22} />
+          <strong>Sold comps needed before price lanes unlock.</strong>
+          <span>This checklist player is visible for coverage, but we do not have a trusted raw base-auto anchor yet.</span>
+        </div>
+      )}
     </section>
   )
 }
@@ -2128,6 +4028,43 @@ function QuickPriceModule({
   }
 
   const activeRow = row
+  const canPickPlayer = Boolean(pickerRows?.length && onPickRow)
+
+  if (!rowHasModel(activeRow)) {
+    return (
+      <section className={`detail-card quick-price-card ${className ?? ''}`.trim()}>
+        <div className="detail-title quick-price-title">
+          <Calculator size={18} />
+          <div>
+            <span>Card Price Calculator</span>
+            <h2>Needs comps</h2>
+            <small>{activeRow.playerName}</small>
+          </div>
+          <span className="quick-verdict neutral">No model</span>
+        </div>
+
+        {canPickPlayer ? (
+          <label className="quick-player-picker">
+            <span>Player</span>
+            <select value={activeRow.id} onChange={(event) => onPickRow?.(event.target.value)} aria-label="Calculator player">
+              {pickerRows?.map((candidate) => (
+                <option value={candidate.id} key={`quick-picker:${candidate.id}`}>
+                  {candidate.playerName} / {candidate.release}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
+        <div className="empty-state compact">
+          <Database size={22} />
+          <strong>No trusted base-auto model yet.</strong>
+          <span>Run or refresh sold comps before using this player for price math.</span>
+        </div>
+      </section>
+    )
+  }
+
   const hasCurrentInput = cardInput.rowId === activeRow.id
   const defaultVariationKey = activeRow.ladder[0]?.key ?? ''
   const activeVariationKey =
@@ -2170,7 +4107,6 @@ function QuickPriceModule({
   const watchCeiling = modelValue * (1 + LIVE_MODEL_WINDOW_PCT)
   const verdict = pricingVerdict(spread, modelValue, askPrice)
   const gradeLabel = gradeModel.option.label
-  const canPickPlayer = Boolean(pickerRows?.length && onPickRow)
 
   return (
     <section className={`detail-card quick-price-card ${className ?? ''}`.trim()}>
@@ -5722,10 +7658,13 @@ function App() {
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all')
   const [teamFilter, setTeamFilter] = useState<TeamFilter>('all')
   const [baseSourceFilter, setBaseSourceFilter] = useState<BaseSourceFilter>('all')
-  const [stsFilter, setStsFilter] = useState<StsFilter>('prospects')
+  const [stsFilter, setStsFilter] = useState<StsFilter>('all')
   const [sortMode, setSortMode] = useState<SortMode>('dynasty-value')
   const [selectedRowId, setSelectedRowId] = useState<string | undefined>()
   const [workMode, setWorkMode] = useState<WorkMode>('lookup')
+  const [appRoute, setAppRoute] = useState<AppRoute>(() =>
+    typeof window === 'undefined' ? 'desk' : appRouteFromPath(window.location.pathname),
+  )
   const [ebayStatus, setEbayStatus] = useState<EbayStatus | null>(null)
   const [binListings, setBinListings] = useState<ProspectPulseListing[]>([])
   const [binLoading, setBinLoading] = useState(false)
@@ -5748,6 +7687,13 @@ function App() {
     auctionOpportunities: Opportunity[]
     observedAt: string
     listingCount: number
+  } | null>(null)
+  const [cachedFreshLiveMarket, setCachedFreshLiveMarket] = useState<{
+    binOpportunities: Opportunity[]
+    auctionOpportunities: Opportunity[]
+    observedAt: string
+    listingCount: number
+    snapshotCount: number
   } | null>(null)
   const [caseHitScan, setCaseHitScan] = useState<CaseHitScanResult | null>(null)
   const [caseHitLoading, setCaseHitLoading] = useState(false)
@@ -5772,9 +7718,13 @@ function App() {
   const [observability, setObservability] = useState<ObservabilitySnapshot | null>(null)
   const [observabilityLoading, setObservabilityLoading] = useState(false)
   const [observabilityError, setObservabilityError] = useState<string | null>(null)
+  const [marlinsCoverage, setMarlinsCoverage] = useState<ChecklistCoveragePayload | null>(null)
+  const [marlinsCoverageLoading, setMarlinsCoverageLoading] = useState(false)
+  const [marlinsCoverageError, setMarlinsCoverageError] = useState<string | null>(null)
   const [rankingsRefreshing, setRankingsRefreshing] = useState(false)
   const [rankingsDatasetVersion, setRankingsDatasetVersion] = useState(0)
   const checklistRequestRef = useRef<AbortController | null>(null)
+  const coverageRequestRef = useRef<AbortController | null>(null)
   const checklistRequestIdRef = useRef(0)
   const binRequestRef = useRef<AbortController | null>(null)
   const auctionRequestRef = useRef<AbortController | null>(null)
@@ -5792,6 +7742,23 @@ function App() {
       target.scrollIntoView({ behavior: 'smooth', block: 'start' })
       target.focus({ preventScroll: true })
     }, 120)
+  }, [])
+
+  const navigateAppRoute = useCallback((route: AppRoute) => {
+    setAppRoute(route)
+    if (typeof window === 'undefined') return
+    const nextPath = pathForAppRoute(route)
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath)
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const syncRoute = () => setAppRoute(appRouteFromPath(window.location.pathname))
+    window.addEventListener('popstate', syncRoute)
+    return () => window.removeEventListener('popstate', syncRoute)
   }, [])
 
   const loadChecklistCatalog = useCallback(async (signal?: AbortSignal) => {
@@ -5977,6 +7944,21 @@ function App() {
       .catch(() => {
         if (active && !liveMarketController.signal.aborted) setCachedLiveMarket(null)
       })
+    fetchLatestLiveMarketSnapshot({ limit: 900, snapshotScope: 'all' }, liveMarketController.signal)
+      .then((snapshot) => {
+        if (!active || !snapshot.available) return
+        const opportunities = snapshot.listings.map(liveMarketListingToOpportunity)
+        setCachedFreshLiveMarket({
+          binOpportunities: opportunities.filter((opportunity) => opportunity.listing.kind === 'bin'),
+          auctionOpportunities: opportunities.filter((opportunity) => opportunity.listing.kind !== 'bin'),
+          observedAt: snapshot.snapshot?.observedAt ?? snapshot.listings[0]?.observedAt ?? new Date().toISOString(),
+          listingCount: snapshot.listings.length,
+          snapshotCount: snapshot.snapshotCount ?? 1,
+        })
+      })
+      .catch(() => {
+        if (active && !liveMarketController.signal.aborted) setCachedFreshLiveMarket(null)
+      })
     fetchRankingsData(rankingsController.signal)
       .then((ranking) => {
         if (!active || rankingsController.signal.aborted) return
@@ -6020,6 +8002,7 @@ function App() {
     return () => {
       checklistRequestIdRef.current += 1
       checklistRequestRef.current?.abort()
+      coverageRequestRef.current?.abort()
       binRequestRef.current?.abort()
       auctionRequestRef.current?.abort()
       caseHitRequestRef.current?.abort()
@@ -6042,6 +8025,123 @@ function App() {
     [checklistModels],
   )
   const binModelOptions = useMemo(() => sortChecklistModels(checklistModels), [checklistModels])
+  const marlinsChecklistPlayerNamesByModel = useMemo(() => {
+    void rankingsDatasetVersion
+    const byModel = new Map<string, string[]>()
+    for (const model of binModelOptions) {
+      const seen = new Set<string>()
+      const names: string[] = []
+      for (const player of model.players) {
+        const checklistTeam = normalizeTeamCode(player.team)
+        const currentTeam = normalizeTeamCode(findStsRanking(player.playerName)?.team)
+        if (checklistTeam !== MARLINS_TEAM_CODE && currentTeam !== MARLINS_TEAM_CODE) continue
+        const key = scanNameKey(player.playerName)
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        names.push(player.playerName)
+      }
+      if (names.length > 0) byModel.set(checklistModelKey(model), names)
+    }
+    return byModel
+  }, [binModelOptions, rankingsDatasetVersion])
+  const marlinsChecklistPlayerNames = useMemo(() => {
+    const seen = new Set<string>()
+    const names: string[] = []
+    for (const modelNames of marlinsChecklistPlayerNamesByModel.values()) {
+      for (const playerName of modelNames) {
+        const key = scanNameKey(playerName)
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        names.push(playerName)
+      }
+    }
+    return names
+  }, [marlinsChecklistPlayerNamesByModel])
+  const marlinsChecklistModelCount = marlinsChecklistPlayerNamesByModel.size
+  const marlinsChecklistModelSummaries = useMemo(
+    () =>
+      binModelOptions.flatMap((model) => {
+        const key = checklistModelKey(model)
+        const names = marlinsChecklistPlayerNamesByModel.get(key) ?? []
+        return names.length > 0
+          ? [
+              {
+                key,
+                label: checklistModelLabel(model),
+                playerCount: names.length,
+              },
+            ]
+          : []
+      }),
+    [binModelOptions, marlinsChecklistPlayerNamesByModel],
+  )
+  const marlinsCoveragePlayerKey = useMemo(
+    () => marlinsChecklistPlayerNames.map(scanNameKey).filter(Boolean).sort().join('|'),
+    [marlinsChecklistPlayerNames],
+  )
+  const loadMarlinsCoverage = useCallback(async (signal?: AbortSignal) => {
+    if (marlinsChecklistPlayerNames.length === 0) {
+      setMarlinsCoverage(null)
+      return null
+    }
+    const fallbackCoverage = () =>
+      buildStaticChecklistCoverage(binModelOptions, marlinsChecklistPlayerNames, {
+        minYear: CHECKLIST_MIN_YEAR,
+        staleDays: 60,
+        limit: Math.max(160, marlinsChecklistPlayerNames.length),
+      })
+    setMarlinsCoverageLoading(true)
+    setMarlinsCoverageError(null)
+    try {
+      const coverage = await fetchChecklistCoverage({
+        minYear: CHECKLIST_MIN_YEAR,
+        staleDays: 60,
+        source: 'waxpackhero',
+        players: marlinsChecklistPlayerNames,
+        limit: Math.max(160, marlinsChecklistPlayerNames.length),
+        signal,
+      })
+      if (!signal?.aborted) setMarlinsCoverage(coverage)
+      return coverage
+    } catch (error) {
+      if (!signal?.aborted) {
+        const fallback = fallbackCoverage()
+        if (fallback.summary.totalPlayers > 0) {
+          setMarlinsCoverage(fallback)
+          setMarlinsCoverageError(null)
+          return fallback
+        }
+        setMarlinsCoverageError(cleanModelLanguage(error instanceof Error ? error.message : 'Coverage refresh failed'))
+      }
+      return null
+    } finally {
+      if (!signal?.aborted) setMarlinsCoverageLoading(false)
+    }
+  }, [binModelOptions, marlinsChecklistPlayerNames])
+  useEffect(() => {
+    coverageRequestRef.current?.abort()
+    if (!marlinsCoveragePlayerKey) {
+      return
+    }
+    const controller = new AbortController()
+    coverageRequestRef.current = controller
+    const coverageTimer = window.setTimeout(() => {
+      void loadMarlinsCoverage(controller.signal)
+    }, 0)
+    return () => {
+      window.clearTimeout(coverageTimer)
+      controller.abort()
+      if (coverageRequestRef.current === controller) coverageRequestRef.current = null
+    }
+  }, [loadMarlinsCoverage, marlinsCoveragePlayerKey])
+  const refreshMarlinsCoverage = useCallback(() => {
+    coverageRequestRef.current?.abort()
+    const controller = new AbortController()
+    coverageRequestRef.current = controller
+    void loadMarlinsCoverage(controller.signal).finally(() => {
+      if (coverageRequestRef.current === controller) coverageRequestRef.current = null
+    })
+  }, [loadMarlinsCoverage])
   const defaultBinModelKey = useMemo(
     () => (bowman2026Model ? checklistModelKey(bowman2026Model) : binModelOptions[0] ? checklistModelKey(binModelOptions[0]) : ''),
     [binModelOptions, bowman2026Model],
@@ -6095,6 +8195,16 @@ function App() {
       ),
     }
   }, [cachedLiveMarket, rejectedListingKeys])
+  const visibleCachedFreshLiveMarket = useMemo(() => {
+    if (!cachedFreshLiveMarket) return null
+    return {
+      ...cachedFreshLiveMarket,
+      binOpportunities: cachedFreshLiveMarket.binOpportunities.filter((opportunity) => !isListingRejected(opportunity.listing, rejectedListingKeys)),
+      auctionOpportunities: cachedFreshLiveMarket.auctionOpportunities.filter(
+        (opportunity) => !isListingRejected(opportunity.listing, rejectedListingKeys),
+      ),
+    }
+  }, [cachedFreshLiveMarket, rejectedListingKeys])
   const hiddenBinListingCount = Math.max(0, binListings.length - visibleBinListings.length)
   const binScoreSettings = useMemo(() => {
     const selectedModel = selectedBinModels[0]
@@ -6128,12 +8238,47 @@ function App() {
       ).slice(0, AUCTION_RENDER_LIMIT),
     [activeSalesCacheModels, binResultSort, binScoreSettings, selectedBinModels, visibleAuctionListings],
   )
-  const displayedBinOpportunities = binScan ? binOpportunities : (visibleCachedLiveMarket?.binOpportunities ?? [])
-  const displayedAuctionOpportunities = auctionScan ? auctionOpportunities : (visibleCachedLiveMarket?.auctionOpportunities ?? [])
+  const displayedBinOpportunities = useMemo(
+    () => (binScan ? binOpportunities : (visibleCachedLiveMarket?.binOpportunities ?? [])),
+    [binOpportunities, binScan, visibleCachedLiveMarket],
+  )
+  const displayedAuctionOpportunities = useMemo(
+    () => (auctionScan ? auctionOpportunities : (visibleCachedLiveMarket?.auctionOpportunities ?? [])),
+    [auctionOpportunities, auctionScan, visibleCachedLiveMarket],
+  )
   const displayedLiveListingCount =
     (binScan || auctionScan)
       ? visibleBinListings.length + visibleAuctionListings.length
       : (displayedBinOpportunities.length + displayedAuctionOpportunities.length)
+  const marlinsRows = useMemo(
+    () => sortRows(matrix.rows.filter((row) => rowMatchesTeam(row, MARLINS_TEAM_CODE)), 'dynasty-value'),
+    [matrix.rows],
+  )
+  const marlinsChecklistOpportunities = useMemo(
+    () => buildTeamChecklistOpportunities(marlinsChecklistPlayerNames, marlinsChecklistPlayerNamesByModel, binModelOptions, marlinsRows),
+    [binModelOptions, marlinsChecklistPlayerNames, marlinsChecklistPlayerNamesByModel, marlinsRows],
+  )
+  const marlinsRowRankById = useMemo(
+    () => new Map(marlinsRows.map((row, index) => [row.id, index + 1] as const)),
+    [marlinsRows],
+  )
+  const marlinsPlayerKeys = useMemo(
+    () => new Set([...marlinsChecklistPlayerNames, ...marlinsRows.map((row) => row.playerName)].map((playerName) => scanNameKey(playerName))),
+    [marlinsChecklistPlayerNames, marlinsRows],
+  )
+  const marlinsCachedSource = visibleCachedFreshLiveMarket ?? visibleCachedLiveMarket
+  const marlinsBinOpportunitySource = binScan ? displayedBinOpportunities : (marlinsCachedSource?.binOpportunities ?? displayedBinOpportunities)
+  const marlinsAuctionOpportunitySource = auctionScan
+    ? displayedAuctionOpportunities
+    : (marlinsCachedSource?.auctionOpportunities ?? displayedAuctionOpportunities)
+  const displayedMarlinsBinOpportunities = useMemo(
+    () => marlinsBinOpportunitySource.filter((opportunity) => opportunityMatchesTeamUniverse(opportunity, MARLINS_TEAM_CODE, marlinsPlayerKeys)),
+    [marlinsBinOpportunitySource, marlinsPlayerKeys],
+  )
+  const displayedMarlinsAuctionOpportunities = useMemo(
+    () => marlinsAuctionOpportunitySource.filter((opportunity) => opportunityMatchesTeamUniverse(opportunity, MARLINS_TEAM_CODE, marlinsPlayerKeys)),
+    [marlinsAuctionOpportunitySource, marlinsPlayerKeys],
+  )
   const waxComps = useMemo(() => parseWaxComps(waxCompText), [waxCompText])
   const waxManualListings = useMemo(() => parseDaveAdamsQuotes(waxDaveAdamsText, waxQuery), [waxDaveAdamsText, waxQuery])
   const waxMarketModel = useMemo(
@@ -6205,7 +8350,7 @@ function App() {
     categoryFilter !== 'all' ||
     teamFilter !== 'all' ||
     baseSourceFilter !== 'all' ||
-    stsFilter !== 'prospects'
+    stsFilter !== 'all'
   const leaderboardRenderLimit = hasLeaderboardNarrowing ? FILTERED_LEADERBOARD_RENDER_LIMIT : LEADERBOARD_RENDER_LIMIT
   const renderedRows = useMemo(() => visibleRows.slice(0, leaderboardRenderLimit), [leaderboardRenderLimit, visibleRows])
   const visibleRowRankById = useMemo(
@@ -6282,9 +8427,10 @@ function App() {
     return [...adjustedRows.slice(0, Math.max(leaderboardRenderLimit - 1, 0)), effectiveSelectedRow]
   }, [effectiveSelectedRow, leaderboardRenderLimit, renderedRows, selectedRow])
   const teamScanRows = useMemo(
-    () => (selectedTeamOption ? visibleRowsForDisplay.slice(0, TEAM_DEAL_SCAN_LIMIT) : []),
+    () => (selectedTeamOption ? visibleRowsForDisplay.filter(rowHasModel).slice(0, TEAM_DEAL_SCAN_LIMIT) : []),
     [selectedTeamOption, visibleRowsForDisplay],
   )
+  const selectedTeamIsMarlins = normalizeTeamCode(selectedTeamOption?.code) === MARLINS_TEAM_CODE
   const activeSalesCacheError =
     salesCacheError && salesCacheError.playerName === selectedRow?.playerName ? salesCacheError.message : null
   const flagCachedSale = useCallback(async (itemId: string, erroneous: boolean, note?: string) => {
@@ -6460,6 +8606,11 @@ function App() {
       return
     }
 
+    if (selectedTeamIsMarlins) {
+      scanMarlinsTeamDeals()
+      return
+    }
+
     if (teamScanRows.length === 0) {
       setBinError(`No priced ${selectedTeamOption.label} players match the current filters.`)
       return
@@ -6475,6 +8626,81 @@ function App() {
     }
 
     setWorkMode('deals')
+    revealDealResults()
+    void scanEbayBinListings(scanOptions)
+    void scanEbayAuctionListings(scanOptions)
+  }
+
+  function scanMarlinsTeamDeals() {
+    if (marlinsChecklistPlayerNames.length === 0) {
+      setBinError('No Marlins checklist players are loaded yet.')
+      return
+    }
+
+    const scanModels = binModelOptions.filter((model) => (marlinsChecklistPlayerNamesByModel.get(checklistModelKey(model))?.length ?? 0) > 0)
+    if (scanModels.length === 0) {
+      setBinError('No loaded checklist model has Marlins players yet.')
+      return
+    }
+
+    navigateAppRoute('marlins')
+    setBinModelKey(scanModels.length === 1 ? checklistModelKey(scanModels[0]) : BIN_ALL_MODELS_KEY)
+    setBinSearchMode('checklist')
+    setBinSearchTerm('')
+    setBinPlayerScope('all')
+    setBinListings([])
+    setBinScan(null)
+    setBinError(null)
+    setLastRejectedListing(null)
+    resetAuctionScan()
+
+    const scanOptions = {
+      models: scanModels,
+      playerScope: 'all' as const,
+      playerNames: marlinsChecklistPlayerNames,
+      searchMode: 'checklist' as const,
+      searchTerm: '',
+    }
+
+    revealDealResults()
+    void scanEbayBinListings(scanOptions)
+    void scanEbayAuctionListings(scanOptions)
+  }
+
+  function scanMarlinsChecklistPlayer(playerName: string) {
+    const playerKey = scanNameKey(playerName)
+    if (!playerKey) {
+      setBinError('Choose a Marlins checklist player to scan.')
+      return
+    }
+
+    const scanModels = binModelOptions.filter((model) =>
+      model.players.some((player) => scanNameKey(player.playerName) === playerKey),
+    )
+    if (scanModels.length === 0) {
+      setBinError(`No loaded checklist model has ${playerName}.`)
+      return
+    }
+
+    navigateAppRoute('marlins')
+    setBinModelKey(scanModels.length === 1 ? checklistModelKey(scanModels[0]) : BIN_ALL_MODELS_KEY)
+    setBinSearchMode('checklist')
+    setBinSearchTerm('')
+    setBinPlayerScope('all')
+    setBinListings([])
+    setBinScan(null)
+    setBinError(null)
+    setLastRejectedListing(null)
+    resetAuctionScan()
+
+    const scanOptions = {
+      models: scanModels,
+      playerScope: 'all' as const,
+      playerNames: [playerName],
+      searchMode: 'checklist' as const,
+      searchTerm: '',
+    }
+
     revealDealResults()
     void scanEbayBinListings(scanOptions)
     void scanEbayAuctionListings(scanOptions)
@@ -7087,28 +9313,53 @@ function App() {
   }
 
   const missionLeadRow =
-    effectiveSelectedRow ??
+    (effectiveSelectedRow && rowHasModel(effectiveSelectedRow) ? effectiveSelectedRow : null) ??
     renderedRowsForDisplay.find((row) => scoreDynastyValueOpportunity(row) > 0) ??
-    renderedRowsForDisplay[0] ??
+    renderedRowsForDisplay.find(rowHasModel) ??
     null
-  const missionTargetCount = selectedTeamOption ? teamScanRows.length : Math.min(BOARD_DEAL_SCAN_LIMIT, renderedRowsForDisplay.length)
+  const visibleBoardScanCount = Math.min(BOARD_DEAL_SCAN_LIMIT, playerNamesForPricingRows(renderedRowsForDisplay).length)
+  const missionTargetCount = selectedTeamIsMarlins
+    ? marlinsChecklistPlayerNames.length
+    : selectedTeamOption
+      ? teamScanRows.length
+      : visibleBoardScanCount
   const topProspectCount = matrix.rows.filter((row) => {
     const rank = primaryRankOrInfinity(row)
-    return Number.isFinite(rank) && rank <= 100
+    return rowHasModel(row) && Number.isFinite(rank) && rank <= 100
   }).length
   const missionDisabled = binLoading || auctionLoading
+  const primaryBoardScanDisabled =
+    (selectedTeamIsMarlins
+      ? marlinsChecklistPlayerNames.length === 0
+      : selectedTeamOption
+        ? teamScanRows.length === 0
+        : visibleBoardScanCount === 0) ||
+    binLoading ||
+    auctionLoading
+  const primaryBoardScanLabel = selectedTeamIsMarlins
+    ? 'Scan All Marlins'
+    : selectedTeamOption
+      ? `Scan ${selectedTeamOption.label}`
+      : 'Scan Top Values'
+  const runPrimaryBoardScan = selectedTeamIsMarlins
+    ? scanMarlinsTeamDeals
+    : selectedTeamOption
+      ? scanSelectedTeamDeals
+      : scanVisibleBoardDeals
   const opportunityMissions: OpportunityMission[] = [
     {
       key: 'scan-board',
-      eyebrow: selectedTeamOption ? 'Team sweep' : 'Best value sweep',
-      title: selectedTeamOption ? selectedTeamOption.label : 'Current board',
-      detail: selectedTeamOption
-        ? `Checks live listings for the strongest ${selectedTeamOption.label} targets.`
-        : 'Checks live listings for the highest value players on screen.',
+      eyebrow: selectedTeamIsMarlins ? 'Full checklist sweep' : selectedTeamOption ? 'Team sweep' : 'Best value sweep',
+      title: selectedTeamIsMarlins ? 'Miami Marlins' : selectedTeamOption ? selectedTeamOption.label : 'Current board',
+      detail: selectedTeamIsMarlins
+        ? 'Checks every loaded Marlins checklist player, not just priced target rows.'
+        : selectedTeamOption
+          ? `Checks live listings for the strongest ${selectedTeamOption.label} targets.`
+          : 'Checks live listings for the highest value players on screen.',
       metric: `${missionTargetCount.toLocaleString()} targets`,
       kind: 'board',
       disabled: missionTargetCount === 0 || missionDisabled,
-      onClick: selectedTeamOption ? scanSelectedTeamDeals : scanVisibleBoardDeals,
+      onClick: runPrimaryBoardScan,
     },
     {
       key: 'scan-prospects',
@@ -7125,7 +9376,7 @@ function App() {
       eyebrow: 'Player focus',
       title: missionLeadRow?.playerName ?? 'Choose a player',
       detail: missionLeadRow
-        ? `${money(missionLeadRow.baseTwmaPrice)} base auto / ${primaryRankLabel(missionLeadRow) ?? 'rank pending'}`
+        ? `${formatBasePrice(missionLeadRow)} base auto / ${primaryRankLabel(missionLeadRow) ?? 'rank pending'}`
         : 'Select a modeled player to scan their live market.',
       metric: 'Scan player',
       kind: 'player',
@@ -7168,6 +9419,24 @@ function App() {
         </div>
 
         <div className="top-actions">
+          <button
+            className={`ghost-button app-route-button ${appRoute === 'desk' ? 'active' : ''}`}
+            type="button"
+            onClick={() => navigateAppRoute('desk')}
+            aria-pressed={appRoute === 'desk'}
+          >
+            <Search size={16} />
+            Daily Board
+          </button>
+          <button
+            className={`ghost-button app-route-button ${appRoute === 'marlins' ? 'active' : ''}`}
+            type="button"
+            onClick={() => navigateAppRoute('marlins')}
+            aria-pressed={appRoute === 'marlins'}
+          >
+            <Store size={16} />
+            Marlins Deals
+          </button>
           <button className="primary-button" type="button" onClick={() => void refreshChecklistUniverse()} disabled={checklistLoading || catalogLoading}>
             <RefreshCw size={16} className={checklistLoading ? 'spin' : undefined} />
             {catalogLoading
@@ -7193,15 +9462,18 @@ function App() {
         </div>
       </section>
 
-      <WorkflowCommand
-        mode={workMode}
-        onModeChange={setWorkMode}
-        pricedRows={matrix.totalPricedPlayers}
-        topBase={topBase}
-        dealCount={displayedBinOpportunities.length + displayedAuctionOpportunities.length}
-        listingCount={displayedLiveListingCount}
-        modelReady={matrix.totalResolvedCells > 0}
-      />
+      {appRoute === 'desk' ? (
+        <WorkflowCommand
+          mode={workMode}
+          onModeChange={setWorkMode}
+          totalRows={matrix.totalPlayers}
+          pricedRows={matrix.totalPricedPlayers}
+          topBase={topBase}
+          dealCount={displayedBinOpportunities.length + displayedAuctionOpportunities.length}
+          listingCount={displayedLiveListingCount}
+          modelReady={matrix.totalResolvedCells > 0}
+        />
+      ) : null}
 
       {showModelHealth ? (
         <section className="status-strip valuation-status" aria-label="Model health">
@@ -7222,7 +9494,42 @@ function App() {
         </section>
       ) : null}
 
-      {workMode === 'lookup' ? (
+      {appRoute === 'marlins' ? (
+        <MarlinsTeamPage
+          rows={marlinsRows}
+          selectedId={selectedRowId}
+          rankById={marlinsRowRankById}
+          binOpportunities={displayedMarlinsBinOpportunities}
+          auctionOpportunities={displayedMarlinsAuctionOpportunities}
+          binScan={binScan}
+          auctionScan={auctionScan}
+          cachedObservedAt={cachedLiveMarket?.observedAt ?? null}
+          checklistLoading={checklistLoading}
+          binLoading={binLoading}
+          auctionLoading={auctionLoading}
+          binError={binError}
+          auctionError={auctionError}
+          ebayStatus={ebayStatus}
+          modelCount={marlinsChecklistModelCount}
+          checklistPlayerCount={marlinsChecklistPlayerNames.length}
+          checklistPlayers={marlinsChecklistPlayerNames}
+          checklistModelSummaries={marlinsChecklistModelSummaries}
+          checklistOpportunities={marlinsChecklistOpportunities}
+          coverageEngine={marlinsCoverage}
+          coverageLoading={marlinsCoverageLoading}
+          coverageError={marlinsCoverageError}
+          lastRejectedListing={lastRejectedListing}
+          resultsRef={dealResultsRef}
+          onScanTeam={scanMarlinsTeamDeals}
+          onRefreshCoverage={refreshMarlinsCoverage}
+          onOpenDesk={() => navigateAppRoute('desk')}
+          onSelectRow={setSelectedRowId}
+          onScanPlayer={scanBinsForLookupRow}
+          onScanChecklistPlayer={scanMarlinsChecklistPlayer}
+          onRejectListing={rejectLiveListing}
+          onUndoRejectListing={undoLastListingRejection}
+        />
+      ) : workMode === 'lookup' ? (
         <section className="workbench-layout lookup-workflow" aria-label="Value ranking">
           <div className="valuation-workspace">
             <div className="lookup-intent-bar">
@@ -7231,7 +9538,7 @@ function App() {
                 <strong>{effectiveSelectedRow ? effectiveSelectedRow.playerName : trimmedQuery ? 'No modeled player selected' : 'Value board'}</strong>
                 <small>
                   {effectiveSelectedRow
-                    ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} / ${effectiveSelectedRow.currentTeamName ?? 'team unknown'} / ${money(effectiveSelectedRow.baseTwmaPrice)} base auto / ${formatStsLine(effectiveSelectedRow) || 'no rank signal'}`
+                    ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} / ${effectiveSelectedRow.currentTeamName ?? 'team unknown'} / ${formatBasePrice(effectiveSelectedRow)} base auto / ${formatStsLine(effectiveSelectedRow) || 'no rank signal'}`
                     : 'Ranked by price gap, rank signal, and base-auto quality.'}
                 </small>
               </div>
@@ -7252,11 +9559,11 @@ function App() {
                 <button
                   className="primary-button board-scan-button"
                   type="button"
-                  onClick={selectedTeamOption ? scanSelectedTeamDeals : scanVisibleBoardDeals}
-                  disabled={(selectedTeamOption ? teamScanRows.length === 0 : renderedRowsForDisplay.length === 0) || binLoading || auctionLoading}
+                  onClick={runPrimaryBoardScan}
+                  disabled={primaryBoardScanDisabled}
                 >
                   <Radio size={15} />
-                  {selectedTeamOption ? `Scan ${selectedTeamOption.label}` : 'Scan Top Values'}
+                  {primaryBoardScanLabel}
                 </button>
                 <button
                   className="ghost-button calculator-toggle-button"
@@ -7648,7 +9955,7 @@ function App() {
         </section>
       )}
 
-      {workMode !== 'health' ? (
+      {appRoute === 'marlins' || workMode !== 'health' ? (
         <details className="operations-drawer" open={Boolean(observabilityError) || undefined}>
           <summary>
             <span>

@@ -19,6 +19,12 @@
       "schedule": "20 9 * * *"
     }
   ],
+  "rewrites": [
+    {
+      "source": "/teams/(.*)",
+      "destination": "/"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

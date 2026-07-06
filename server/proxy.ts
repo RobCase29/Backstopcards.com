@@ -70,7 +70,7 @@ const CARD_HEDGE_ROUTES = new Set([
 ])
 const SALES_CACHE_ROUTES = new Set(['status', 'player', 'players', 'flag-sale', 'merge-bucket'])
 const SALES_CACHE_WRITE_ROUTES = new Set(['flag-sale', 'merge-bucket'])
-const CHECKLIST_ROUTES = new Set(['status', 'universe', 'catalog', 'model'])
+const CHECKLIST_ROUTES = new Set(['status', 'universe', 'catalog', 'model', 'coverage'])
 const LIVE_MARKET_ROUTES = new Set(['status', 'snapshot', 'latest', 'prune'])
 const RANKINGS_ROUTES = new Set(['status', 'refresh', 'data'])
 const MAX_SALES_CACHE_PLAYER_LENGTH = 100
@@ -78,6 +78,7 @@ const MAX_SALES_CACHE_BUCKETS = 72
 const MAX_SALES_CACHE_SALES = 3_000
 const MAX_CHECKLIST_UNIVERSE_ROWS = 1_000
 const MAX_CHECKLIST_MODEL_PLAYERS = 2_500
+const MAX_CHECKLIST_COVERAGE_ROWS = 2_500
 const MAX_SALES_CACHE_NOTE_LENGTH = 240
 const MAX_LIVE_MARKET_LISTINGS = 900
 const MAX_LIVE_MARKET_SCAN_KEY_LENGTH = 180
@@ -1155,6 +1156,11 @@ function sqliteTableExists(db: SqliteDatabase, table: string) {
   )
 }
 
+function sqliteTableHasColumn(db: SqliteDatabase, table: string, column: string) {
+  if (!sqliteTableExists(db, table)) return false
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((row) => rowString(row, 'name') === column)
+}
+
 function ensureSqliteColumn(db: SqliteDatabase, table: string, column: string, definition: string) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all()
   if (columns.some((row) => rowString(row, 'name') === column)) return
@@ -1821,6 +1827,100 @@ async function handleNeonLiveMarketRoute(route: string, request: Request, sql: N
     const scanType = params.get('scanType') ? safeLiveScanType(params.get('scanType')) : ''
     const scanKey = String(params.get('scanKey') ?? '').trim().slice(0, MAX_LIVE_MARKET_SCAN_KEY_LENGTH)
     const limit = clampInt(params.get('limit'), 160, 1, MAX_LIVE_MARKET_LISTINGS)
+    const allFreshSnapshots = params.get('snapshotScope') === 'all' || params.get('all') === '1'
+    if (allFreshSnapshots) {
+      const snapshots = await sql`
+        SELECT
+          snapshot_id AS "snapshotId",
+          scan_type AS "scanType",
+          scan_key AS "scanKey",
+          search_mode AS "searchMode",
+          player_scope AS "playerScope",
+          release_scope AS "releaseScope",
+          observed_at::text AS "observedAt",
+          expires_at::text AS "expiresAt",
+          listing_count AS "listingCount",
+          opportunity_count AS "opportunityCount",
+          request_json::text AS "requestJson",
+          stats_json::text AS "statsJson",
+          created_at::text AS "createdAt"
+        FROM live_market_snapshots
+        WHERE expires_at > ${nowIso}
+          AND (${scanType} = '' OR scan_type = ${scanType})
+          AND (${scanKey} = '' OR scan_key = ${scanKey})
+        ORDER BY observed_at DESC
+        LIMIT 80
+      `
+
+      if (snapshots.length === 0) {
+        return jsonResponse(200, {
+          available: false,
+          storage: 'neon',
+          message: 'No fresh live-market snapshot is available.',
+          listings: [],
+        })
+      }
+
+      const listings = await sql`
+        WITH ranked_live_listings AS (
+          SELECT
+            l.snapshot_id AS "snapshotId",
+            l.item_id AS "itemId",
+            l.listing_kind AS "listingKind",
+            l.marketplace,
+            l.marketplace_label AS "marketplaceLabel",
+            l.player_name AS "playerName",
+            l.title,
+            l.listing_url AS "listingUrl",
+            l.image_url AS "imageUrl",
+            l.current_price AS "currentPrice",
+            l.shipping_cost AS "shippingCost",
+            l.all_in_price AS "allInPrice",
+            l.model_price AS "modelPrice",
+            l.fair_value AS "fairValue",
+            l.edge_dollars AS "edgeDollars",
+            l.expected_roi_pct AS "expectedRoiPct",
+            l.action,
+            l.lane,
+            l.grade,
+            l.variation_label AS "variationLabel",
+            l.matched_variation AS "matchedVariation",
+            l.valuation_source AS "valuationSource",
+            l.trust_score AS "trustScore",
+            l.score,
+            l.bid_count AS "bidCount",
+            l.listing_status AS "listingStatus",
+            l.end_time::text AS "endTime",
+            l.observed_at::text AS "observedAt",
+            l.expires_at::text AS "expiresAt",
+            l.raw_json::text AS "rawJson",
+            ROW_NUMBER() OVER (
+              PARTITION BY l.item_id
+              ORDER BY l.observed_at DESC, l.edge_dollars DESC, l.score DESC
+            ) AS row_num
+          FROM live_market_listings l
+          JOIN live_market_snapshots s ON s.snapshot_id = l.snapshot_id
+          WHERE s.expires_at > ${nowIso}
+            AND l.expires_at > ${nowIso}
+            AND (${scanType} = '' OR s.scan_type = ${scanType})
+            AND (${scanKey} = '' OR s.scan_key = ${scanKey})
+        )
+        SELECT *
+        FROM ranked_live_listings
+        WHERE row_num = 1
+        ORDER BY "edgeDollars" DESC, score DESC
+        LIMIT ${limit}
+      `
+
+      return jsonResponse(200, {
+        available: true,
+        storage: 'neon',
+        snapshot: mapLiveMarketSnapshot(neonRow(snapshots[0])),
+        snapshotCount: snapshots.length,
+        listings: listings.map((row) => mapLiveMarketListing(neonRow(row))),
+      })
+    }
+
     const snapshots = await sql`
       SELECT
         snapshot_id AS "snapshotId",
@@ -2048,6 +2148,167 @@ function checklistReleaseSlug(releaseName: string, releaseKey: string) {
 
 function compactSqlText(value: string) {
   return value.replace(/\s+/g, ' ').trim()
+}
+
+function compactCoveragePlayerList(value: string) {
+  return [
+    ...new Set(
+      value
+        .split(/[|\n,]+/)
+        .map(compactSqlText)
+        .filter(Boolean)
+        .slice(0, MAX_CHECKLIST_COVERAGE_ROWS),
+    ),
+  ]
+}
+
+function coverageAgeDays(value: string, nowMs = Date.now()) {
+  const parsed = value ? Date.parse(value) : Number.NaN
+  if (!Number.isFinite(parsed)) return null
+  return Math.max(0, Math.round((nowMs - parsed) / 86_400_000))
+}
+
+function coverageConfidenceTier(row: SqliteRow, staleDays: number) {
+  const price = rowNumber(row, 'basePrice')
+  if (price <= 0) return 'Unpriced'
+  const sales = rowNumber(row, 'baseSaleCount')
+  const sales30 = rowNumber(row, 'baseSales30')
+  const sales90 = rowNumber(row, 'baseSales90')
+  const ageDays = coverageAgeDays(rowString(row, 'latestSoldAt'))
+  if (sales >= 40 && (ageDays === null || ageDays <= staleDays) && sales30 >= 3) return 'A'
+  if (sales >= 15 && (ageDays === null || ageDays <= staleDays * 2) && sales90 >= 4) return 'B'
+  if (sales >= 4 || sales90 > 0) return 'C'
+  return 'D'
+}
+
+function coverageState(row: SqliteRow, staleDays: number) {
+  const price = rowNumber(row, 'basePrice')
+  const saleCount = rowNumber(row, 'baseSaleCount')
+  const status = rowString(row, 'queueStatus') || 'unqueued'
+  const error = rowString(row, 'queueError')
+  const ageDays = coverageAgeDays(rowString(row, 'latestSoldAt'))
+  const stale = ageDays !== null && ageDays > staleDays
+
+  if (price > 0 && stale) return 'stale'
+  if (price > 0 && saleCount > 0 && saleCount < 5) return 'thin'
+  if (price > 0) return 'priced'
+  if (status === 'running') return 'running'
+  if (/timeout/i.test(error) || status === 'timeout') return 'timeout'
+  if (status === 'error') return 'error'
+  if (status === 'done') return 'no-clean-base'
+  if (status === 'queued') return 'queued'
+  return 'missing'
+}
+
+function coveragePriorityScore(row: SqliteRow, staleDays: number) {
+  const state = coverageState(row, staleDays)
+  const saleCount = rowNumber(row, 'baseSaleCount')
+  const releaseYear = rowNumber(row, 'releaseYear')
+  const yearSignal = Math.max(0, releaseYear - 2020) * 1.5
+  const stateScore: Record<string, number> = {
+    timeout: 96,
+    error: 92,
+    missing: 88,
+    queued: 84,
+    'no-clean-base': 74,
+    running: 62,
+    stale: 58,
+    thin: 48,
+    priced: 8,
+  }
+  return Math.round((stateScore[state] ?? 0) + yearSignal + Math.min(8, saleCount / 6))
+}
+
+function coverageActionForState(state: string) {
+  if (state === 'timeout' || state === 'error') return 'Retry smaller comp sync'
+  if (state === 'missing' || state === 'queued') return 'Run comp sync'
+  if (state === 'no-clean-base') return 'Try alternate query'
+  if (state === 'stale') return 'Refresh sold comps'
+  if (state === 'thin') return 'Add comp depth'
+  if (state === 'running') return 'Let current sync finish'
+  return 'Monitor'
+}
+
+function coverageReasonForState(row: SqliteRow, staleDays: number) {
+  const state = coverageState(row, staleDays)
+  const ageDays = coverageAgeDays(rowString(row, 'latestSoldAt'))
+  if (state === 'stale' && ageDays !== null) return `Latest modeled comp is ${ageDays.toLocaleString()}d old`
+  if (state === 'thin') return `${rowNumber(row, 'baseSaleCount').toLocaleString()} strict base-auto sale${rowNumber(row, 'baseSaleCount') === 1 ? '' : 's'}`
+  if (state === 'timeout') return 'Previous comp search timed out'
+  if (state === 'error') return rowString(row, 'queueError') || 'Previous comp search errored'
+  if (state === 'no-clean-base') return 'Sales imported, but no trusted raw base-auto lane'
+  if (state === 'queued') return 'Waiting in the comp refresh queue'
+  if (state === 'missing') return 'No comp refresh queue row yet'
+  if (state === 'running') return 'Comp refresh currently running'
+  return 'Modeled price lane is usable'
+}
+
+function mapChecklistCoverageRow(row: SqliteRow, staleDays: number) {
+  const state = coverageState(row, staleDays)
+  const price = rowNumber(row, 'basePrice')
+  const latestSoldAt = rowString(row, 'latestSoldAt') || null
+  const saleCount = rowNumber(row, 'baseSaleCount')
+  return {
+    playerName: rowString(row, 'playerName'),
+    playerKey: rowString(row, 'playerKey'),
+    releaseYear: rowNumber(row, 'releaseYear'),
+    releaseName: rowString(row, 'releaseName'),
+    releaseKey: rowString(row, 'releaseKey'),
+    team: rowString(row, 'team') || null,
+    checklistRows: rowNumber(row, 'checklistRows'),
+    queueStatus: rowString(row, 'queueStatus') || 'unqueued',
+    queueError: rowString(row, 'queueError'),
+    lastAttemptAt: rowString(row, 'lastAttemptAt') || null,
+    lastSuccessAt: rowString(row, 'lastSuccessAt') || null,
+    basePrice: price ? Number(price.toFixed(2)) : 0,
+    baseSaleCount: saleCount,
+    baseSales30: rowNumber(row, 'baseSales30'),
+    baseSales90: rowNumber(row, 'baseSales90'),
+    latestSoldAt,
+    ageDays: latestSoldAt ? coverageAgeDays(latestSoldAt) : null,
+    laneState: state,
+    confidenceTier: coverageConfidenceTier(row, staleDays),
+    priorityScore: coveragePriorityScore(row, staleDays),
+    action: coverageActionForState(state),
+    reason: coverageReasonForState(row, staleDays),
+  }
+}
+
+function summarizeChecklistCoverage(rows: ReturnType<typeof mapChecklistCoverageRow>[]) {
+  const byState = new Map<string, number>()
+  const byTier = new Map<string, number>()
+  const byQueue = new Map<string, number>()
+  for (const row of rows) {
+    byState.set(row.laneState, (byState.get(row.laneState) ?? 0) + 1)
+    byTier.set(row.confidenceTier, (byTier.get(row.confidenceTier) ?? 0) + 1)
+    byQueue.set(row.queueStatus, (byQueue.get(row.queueStatus) ?? 0) + 1)
+  }
+  const pricedPlayers = rows.filter((row) => row.basePrice > 0).length
+  const stalePlayers = rows.filter((row) => row.laneState === 'stale').length
+  const missingPriceLanePlayers = rows.filter((row) => row.basePrice <= 0).length
+  const latestCompAt = rows
+    .map((row) => (row.latestSoldAt ? Date.parse(row.latestSoldAt) : Number.NaN))
+    .filter(Number.isFinite)
+    .sort((left, right) => right - left)[0]
+
+  return {
+    totalPlayers: rows.length,
+    pricedPlayers,
+    missingPriceLanePlayers,
+    stalePlayers,
+    thinPlayers: rows.filter((row) => row.laneState === 'thin').length,
+    retryPlayers: rows.filter((row) => row.laneState === 'timeout' || row.laneState === 'error').length,
+    coveragePct: rows.length ? Number(((pricedPlayers / rows.length) * 100).toFixed(1)) : 0,
+    healthyPct: rows.length ? Number((((pricedPlayers - stalePlayers) / rows.length) * 100).toFixed(1)) : 0,
+    latestCompAt: Number.isFinite(latestCompAt) ? new Date(latestCompAt).toISOString() : '',
+    byState: [...byState.entries()].map(([state, players]) => ({ state, players })).sort((left, right) => right.players - left.players),
+    byTier: [...byTier.entries()].map(([tier, players]) => ({ tier, players })).sort((left, right) => tierOrder(left.tier) - tierOrder(right.tier)),
+    byQueue: [...byQueue.entries()].map(([status, players]) => ({ status, players })).sort((left, right) => right.players - left.players),
+  }
+}
+
+function tierOrder(tier: string) {
+  return tier === 'A' ? 0 : tier === 'B' ? 1 : tier === 'C' ? 2 : tier === 'D' ? 3 : 4
 }
 
 function mapChecklistCatalogRelease(row: SqliteRow) {
@@ -3775,7 +4036,7 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
         .map((update) => String(update.update_timestamp ?? ''))
         .filter(Boolean)
         .sort()
-        .at(-1)
+        .slice(-1)[0]
       const nextCheckpoint = upstream.ok ? latestUpdate || new Date().toISOString() : ''
       if (redis && nextCheckpoint) await redis.set(checkpointKey, nextCheckpoint, { ex: 90 * 24 * 60 * 60 })
 
@@ -3968,6 +4229,98 @@ export async function handleLiveMarketRoute(route: string, request: Request, env
       const scanType = params.get('scanType') ? safeLiveScanType(params.get('scanType')) : ''
       const scanKey = String(params.get('scanKey') ?? '').trim().slice(0, MAX_LIVE_MARKET_SCAN_KEY_LENGTH)
       const limit = clampInt(params.get('limit'), 160, 1, MAX_LIVE_MARKET_LISTINGS)
+      const allFreshSnapshots = params.get('snapshotScope') === 'all' || params.get('all') === '1'
+      if (allFreshSnapshots) {
+        const snapshots = db.prepare(`
+          SELECT
+            snapshot_id AS snapshotId,
+            scan_type AS scanType,
+            scan_key AS scanKey,
+            search_mode AS searchMode,
+            player_scope AS playerScope,
+            release_scope AS releaseScope,
+            observed_at AS observedAt,
+            expires_at AS expiresAt,
+            listing_count AS listingCount,
+            opportunity_count AS opportunityCount,
+            request_json AS requestJson,
+            stats_json AS statsJson,
+            created_at AS createdAt
+          FROM live_market_snapshots
+          WHERE expires_at > ?
+            AND (? = '' OR scan_type = ?)
+            AND (? = '' OR scan_key = ?)
+          ORDER BY observed_at DESC
+          LIMIT 80
+        `).all(nowIso, scanType, scanType, scanKey, scanKey)
+
+        if (snapshots.length === 0) {
+          return jsonResponse(200, {
+            available: false,
+            message: 'No fresh live-market snapshot is available.',
+            listings: [],
+          })
+        }
+
+        const listings = db.prepare(`
+          WITH ranked_live_listings AS (
+            SELECT
+              l.snapshot_id AS snapshotId,
+              l.item_id AS itemId,
+              l.listing_kind AS listingKind,
+              l.marketplace,
+              l.marketplace_label AS marketplaceLabel,
+              l.player_name AS playerName,
+              l.title,
+              l.listing_url AS listingUrl,
+              l.image_url AS imageUrl,
+              l.current_price AS currentPrice,
+              l.shipping_cost AS shippingCost,
+              l.all_in_price AS allInPrice,
+              l.model_price AS modelPrice,
+              l.fair_value AS fairValue,
+              l.edge_dollars AS edgeDollars,
+              l.expected_roi_pct AS expectedRoiPct,
+              l.action,
+              l.lane,
+              l.grade,
+              l.variation_label AS variationLabel,
+              l.matched_variation AS matchedVariation,
+              l.valuation_source AS valuationSource,
+              l.trust_score AS trustScore,
+              l.score,
+              l.bid_count AS bidCount,
+              l.listing_status AS listingStatus,
+              l.end_time AS endTime,
+              l.observed_at AS observedAt,
+              l.expires_at AS expiresAt,
+              l.raw_json AS rawJson,
+              ROW_NUMBER() OVER (
+                PARTITION BY l.item_id
+                ORDER BY l.observed_at DESC, l.edge_dollars DESC, l.score DESC
+              ) AS rowNum
+            FROM live_market_listings l
+            JOIN live_market_snapshots s ON s.snapshot_id = l.snapshot_id
+            WHERE s.expires_at > ?
+              AND l.expires_at > ?
+              AND (? = '' OR s.scan_type = ?)
+              AND (? = '' OR s.scan_key = ?)
+          )
+          SELECT *
+          FROM ranked_live_listings
+          WHERE rowNum = 1
+          ORDER BY edgeDollars DESC, score DESC
+          LIMIT ?
+        `).all(nowIso, nowIso, scanType, scanType, scanKey, scanKey, limit)
+
+        return jsonResponse(200, {
+          available: true,
+          snapshot: mapLiveMarketSnapshot(snapshots[0]),
+          snapshotCount: snapshots.length,
+          listings: listings.map(mapLiveMarketListing),
+        })
+      }
+
       const snapshot = db.prepare(`
         SELECT
           snapshot_id AS snapshotId,
@@ -4238,6 +4591,208 @@ export async function handleChecklistRoute(route: string, request: Request, env:
     }
 
     const params = new URL(request.url).searchParams
+
+    if (route === 'coverage') {
+      const minYear = clampInt(params.get('minYear'), 2020, 1900, 9999)
+      const staleDays = clampInt(params.has('staleDays') ? params.get('staleDays') : undefined, 60, 7, 730)
+      const requestedRelease = compactSqlText(String(params.get('release') ?? params.get('releaseKey') ?? ''))
+      const source = compactSqlText(String(params.get('source') ?? ''))
+      const team = compactSqlText(String(params.get('team') ?? ''))
+      const playerNames = compactCoveragePlayerList(String(params.get('players') ?? ''))
+      const limit = clampInt(
+        params.has('limit') ? params.get('limit') : undefined,
+        playerNames.length ? Math.min(MAX_CHECKLIST_COVERAGE_ROWS, Math.max(160, playerNames.length)) : 240,
+        1,
+        MAX_CHECKLIST_COVERAGE_ROWS,
+      )
+      const hasSourceSheet = sqliteTableHasColumn(db, 'checklist_cards', 'source_sheet')
+      const hasChecklistTeam = sqliteTableHasColumn(db, 'checklist_cards', 'team')
+      const hasReleaseYear = sqliteTableHasColumn(db, 'checklist_cards', 'release_year')
+      const hasCanonical =
+        sqliteTableExists(db, 'canonical_cards') && sqliteTableExists(db, 'canonical_comp_summary')
+      const hasQueue = sqliteTableExists(db, 'canonical_refresh_queue')
+      const queueHasError = hasQueue && sqliteTableHasColumn(db, 'canonical_refresh_queue', 'error')
+      const queueHasLastAttempt = hasQueue && sqliteTableHasColumn(db, 'canonical_refresh_queue', 'last_attempt_at')
+      const queueHasLastSuccess = hasQueue && sqliteTableHasColumn(db, 'canonical_refresh_queue', 'last_success_at')
+
+      const releaseYearExpression = hasReleaseYear ? 'c.release_year' : 'r.release_year'
+      const teamExpression = hasChecklistTeam ? "MAX(NULLIF(c.team, ''))" : "''"
+      const where = ['r.release_year >= ?']
+      const values: Array<string | number> = [minYear]
+      if (requestedRelease) {
+        where.push('(r.release_key = ? OR lower(r.release_name) = lower(replace(?, \'-\', \' \')) OR lower(r.release_key) = lower(?))')
+        values.push(requestedRelease, requestedRelease, requestedRelease)
+      }
+      if (source === 'waxpackhero' && hasSourceSheet) {
+        where.push("c.source_sheet = 'Wax Pack Hero First Bowman'")
+      }
+      if (team && hasChecklistTeam) {
+        where.push('(lower(c.team) = lower(?) OR lower(c.team) = lower(replace(?, \'-\', \' \')))')
+        values.push(team, team)
+      }
+      if (playerNames.length > 0) {
+        where.push(`lower(c.player_name) IN (${playerNames.map(() => '?').join(', ')})`)
+        values.push(...playerNames.map((playerName) => playerName.toLowerCase()))
+      }
+
+      const baseCte = hasCanonical
+        ? `,
+        base_candidates AS (
+          SELECT
+            cc.release_year,
+            lower(cc.player_name) AS player_lookup,
+            cc.product_family,
+            cc.variation_label,
+            s.sale_count,
+            s.sales_30,
+            s.sales_90,
+            COALESCE(NULLIF(s.twma_30, 0), NULLIF(s.recent_5_avg, 0), NULLIF(s.twma_90, 0), NULLIF(s.median_price, 0), NULLIF(s.avg_price, 0), 0) AS base_price,
+            s.latest_sold_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY cc.release_year, lower(cc.player_name)
+              ORDER BY
+                CASE WHEN lower(cc.product_family) LIKE '%chrome%' THEN 0 ELSE 1 END,
+                s.sale_count DESC,
+                s.sales_30 DESC,
+                s.latest_sold_at DESC
+            ) AS rn
+          FROM canonical_cards cc
+          JOIN canonical_comp_summary s
+            ON s.canonical_card_key = cc.canonical_card_key
+          WHERE cc.release_year >= ?
+            AND cc.grade_bucket = 'Raw'
+            AND cc.card_class IN ('auto', 'paper-auto')
+            AND cc.variation_label IN ('Base Auto', 'Base', '')
+            AND s.sale_count > 0
+        )`
+        : ''
+      const baseParams = hasCanonical ? [minYear] : []
+      const baseSelect = hasCanonical
+        ? `
+          COALESCE(b.base_price, 0) AS basePrice,
+          COALESCE(b.sale_count, 0) AS baseSaleCount,
+          COALESCE(b.sales_30, 0) AS baseSales30,
+          COALESCE(b.sales_90, 0) AS baseSales90,
+          COALESCE(b.latest_sold_at, '') AS latestSoldAt`
+        : `
+          0 AS basePrice,
+          0 AS baseSaleCount,
+          0 AS baseSales30,
+          0 AS baseSales90,
+          '' AS latestSoldAt`
+      const baseJoin = hasCanonical
+        ? `
+        LEFT JOIN base_candidates b
+          ON b.release_year = cp.release_year
+         AND b.player_lookup = lower(cp.player_name)
+         AND b.rn = 1`
+        : ''
+      const queueSelect = hasQueue
+        ? `
+          COALESCE(q.status, 'unqueued') AS queueStatus,
+          ${queueHasError ? "COALESCE(q.error, '')" : "''"} AS queueError,
+          ${queueHasLastAttempt ? "COALESCE(q.last_attempt_at, '')" : "''"} AS lastAttemptAt,
+          ${queueHasLastSuccess ? "COALESCE(q.last_success_at, '')" : "''"} AS lastSuccessAt`
+        : `
+          'unqueued' AS queueStatus,
+          '' AS queueError,
+          '' AS lastAttemptAt,
+          '' AS lastSuccessAt`
+      const queueJoin = hasQueue
+        ? `
+        LEFT JOIN canonical_refresh_queue q
+          ON q.release_year = cp.release_year
+         AND lower(q.player_name) = lower(cp.player_name)`
+        : ''
+
+      const rows = db.prepare(`
+        WITH checklist_players AS (
+          SELECT
+            r.release_key,
+            r.release_year,
+            r.release_name,
+            c.player_key,
+            MAX(c.player_name) AS player_name,
+            ${teamExpression} AS team,
+            COUNT(*) AS checklist_rows
+          FROM checklist_cards c
+          JOIN checklist_releases r ON r.release_key = c.release_key
+          WHERE ${where.join(' AND ')}
+          GROUP BY r.release_key, ${releaseYearExpression}, r.release_name, c.player_key
+        )
+        ${baseCte}
+        SELECT
+          cp.release_key AS releaseKey,
+          cp.release_year AS releaseYear,
+          cp.release_name AS releaseName,
+          cp.player_key AS playerKey,
+          cp.player_name AS playerName,
+          cp.team AS team,
+          cp.checklist_rows AS checklistRows,
+          ${baseSelect},
+          ${queueSelect}
+        FROM checklist_players cp
+        ${baseJoin}
+        ${queueJoin}
+        ORDER BY cp.release_year DESC, cp.release_name, cp.player_name
+        LIMIT ?
+      `).all(...values, ...baseParams, limit)
+
+      const coverageRows = rows.map((row) => mapChecklistCoverageRow(row, staleDays))
+      coverageRows.sort((left, right) => right.priorityScore - left.priorityScore || right.releaseYear - left.releaseYear || left.playerName.localeCompare(right.playerName))
+      const summary = summarizeChecklistCoverage(coverageRows)
+      const releaseMap = new Map<string, {
+        releaseKey: string
+        releaseYear: number
+        releaseName: string
+        players: number
+        pricedPlayers: number
+        missingPriceLanePlayers: number
+        stalePlayers: number
+      }>()
+      for (const row of coverageRows) {
+        const current =
+          releaseMap.get(row.releaseKey) ??
+          {
+            releaseKey: row.releaseKey,
+            releaseYear: row.releaseYear,
+            releaseName: row.releaseName,
+            players: 0,
+            pricedPlayers: 0,
+            missingPriceLanePlayers: 0,
+            stalePlayers: 0,
+          }
+        current.players += 1
+        if (row.basePrice > 0) current.pricedPlayers += 1
+        else current.missingPriceLanePlayers += 1
+        if (row.laneState === 'stale') current.stalePlayers += 1
+        releaseMap.set(row.releaseKey, current)
+      }
+
+      return jsonResponse(200, {
+        available: true,
+        dbName: basename(dbPath),
+        filters: {
+          minYear,
+          staleDays,
+          release: requestedRelease,
+          source,
+          team,
+          playerCount: playerNames.length,
+          limit,
+        },
+        summary,
+        cadence: {
+          hot: 'Hourly for players with fresh live-market hits and stale or missing price lanes.',
+          priority: 'Nightly for ranked, team-page, and recently listed players.',
+          longTail: 'Weekly for the remaining 2020+ checklist backlog.',
+          retry: 'Timeout/error rows retry with smaller Card Hedge searches and alternate query wording.',
+        },
+        releases: [...releaseMap.values()].sort((left, right) => right.releaseYear - left.releaseYear || left.releaseName.localeCompare(right.releaseName)),
+        nextRefresh: coverageRows.filter((row) => row.laneState !== 'priced').slice(0, Math.min(30, limit)),
+        players: coverageRows,
+      })
+    }
 
     if (route === 'catalog') {
       const minYear = clampInt(params.get('minYear'), 0, 1900, 9999)

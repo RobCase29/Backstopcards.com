@@ -49,6 +49,7 @@ function sourceAdjustment(source: BasePriceSource) {
   if (source === 'weighted-sales') return 5
   if (source === 'blended-sales') return 3
   if (source === 'variation-implied') return 0
+  if (source === 'unpriced') return -12
   return -5
 }
 
@@ -129,6 +130,7 @@ export function impliedDynastyBasePrice(row: DynastyValueInput) {
 
 export function scoreDynastyValueOpportunity(row: DynastyValueInput) {
   if (!rankingCoverage(row)) return -1
+  if (row.baseTwmaPrice <= 0 || row.basePriceSource === 'unpriced') return -1
 
   const basePrice = Math.max(1, row.baseTwmaPrice)
   const impliedBase = impliedDynastyBasePrice(row)

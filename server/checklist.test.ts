@@ -34,9 +34,13 @@ async function seedChecklistDb(dbFile: string) {
     CREATE TABLE checklist_cards (
       checklist_card_key TEXT PRIMARY KEY,
       release_key TEXT,
+      release_year INTEGER,
+      source_sheet TEXT,
       section TEXT,
+      card_no TEXT,
       player_key TEXT,
       player_name TEXT,
+      team TEXT,
       is_auto INTEGER,
       chase_category TEXT,
       first_status TEXT
@@ -81,7 +85,33 @@ async function seedChecklistDb(dbFile: string) {
     CREATE TABLE canonical_refresh_queue (
       player_name TEXT,
       release_year INTEGER,
-      status TEXT
+      status TEXT,
+      error TEXT,
+      last_attempt_at TEXT,
+      last_success_at TEXT
+    );
+
+    CREATE TABLE canonical_cards (
+      canonical_card_key TEXT PRIMARY KEY,
+      player_name TEXT,
+      release_year INTEGER,
+      product_family TEXT,
+      card_class TEXT,
+      variation_label TEXT,
+      grade_bucket TEXT
+    );
+
+    CREATE TABLE canonical_comp_summary (
+      canonical_card_key TEXT PRIMARY KEY,
+      sale_count INTEGER,
+      sales_30 INTEGER,
+      sales_90 INTEGER,
+      twma_30 REAL,
+      twma_90 REAL,
+      recent_5_avg REAL,
+      median_price REAL,
+      avg_price REAL,
+      latest_sold_at TEXT
     );
   `)
 
@@ -89,11 +119,11 @@ async function seedChecklistDb(dbFile: string) {
     'INSERT INTO checklist_releases (release_key, release_year, release_name, product_line, imported_at, source_path, source_hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
   ).run('2026-bowman', 2026, '2026 Bowman', 'Bowman', '2026-06-25T14:00:00.000Z', '/tmp/2026.xlsx', 'abc123')
   db.prepare(
-    'INSERT INTO checklist_cards (checklist_card_key, release_key, section, player_key, player_name, is_auto, chase_category, first_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-  ).run('card-aiva-auto', '2026-bowman', 'Chrome Prospect Autographs', 'aiva arquette', 'Aiva Arquette', 1, 'flagship-auto', 'confirmed_1st')
+    'INSERT INTO checklist_cards (checklist_card_key, release_key, release_year, source_sheet, section, card_no, player_key, player_name, team, is_auto, chase_category, first_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run('card-aiva-auto', '2026-bowman', 2026, 'Wax Pack Hero First Bowman', 'Chrome Prospect Autographs', 'CPA-AA', 'aiva arquette', 'Aiva Arquette', 'Miami Marlins', 1, 'flagship-auto', 'confirmed_1st')
   db.prepare(
-    'INSERT INTO checklist_cards (checklist_card_key, release_key, section, player_key, player_name, is_auto, chase_category, first_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-  ).run('card-aiva-insert', '2026-bowman', 'Crystallized', 'aiva arquette', 'Aiva Arquette', 0, 'case-hit', 'unknown')
+    'INSERT INTO checklist_cards (checklist_card_key, release_key, release_year, source_sheet, section, card_no, player_key, player_name, team, is_auto, chase_category, first_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run('card-aiva-insert', '2026-bowman', 2026, 'Wax Pack Hero First Bowman', 'Crystallized', 'BWC-1', 'aiva arquette', 'Aiva Arquette', 'Miami Marlins', 0, 'case-hit', 'unknown')
   db.prepare(
     'INSERT INTO checklist_player_signals (release_key, player_key, first_status, first_confidence, first_evidence_count) VALUES (?, ?, ?, ?, ?)',
   ).run('2026-bowman', 'aiva arquette', 'confirmed_1st', 0.9, 4)
@@ -152,6 +182,27 @@ async function seedChecklistDb(dbFile: string) {
     '2026-06-25T14:00:00.000Z',
   )
   db.prepare('INSERT INTO canonical_refresh_queue (player_name, release_year, status) VALUES (?, ?, ?)').run('Aiva Arquette', 2026, 'queued')
+  db.prepare('INSERT INTO canonical_cards (canonical_card_key, player_name, release_year, product_family, card_class, variation_label, grade_bucket) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+    'canon-aiva-base-auto',
+    'Aiva Arquette',
+    2026,
+    'Bowman Chrome',
+    'auto',
+    'Base Auto',
+    'Raw',
+  )
+  db.prepare('INSERT INTO canonical_comp_summary (canonical_card_key, sale_count, sales_30, sales_90, twma_30, twma_90, recent_5_avg, median_price, avg_price, latest_sold_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    'canon-aiva-base-auto',
+    42,
+    8,
+    18,
+    108.5,
+    103.2,
+    109.1,
+    105,
+    106,
+    '2026-06-25T14:00:00.000Z',
+  )
   db.close()
 }
 
@@ -206,5 +257,45 @@ describe('checklist ledger proxy', () => {
     expect(payload.cards.every((card) => card.playerName === 'Aiva Arquette')).toBe(true)
     expect(payload.cards.every((card) => card.firstStatus === 'confirmed_1st')).toBe(true)
     expect(payload.cards.every((card) => card.firstEvidenceCount === 4)).toBe(true)
+  })
+
+  it('summarizes modeled coverage and prioritizes missing comp lanes', async () => {
+    const env = tempEnv()
+    await seedChecklistDb(env.BACKSTOP_SALES_DB ?? '')
+    const sqlite = await import('node:sqlite')
+    const db = new sqlite.DatabaseSync(env.BACKSTOP_SALES_DB ?? '')
+    db.prepare(
+      'INSERT INTO checklist_cards (checklist_card_key, release_key, release_year, source_sheet, section, card_no, player_key, player_name, team, is_auto, chase_category, first_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('card-dillon-auto', '2026-bowman', 2026, 'Wax Pack Hero First Bowman', 'Chrome Prospect Autographs', 'CPA-DL', 'dillon lewis', 'Dillon Lewis', 'Miami Marlins', 1, 'flagship-auto', 'confirmed_1st')
+    db.prepare('INSERT INTO canonical_refresh_queue (player_name, release_year, status, error) VALUES (?, ?, ?, ?)').run(
+      'Dillon Lewis',
+      2026,
+      'done',
+      '',
+    )
+    db.close()
+
+    const response = await handleChecklistRoute(
+      'coverage',
+      new Request('http://localhost/api/checklist/coverage?minYear=2026&source=waxpackhero&players=Aiva%20Arquette%7CDillon%20Lewis'),
+      env,
+    )
+    const payload = (await response.json()) as {
+      summary: { totalPlayers: number; pricedPlayers: number; missingPriceLanePlayers: number; coveragePct: number }
+      nextRefresh: Array<{ playerName: string; laneState: string; action: string }>
+      players: Array<{ playerName: string; basePrice: number; confidenceTier: string }>
+    }
+
+    expect(response.status).toBe(200)
+    expect(payload.summary).toMatchObject({ totalPlayers: 2, pricedPlayers: 1, missingPriceLanePlayers: 1, coveragePct: 50 })
+    expect(payload.players.find((player) => player.playerName === 'Aiva Arquette')).toMatchObject({
+      basePrice: 108.5,
+      confidenceTier: 'A',
+    })
+    expect(payload.nextRefresh[0]).toMatchObject({
+      playerName: 'Dillon Lewis',
+      laneState: 'no-clean-base',
+      action: 'Try alternate query',
+    })
   })
 })

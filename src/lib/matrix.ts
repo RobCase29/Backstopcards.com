@@ -2,7 +2,7 @@ import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation
 import { findStsRanking, scoreStsBinTarget, scoreStsMomentum, scoreStsRanking, scoreStsRiserValue } from './stsRankings'
 import { normalizeTeamCode, teamDisplayName, teamSearchText } from './teams'
 
-export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'variation-implied' | 'twma-fallback'
+export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'variation-implied' | 'twma-fallback' | 'unpriced'
 export type SaleChannel = 'auction' | 'bin' | 'unknown'
 
 interface RobustEstimate {
@@ -511,6 +511,25 @@ function estimateVariationImpliedBasePrice(player: ChecklistPlayer, variations: 
   }
 }
 
+function unpricedBaseEstimate(): BasePriceEstimate {
+  return {
+    price: 0,
+    source: 'unpriced',
+    confidence: 0,
+    rawSales: 0,
+    sales30: 0,
+    sales90: 0,
+    auctionSales: 0,
+    binSales: 0,
+    unknownSales: 0,
+    effectiveSales: 0,
+    volatility: 0,
+    latestSaleAt: null,
+    fallbackPrice: 0,
+    methodLabel: 'needs base comps',
+  }
+}
+
 function compareVariations(left: ChecklistVariation, right: ChecklistVariation) {
   const leftBase = isBaseVariation(left.variation)
   const rightBase = isBaseVariation(right.variation)
@@ -586,13 +605,13 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
     const { variations, unresolvedMultipliers: modelUnresolvedMultipliers } = releaseVariationCurve(model)
     unresolvedMultipliers += modelUnresolvedMultipliers
 
-    const pricedEntries = model.players
+    const playerEntries = model.players
       .map((player) => {
         const baseEstimate = estimateBasePrice(player, asOf)
         const estimate = isFinitePositive(baseEstimate.price) ? baseEstimate : estimateVariationImpliedBasePrice(player, variations) ?? baseEstimate
         return { player, estimate }
       })
-      .filter(({ estimate }) => isFinitePositive(estimate.price))
+    const pricedEntries = playerEntries.filter(({ estimate }) => isFinitePositive(estimate.price))
     const pricedPlayers = pricedEntries.map(({ player }) => player)
     const missingBaseRows = Math.max(0, model.players.length - pricedEntries.length)
     const multipliers = variations.map((variation) => variation.avgMultiplier).filter(isFinitePositive)
@@ -619,7 +638,9 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
       fallbackBaseRows,
     })
 
-    for (const { player, estimate: baseEstimate } of pricedEntries) {
+    for (const { player, estimate } of playerEntries) {
+      const hasModelPrice = isFinitePositive(estimate.price)
+      const baseEstimate = hasModelPrice ? estimate : unpricedBaseEstimate()
       const stsRanking = findStsRanking(player.playerName)
       const checklistTeam = normalizeTeamCode(player.team) || null
       const currentTeam = normalizeTeamCode(stsRanking?.team) || checklistTeam || null
@@ -668,8 +689,8 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
         stsProspectRank: stsRanking?.prospectRank ?? null,
         stsDynastyScore: stsRanking ? scoreStsRanking(stsRanking) : null,
         stsMomentumScore: stsRanking ? scoreStsMomentum(stsRanking) : null,
-        stsRiserValueScore: stsRanking ? scoreStsRiserValue(stsRanking, baseEstimate.price) : null,
-        stsBinTargetScore: stsRanking ? scoreStsBinTarget(stsRanking, baseEstimate.price) : null,
+        stsRiserValueScore: stsRanking && hasModelPrice ? scoreStsRiserValue(stsRanking, baseEstimate.price) : null,
+        stsBinTargetScore: stsRanking && hasModelPrice ? scoreStsBinTarget(stsRanking, baseEstimate.price) : null,
         stsWar: stsRanking?.war ?? null,
         stsChange3d: stsRanking?.change3d ?? null,
         stsChange7d: stsRanking?.change7d ?? null,
@@ -681,7 +702,7 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
         category: model.category,
         baseTwmaPrice: baseEstimate.price,
         pulseBasePrice: player.baseAvgPrice,
-        baseSales: player.baseSalesCount,
+        baseSales: hasModelPrice ? player.baseSalesCount : 0,
         rawBaseSales: baseEstimate.rawSales,
         baseSales30: baseEstimate.sales30,
         baseSales90: baseEstimate.sales90,

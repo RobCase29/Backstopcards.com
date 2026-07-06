@@ -67,6 +67,7 @@ export type LiveMarketListingRecord = LiveMarketListingPayload & {
 export type LiveMarketLatestResponse = {
   available: boolean
   message?: string
+  snapshotCount?: number
   snapshot?: LiveMarketSnapshotResponse & {
     request?: Record<string, unknown>
     stats?: Record<string, unknown>
@@ -331,13 +332,14 @@ export async function fetchLiveMarketStatus(signal?: AbortSignal) {
 }
 
 export async function fetchLatestLiveMarketSnapshot(
-  options: { scanType?: LiveMarketScanType; scanKey?: string; limit?: number } = {},
+  options: { scanType?: LiveMarketScanType; scanKey?: string; limit?: number; snapshotScope?: 'latest' | 'all' } = {},
   signal?: AbortSignal,
 ) {
   const params = new URLSearchParams()
   if (options.scanType) params.set('scanType', options.scanType)
   if (options.scanKey) params.set('scanKey', options.scanKey)
   if (options.limit) params.set('limit', String(options.limit))
+  if (options.snapshotScope === 'all') params.set('snapshotScope', 'all')
   const response = await fetch(`/api/live-market/latest${params.size ? `?${params}` : ''}`, {
     headers: { Accept: 'application/json' },
     signal,

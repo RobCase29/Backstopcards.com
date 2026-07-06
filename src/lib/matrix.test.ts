@@ -244,4 +244,35 @@ describe('pricing matrix', () => {
     expect(matrix.impliedBaseRows).toBe(1)
     expect(matrix.missingBaseRows).toBe(0)
   })
+
+  it('keeps checklist-only players visible without counting them as priced models', () => {
+    const matrix = buildPricingMatrix([
+      {
+        ...bowmanModel,
+        players: [
+          ...bowmanModel.players,
+          {
+            playerName: 'Awaiting Comps',
+            baseAvgPrice: 0,
+            baseSalesCount: 0,
+            variations: [],
+          },
+        ],
+      },
+    ])
+
+    const awaiting = matrix.rows.find((row) => row.playerName === 'Awaiting Comps')
+
+    expect(awaiting).toBeDefined()
+    expect(awaiting?.basePriceSource).toBe('unpriced')
+    expect(awaiting?.baseTwmaPrice).toBe(0)
+    expect(awaiting?.baseMethod).toBe('needs base comps')
+    expect(awaiting?.stsRiserValueScore).toBeNull()
+    expect(awaiting?.stsBinTargetScore).toBeNull()
+    expect(awaiting?.ladder.every((quote) => quote.price === 0)).toBe(true)
+    expect(matrix.totalPlayers).toBe(3)
+    expect(matrix.totalPricedPlayers).toBe(2)
+    expect(matrix.missingBaseRows).toBe(1)
+    expect(matrix.totalResolvedCells).toBe(6)
+  })
 })

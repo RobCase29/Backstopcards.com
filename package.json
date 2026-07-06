@@ -24,6 +24,7 @@
     "checklist:static-snapshot": "node scripts/export-static-checklist-snapshot.mjs",
     "comps:batch:market-movers": "node scripts/market-movers-comp-queue.mjs",
     "comps:queue:sync": "node scripts/market-movers-comp-queue.mjs --sync-complete",
+    "comps:coverage": "node scripts/card-hedge-coverage-sync.mjs",
     "canonical:rebuild": "node scripts/rebuild-canonical-market.mjs",
     "sales:refresh": "npm run sales:sync && npm run sales:sync:structured && npm run canonical:rebuild && npm run sales:doctor",
     "sales:doctor": "node scripts/sales-cache-doctor.mjs",
