@@ -3413,6 +3413,8 @@ type TeamSuperfractorEntry = {
   modelRow: PricingRow | null
   modelValue: number | null
   modelLabel: string
+  modelSource: 'exact' | 'proxy' | 'missing'
+  modelMatchScore: number
   allInPrice: number
   edgeDollars: number | null
   roiPct: number | null
@@ -3438,18 +3440,47 @@ function rawListingTitle(listing: ProspectPulseListing) {
   return String(listing.title ?? '').trim()
 }
 
+function rawListingSearchText(listing: ProspectPulseListing) {
+  return `${listing.title ?? ''} ${listing.variation ?? ''} ${listing.product_type ?? ''} ${listing.release ?? ''}`.toLowerCase()
+}
+
 function rawListingSerialDenominator(listing: ProspectPulseListing) {
   const parsed = Number(String(listing.serial_denominator ?? '').replace(/[^0-9.]/g, ''))
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
 function rawListingLooksLikeSuperfractor(listing: ProspectPulseListing) {
-  const text = `${listing.title ?? ''} ${listing.variation ?? ''}`.toLowerCase()
+  const text = `${listing.title ?? ''} ${listing.variation ?? ''} ${listing.base_color ?? ''}`.toLowerCase()
   const hasSuperfractorText = /\bsuperfractor\b|\bsuper\s+fractor\b/.test(text)
-  const hasLooseSuperOneOfOne = rawListingSerialDenominator(listing) === 1 && /\bsuper\b/.test(text)
+  const hasSerialOne = rawListingSerialDenominator(listing) === 1 || /\b1\s*\/\s*1\b|\b1-of-1\b|\bone\s+of\s+one\b/.test(text)
+  const hasLooseSuperOneOfOne = hasSerialOne && /\bsuper\b/.test(text)
   return Boolean(
     (hasSuperfractorText || hasLooseSuperOneOfOne) &&
       !/\bprinting\s+plate\b|\bplate\b|\bbunt\b|\bdigital\b|\bnft\b|\breprint\b|\bcustom\b/.test(text),
+  )
+}
+
+function rawListingLooksLikeAutograph(listing: ProspectPulseListing) {
+  const text = rawListingSearchText(listing)
+  if (/\b(non[-\s]?auto|no\s+auto|unsigned|facsimile|reprint)\b/.test(text)) return false
+  return /\b(auto|autos|autograph|autographed|autographs|signature|redemption)\b/.test(text)
+}
+
+function rawListingCanUseSuperfractorProxy(listing: ProspectPulseListing) {
+  const text = rawListingSearchText(listing)
+  if (!/\bbowman\b/.test(text)) return false
+  if (!rawListingLooksLikeAutograph(listing)) return false
+  if (
+    /\b(top\s*100|scouts?\s+top\s*100|afl|all[-\s]?star|platinum|transcendent|sterling|bowman'?s?\s+best|meteor|summer\s*camp|ascensions?|draft\s+night|power\s*chords?|die[-\s]?cut)\b/.test(
+      text,
+    )
+  ) {
+    return false
+  }
+  return (
+    /\b(1st|first)\b/.test(text) ||
+    /\bchrome\s+prospect\b/.test(text) ||
+    /\b(?:bcp|bcpa|cpa|cda|bdpa|bma|bca)[-\s]?[a-z0-9]+\b/.test(text)
   )
 }
 
@@ -3459,31 +3490,77 @@ function superfractorQuoteForRow(row: PricingRow) {
   )
 }
 
+function rawListingReleaseYear(listing: ProspectPulseListing) {
+  const fieldYear = Number(String(listing.release_year ?? '').replace(/[^0-9]/g, ''))
+  if (Number.isFinite(fieldYear) && fieldYear >= 1990 && fieldYear <= 2100) return fieldYear
+  const titleYear = rawListingSearchText(listing).match(/\b(20[0-9]{2}|19[0-9]{2})\b/)
+  return titleYear ? Number(titleYear[1]) : null
+}
+
+function rawListingRowMatchScore(row: PricingRow, listing: ProspectPulseListing) {
+  const listingYear = rawListingReleaseYear(listing)
+  const listingText = scanNameKey(rawListingSearchText(listing))
+  let score = 0
+
+  if (listingYear && row.releaseYear === listingYear) score += 36
+  if (listingText.includes(String(row.releaseYear))) score += 8
+  if (row.category === 'chrome' && listingText.includes('chrome')) score += 8
+  if (row.category === 'draft' && listingText.includes('draft')) score += 8
+  if (row.category === 'bowman' && listingText.includes('bowman') && !listingText.includes('draft')) score += 5
+
+  const releaseKey = scanNameKey(row.release)
+  if (releaseKey && listingText.includes(releaseKey)) score += 10
+
+  return score
+}
+
 function bestSuperfractorModelForListing(listing: ProspectPulseListing, rowsByPlayer: Map<string, PricingRow[]>) {
   const playerRows = (rowsByPlayer.get(scanNameKey(rawListingPlayerName(listing))) ?? []).filter(rowHasModel)
-  if (playerRows.length === 0) return { row: null, value: null, label: 'Needs price lane' }
+  if (playerRows.length === 0) return { row: null, value: null, label: 'Needs exact lane', source: 'missing' as const, matchScore: 0 }
 
+  const canUseProxy = rawListingCanUseSuperfractorProxy(listing)
   const modeledRows = playerRows
     .map((row) => {
+      const matchScore = rawListingRowMatchScore(row, listing)
       const quote = superfractorQuoteForRow(row)
-      const fallbackValue = row.baseTwmaPrice > 0 ? row.baseTwmaPrice * 40 : null
+      const fallbackValue = canUseProxy && matchScore > 0 && row.baseTwmaPrice > 0 ? row.baseTwmaPrice * 40 : null
       return {
         row,
         value: quote?.price ?? fallbackValue,
-        label: quote ? quote.label : fallbackValue ? 'Base x40 fallback' : 'Needs price lane',
+        label: quote ? quote.label : fallbackValue ? 'Auto proxy (base x40)' : 'Needs exact lane',
+        source: quote ? ('exact' as const) : fallbackValue ? ('proxy' as const) : ('missing' as const),
+        matchScore,
       }
     })
     .filter((entry) => entry.value !== null && entry.value > 0)
 
-  if (modeledRows.length === 0) return { row: playerRows[0] ?? null, value: null, label: 'Needs price lane' }
+  const fallbackRow = [...playerRows].sort(
+    (left, right) =>
+      rawListingRowMatchScore(right, listing) - rawListingRowMatchScore(left, listing) ||
+      scoreDynastyValueOpportunity(right) - scoreDynastyValueOpportunity(left) ||
+      (right.stsBinTargetScore ?? -1) - (left.stsBinTargetScore ?? -1) ||
+      right.baseTwmaPrice - left.baseTwmaPrice,
+  )[0] ?? null
+
+  if (modeledRows.length === 0) {
+    return {
+      row: fallbackRow,
+      value: null,
+      label: 'Needs exact lane',
+      source: 'missing' as const,
+      matchScore: fallbackRow ? rawListingRowMatchScore(fallbackRow, listing) : 0,
+    }
+  }
 
   const bestModeledRow = modeledRows.sort(
     (left, right) =>
+      right.matchScore - left.matchScore ||
+      (right.source === 'exact' ? 1 : 0) - (left.source === 'exact' ? 1 : 0) ||
       scoreDynastyValueOpportunity(right.row) - scoreDynastyValueOpportunity(left.row) ||
       (right.row.stsBinTargetScore ?? -1) - (left.row.stsBinTargetScore ?? -1) ||
       (right.value ?? 0) - (left.value ?? 0),
   )[0]
-  return bestModeledRow ?? { row: playerRows[0] ?? null, value: null, label: 'Needs price lane' }
+  return bestModeledRow ?? { row: fallbackRow, value: null, label: 'Needs exact lane', source: 'missing' as const, matchScore: 0 }
 }
 
 function rawListingHoursToClose(listing: ProspectPulseListing) {
@@ -3520,16 +3597,20 @@ function buildTeamSuperfractorEntries(
       const dynastySignal = model.row ? clampNumber(scoreDynastyValueOpportunity(model.row) / 80, 0, 1) * 14 : 0
       const auctionHours = type === 'Auction' ? rawListingHoursToClose(listing) : null
       const auctionSignal = auctionHours !== null && auctionHours > 0 ? clampNumber((24 - Math.min(auctionHours, 24)) / 24, 0, 1) * 8 : 0
+      const modelConfidenceSignal = model.source === 'exact' ? 8 : model.source === 'proxy' ? 3 : -12
+      const releaseSignal = model.matchScore > 0 ? 4 : 0
       return {
         listing,
         type,
         modelRow: model.row,
         modelValue: model.value,
         modelLabel: model.label,
+        modelSource: model.source,
+        modelMatchScore: model.matchScore,
         allInPrice,
         edgeDollars,
         roiPct,
-        score: Math.round(edgeSignal + roiSignal + rankSignal + dynastySignal + auctionSignal),
+        score: Math.max(0, Math.round(edgeSignal + roiSignal + rankSignal + dynastySignal + auctionSignal + modelConfidenceSignal + releaseSignal)),
         rankLabel,
       }
     })
@@ -3642,7 +3723,7 @@ function TeamSuperfractorWatch({
                 ? entry.edgeDollars >= 0
                   ? `${money(entry.edgeDollars)} under`
                   : `${money(Math.abs(entry.edgeDollars))} over`
-                : 'Watch'
+                : 'Needs lane'
             return (
               <article className="team-superfractor-row" key={`superfractor:${entry.type}:${entry.listing.item_id ?? entry.listing.listing_url ?? index}`}>
                 <div className="team-superfractor-rank">
@@ -3655,6 +3736,14 @@ function TeamSuperfractorWatch({
                   <div className="bin-evidence-strip">
                     <small>{entry.type}</small>
                     <small className="deal-score-chip">/1 Watch</small>
+                    {entry.modelSource === 'exact' ? (
+                      <small className="sold-lane-chip good">Exact /1 lane</small>
+                    ) : entry.modelSource === 'proxy' ? (
+                      <small className="auto-lens-chip fair">Auto proxy</small>
+                    ) : (
+                      <small className="warning">Exact lane needed</small>
+                    )}
+                    {entry.modelMatchScore > 0 ? <small>Release matched</small> : null}
                     {entry.rankLabel ? <small className="sts-chip">{entry.rankLabel}</small> : null}
                     <small>{rawListingMarketplaceLabel(entry.listing)}</small>
                     {entry.roiPct !== null ? <small className={entry.roiPct >= 0 ? 'sold-lane-chip good' : 'warning'}>{percent(entry.roiPct)} edge</small> : null}

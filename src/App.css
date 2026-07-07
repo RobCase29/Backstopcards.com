@@ -14151,6 +14151,30 @@ button.sales-bucket-tile {
   color: #0b5f58;
 }
 
+.valuation-app .team-superfractor-row .bin-evidence-strip small.warning {
+  border-color: rgba(240, 182, 74, 0.24);
+  background: rgba(240, 182, 74, 0.16);
+  color: #70521a;
+}
+
+.valuation-app .team-superfractor-row .bin-evidence-strip small.sold-lane-chip.good {
+  border-color: rgba(13, 151, 139, 0.26);
+  background: linear-gradient(180deg, rgba(159, 255, 212, 0.84), rgba(117, 238, 200, 0.72));
+  color: #073032;
+}
+
+.valuation-app .team-superfractor-row .bin-evidence-strip small.auto-lens-chip.fair {
+  border-color: rgba(13, 151, 139, 0.22);
+  background: rgba(159, 216, 207, 0.18);
+  color: #0b5f58;
+}
+
+.valuation-app .team-superfractor-row .bin-evidence-strip small.deal-score-chip {
+  border-color: rgba(198, 255, 73, 0.34);
+  background: linear-gradient(180deg, rgba(234, 255, 150, 0.78), rgba(204, 255, 98, 0.68));
+  color: #17300a;
+}
+
 .valuation-app .team-superfractor-action a {
   width: fit-content;
   min-height: 28px;
