@@ -616,6 +616,81 @@ describe('fetchEbayBinListings', () => {
     expect(result.stats.rejectedPlayerMismatches).toBe(2)
   })
 
+  it('can run a broad Superfractor scan without requiring 1st Bowman release text', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string; superfractorOnly?: boolean }> }
+        expect(body.queries).toHaveLength(3)
+        expect(body.queries.map((query) => query.q)).toEqual([
+          'Eli Willits Bowman Superfractor',
+          'Eli Willits Bowman Super Fractor',
+          'Eli Willits Bowman /1',
+        ])
+        expect(body.queries.every((query) => query.superfractorOnly)).toBe(true)
+
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                itemId: 'draft-super-auto',
+                title: '2024 Bowman Draft Chrome Eli Willits Superfractor Auto 1/1',
+                price: { value: '6500.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+              {
+                itemId: 'first-bowman-super',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Super Fractor one of one',
+                price: { value: '5100.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[1],
+              },
+              {
+                itemId: 'red-auto',
+                title: '2026 Bowman Chrome Eli Willits 1st Bowman Red Auto /5',
+                price: { value: '900.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[2],
+              },
+              {
+                itemId: 'printing-plate',
+                title: '2026 Bowman Chrome Eli Willits Printing Plate 1/1',
+                price: { value: '900.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[2],
+              },
+              {
+                itemId: 'digital-super',
+                title: 'Topps Bunt Digital Bowman Eli Willits Superfractor 1/1',
+                price: { value: '99.00', currency: 'USD' },
+                buyingOptions: ['FIXED_PRICE'],
+                _bowmanTraderQuery: body.queries[0],
+              },
+            ],
+            stats: {
+              queriesRun: 3,
+              queriesSucceeded: 3,
+              queriesFailed: 0,
+              pagesFetched: 3,
+              upstreamTotal: 4,
+              dedupedItems: 4,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayBinListings({ model, playerLimit: 1, searchMode: 'superfractor' })
+
+    expect(result.listings.map((listing) => listing.item_id)).toEqual(['draft-super-auto', 'first-bowman-super'])
+    expect(result.listings.map((listing) => listing.variation)).toEqual(['Superfractor Auto /1', 'Superfractor /1'])
+    expect(result.listings.every((listing) => listing.serial_denominator === 1)).toBe(true)
+    expect(result.listings.map((listing) => listing.checklist_first_bowman)).toEqual([false, true])
+    expect(result.stats.rejectedPlayerMismatches).toBe(3)
+  })
+
   it('rejects paper autos and insert autos that do not belong to the chrome auto model', async () => {
     vi.stubGlobal(
       'fetch',

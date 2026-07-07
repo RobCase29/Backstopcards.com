@@ -13,6 +13,7 @@ type FanaticsCollectQueryMeta = {
   variationTerm?: string
   baseAutoOnly?: boolean
   lowSerialNonAuto?: boolean
+  superfractorOnly?: boolean
   serialDenominator?: number
 }
 
@@ -159,6 +160,19 @@ function titleLooksLikeLowSerialNonAuto(title: string) {
   )
 }
 
+function titleLooksLikeSuperfractor(title: string) {
+  const serialDenominator = serialDenominatorFromTitle(title)
+  const hasSuperfractorText = /\bsuperfractor\b|\bsuper\s+fractor\b/i.test(title)
+  const hasLooseSuperOneOfOne =
+    serialDenominator === 1 && /\bsuper\b/i.test(title) && !/\bprinting\s+plate\b|\bplate\b/i.test(title)
+  return Boolean(
+    /\bbowman\b/i.test(title) &&
+      (hasSuperfractorText || hasLooseSuperOneOfOne) &&
+      !/\bbunt\b|\bdigital\b|\bnft\b|\breprint\b|\bcustom\b|\bprinting\s+plate\b|\bplate\b/i.test(title) &&
+      !titleLooksHandSignedAuto(title),
+  )
+}
+
 function parallelText(title: string) {
   return title.replace(/\b(?:red\s+sox|white\s+sox|reds?|blue\s+jays)\b/gi, ' ')
 }
@@ -184,6 +198,10 @@ function lowSerialNonAutoVariationLabel(title: string, serialDenominator: number
                     ? 'Mini Diamond'
                     : 'Numbered'
   return serialDenominator ? `${parallel} /${serialDenominator}` : parallel
+}
+
+function superfractorVariationLabel(title: string) {
+  return titleLooksLikePackIssuedAuto(title) ? 'Superfractor Auto /1' : 'Superfractor /1'
 }
 
 function compactQuery(query: string) {
@@ -233,6 +251,16 @@ function buildLowSerialNonAutoQueries(model: ChecklistModel, playerName: string)
     category: model.category,
     lowSerialNonAuto: true,
     serialDenominator,
+  }))
+}
+
+function buildSuperfractorQueries(playerName: string): FanaticsCollectQueryMeta[] {
+  return ['Bowman Superfractor', 'Bowman Super Fractor', 'Bowman /1'].map((queryTerm) => ({
+    q: compactQuery(`${playerName} ${queryTerm}`),
+    playerName,
+    release: 'Bowman Superfractor',
+    superfractorOnly: true,
+    serialDenominator: 1,
   }))
 }
 
@@ -325,7 +353,9 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
   const title = firstString([item.title])
   if (!playerName || !title || !titleMatchesPlayer(title, playerName)) return null
   if (!titleMatchesVariationTerm(title, meta?.variationTerm)) return null
-  if (meta?.lowSerialNonAuto) {
+  if (meta?.superfractorOnly) {
+    if (!titleLooksLikeSuperfractor(title)) return null
+  } else if (meta?.lowSerialNonAuto) {
     if (!titleLooksLikeLowSerialNonAuto(title)) return null
   } else {
     if (meta?.baseAutoOnly && !titleLooksLikeBaseAuto(title)) return null
@@ -337,10 +367,13 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
 
   const stsRanking = findStsRanking(playerName)
   const isHandSigned = titleLooksHandSignedAuto(title)
-  const serialDenominator = isHandSigned || meta?.baseAutoOnly ? null : serialDenominatorFromTitle(title)
+  const parsedSerialDenominator = serialDenominatorFromTitle(title)
+  const serialDenominator = isHandSigned || meta?.baseAutoOnly ? null : meta?.superfractorOnly ? parsedSerialDenominator ?? 1 : parsedSerialDenominator
   const inferredVariation =
     isHandSigned
       ? 'Hand Signed Auto'
+      : meta?.superfractorOnly
+        ? superfractorVariationLabel(title)
       : meta?.lowSerialNonAuto
         ? lowSerialNonAutoVariationLabel(title, serialDenominator)
         : meta?.baseAutoOnly || titleLooksLikeBaseAuto(title)
@@ -361,13 +394,13 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
     marketplace_label: 'Fanatics Collect',
     image_url: imageUrlFrom(item.imageSets) || imageUrlFrom(item.images),
     release_year: meta?.releaseYear ?? null,
-    product_type: fallbackReleaseLabel,
+    product_type: meta?.superfractorOnly ? 'Bowman Superfractor' : fallbackReleaseLabel,
     release: meta?.release ?? fallbackReleaseLabel,
     variation: inferredVariation,
     serial_denominator: serialDenominator,
     is_hand_signed: isHandSigned,
     checklist_match: true,
-    checklist_first_bowman: !meta?.lowSerialNonAuto,
+    checklist_first_bowman: meta?.superfractorOnly ? /\b(1st|first)\b/i.test(title) : !meta?.lowSerialNonAuto,
     comps: [],
     prospect: {
       name: playerName,
@@ -418,6 +451,8 @@ export async function fetchFanaticsCollectBinListings(options: FetchFanaticsColl
   const queries = players.flatMap((player) =>
     searchMode === 'low-serial-non-auto'
       ? buildLowSerialNonAutoQueries(options.model, player.playerName)
+      : searchMode === 'superfractor'
+        ? buildSuperfractorQueries(player.playerName)
       : [
           buildPlayerQuery(
             options.model,

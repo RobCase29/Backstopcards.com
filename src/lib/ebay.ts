@@ -12,6 +12,7 @@ type EbayQueryMeta = {
   variationTerm?: string
   baseAutoOnly?: boolean
   lowSerialNonAuto?: boolean
+  superfractorOnly?: boolean
   serialDenominator?: number
 }
 
@@ -96,7 +97,7 @@ export type EbayBinScanResult = {
   stats: EbayScanStats
 }
 
-export type EbayBinSearchMode = 'checklist' | 'player' | 'variation' | 'base-auto' | 'low-serial-non-auto'
+export type EbayBinSearchMode = 'checklist' | 'player' | 'variation' | 'base-auto' | 'low-serial-non-auto' | 'superfractor'
 export type EbayListingMode = 'bin' | 'auction'
 
 export class EbayRateLimitError extends Error {
@@ -222,6 +223,19 @@ function titleLooksLikeLowSerialNonAuto(title: string) {
   )
 }
 
+function titleLooksLikeSuperfractor(title: string) {
+  const serialDenominator = serialDenominatorFromTitle(title)
+  const hasSuperfractorText = /\bsuperfractor\b|\bsuper\s+fractor\b/i.test(title)
+  const hasLooseSuperOneOfOne =
+    serialDenominator === 1 && /\bsuper\b/i.test(title) && !/\bprinting\s+plate\b|\bplate\b/i.test(title)
+  return Boolean(
+    /\bbowman\b/i.test(title) &&
+      (hasSuperfractorText || hasLooseSuperOneOfOne) &&
+      !/\bbunt\b|\bdigital\b|\bnft\b|\breprint\b|\bcustom\b|\bprinting\s+plate\b|\bplate\b/i.test(title) &&
+      !titleLooksHandSignedAuto(title),
+  )
+}
+
 function parallelText(title: string) {
   return title.replace(/\b(?:red\s+sox|white\s+sox|reds?|blue\s+jays)\b/gi, ' ')
 }
@@ -247,6 +261,10 @@ function lowSerialNonAutoVariationLabel(title: string, serialDenominator: number
                   ? 'Mini Diamond'
                   : 'Numbered'
   return serialDenominator ? `${parallel} /${serialDenominator}` : parallel
+}
+
+function superfractorVariationLabel(title: string) {
+  return titleLooksLikePackIssuedAuto(title) ? 'Superfractor Auto /1' : 'Superfractor /1'
 }
 
 function compactQuery(query: string) {
@@ -297,6 +315,16 @@ function buildLowSerialNonAutoQueries(model: ChecklistModel, playerName: string)
     category: model.category,
     lowSerialNonAuto: true,
     serialDenominator,
+  }))
+}
+
+function buildSuperfractorQueries(playerName: string): EbayQueryMeta[] {
+  return ['Bowman Superfractor', 'Bowman Super Fractor', 'Bowman /1'].map((queryTerm) => ({
+    q: compactQuery(`${playerName} ${queryTerm}`),
+    playerName,
+    release: 'Bowman Superfractor',
+    superfractorOnly: true,
+    serialDenominator: 1,
   }))
 }
 
@@ -364,7 +392,9 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   const title = firstString([item.title], '')
   if (!playerName || !title || !titleMatchesPlayer(title, playerName)) return null
   if (!titleMatchesVariationTerm(title, meta?.variationTerm)) return null
-  if (meta?.lowSerialNonAuto) {
+  if (meta?.superfractorOnly) {
+    if (!titleLooksLikeSuperfractor(title)) return null
+  } else if (meta?.lowSerialNonAuto) {
     if (!titleLooksLikeLowSerialNonAuto(title)) return null
   } else {
     if (meta?.baseAutoOnly && !titleLooksLikeBaseAuto(title)) return null
@@ -378,10 +408,13 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   const price = currentListingPrice(item, listingMode)
   const stsRanking = findStsRanking(playerName)
   const isHandSigned = titleLooksHandSignedAuto(title)
-  const serialDenominator = isHandSigned || meta?.baseAutoOnly ? null : serialDenominatorFromTitle(title)
+  const parsedSerialDenominator = serialDenominatorFromTitle(title)
+  const serialDenominator = isHandSigned || meta?.baseAutoOnly ? null : meta?.superfractorOnly ? parsedSerialDenominator ?? 1 : parsedSerialDenominator
   const inferredVariation =
     isHandSigned
       ? 'Hand Signed Auto'
+      : meta?.superfractorOnly
+        ? superfractorVariationLabel(title)
       : meta?.lowSerialNonAuto
         ? lowSerialNonAutoVariationLabel(title, serialDenominator)
         : meta?.baseAutoOnly || titleLooksLikeBaseAuto(title)
@@ -406,11 +439,13 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
     end_time: item.itemEndDate ?? null,
     bid_count: item.bidCount ?? 0,
     release_year: meta?.releaseYear ?? null,
-    product_type: fallbackReleaseLabel,
+    product_type: meta?.superfractorOnly ? 'Bowman Superfractor' : fallbackReleaseLabel,
     release: meta?.release ?? fallbackReleaseLabel,
     variation: inferredVariation,
     serial_denominator: serialDenominator,
     is_hand_signed: isHandSigned,
+    checklist_match: true,
+    checklist_first_bowman: meta?.superfractorOnly ? /\b(1st|first)\b/i.test(title) : undefined,
     comps: [],
     prospect: {
       name: playerName,
@@ -480,6 +515,8 @@ async function fetchEbayListings(options: FetchEbayListingsOptions & { listingMo
   const queries = players.flatMap((player) =>
     searchMode === 'low-serial-non-auto'
       ? buildLowSerialNonAutoQueries(options.model, player.playerName)
+      : searchMode === 'superfractor'
+        ? buildSuperfractorQueries(player.playerName)
       : [
           buildPlayerQuery(
             options.model,

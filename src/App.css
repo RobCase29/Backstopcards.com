@@ -13991,6 +13991,179 @@ button.sales-bucket-tile {
   white-space: nowrap;
 }
 
+.valuation-app .team-superfractor-watch {
+  min-width: 0;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(14, 47, 46, 0.12);
+  border-radius: 8px;
+  background:
+    linear-gradient(125deg, rgba(198, 255, 73, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(244, 234, 215, 0.9)),
+    var(--panel);
+  box-shadow: 0 18px 42px rgba(20, 28, 26, 0.13);
+}
+
+.valuation-app .team-superfractor-watch .team-section-head strong {
+  color: var(--ink);
+}
+
+.valuation-app .team-superfractor-watch .team-section-head span,
+.valuation-app .team-superfractor-watch .team-section-head small {
+  color: rgba(14, 47, 46, 0.62);
+}
+
+.valuation-app .team-superfractor-watch .team-section-pills span {
+  border-color: rgba(14, 47, 46, 0.1);
+  background: rgba(255, 250, 240, 0.78);
+  color: rgba(14, 47, 46, 0.68);
+}
+
+.valuation-app .team-superfractor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+
+.valuation-app .team-superfractor-actions small {
+  color: rgba(14, 47, 46, 0.58);
+  font-size: 0.7rem;
+  font-weight: 860;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.valuation-app .superfractor-alert {
+  color: #70521a;
+  border-color: rgba(240, 182, 74, 0.26);
+  background: rgba(240, 182, 74, 0.14);
+}
+
+.valuation-app .team-superfractor-list {
+  display: grid;
+  gap: 7px;
+}
+
+.valuation-app .team-superfractor-head,
+.valuation-app .team-superfractor-row {
+  display: grid;
+  grid-template-columns: 62px minmax(280px, 1fr) minmax(105px, 0.32fr) minmax(125px, 0.38fr) minmax(118px, 0.34fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.valuation-app .team-superfractor-head {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(14, 47, 46, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 250, 240, 0.9);
+  color: rgba(14, 47, 46, 0.58);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  font-weight: 860;
+  text-transform: uppercase;
+}
+
+.valuation-app .team-superfractor-row {
+  min-width: 0;
+  min-height: 86px;
+  padding: 10px;
+  border: 1px solid rgba(14, 47, 46, 0.1);
+  border-left: 5px solid #c6ff49;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(198, 255, 73, 0.13), transparent 34%),
+    rgba(255, 255, 255, 0.68);
+}
+
+.valuation-app .team-superfractor-rank,
+.valuation-app .team-superfractor-main,
+.valuation-app .team-superfractor-money,
+.valuation-app .team-superfractor-action {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.valuation-app .team-superfractor-rank {
+  justify-items: center;
+}
+
+.valuation-app .team-superfractor-rank strong,
+.valuation-app .team-superfractor-money strong,
+.valuation-app .team-superfractor-action strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.valuation-app .team-superfractor-rank span {
+  width: fit-content;
+  min-width: 30px;
+  min-height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(14, 47, 46, 0.1);
+  border-radius: 999px;
+  background: rgba(14, 47, 46, 0.07);
+  color: rgba(14, 47, 46, 0.7);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 900;
+}
+
+.valuation-app .team-superfractor-main > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.94rem;
+  font-weight: 930;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.valuation-app .team-superfractor-main > span,
+.valuation-app .team-superfractor-money span {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(14, 47, 46, 0.58);
+  font-size: 0.68rem;
+  font-weight: 820;
+  line-height: 1.28;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.valuation-app .team-superfractor-row .bin-evidence-strip small {
+  border-color: rgba(14, 47, 46, 0.1);
+  background: rgba(14, 47, 46, 0.05);
+  color: rgba(14, 47, 46, 0.68);
+}
+
+.valuation-app .team-superfractor-row .bin-evidence-strip small.sts-chip {
+  border-color: rgba(13, 151, 139, 0.16);
+  background: rgba(159, 216, 207, 0.16);
+  color: #0b5f58;
+}
+
+.valuation-app .team-superfractor-action a {
+  width: fit-content;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #087f8c;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
 .valuation-app .team-opportunity-board {
   min-width: 0;
   margin-top: 12px;
@@ -14757,7 +14930,9 @@ button.sales-bucket-tile {
   }
 
   .valuation-app .team-scan-coverage-head,
-  .valuation-app .team-scan-player-row {
+  .valuation-app .team-scan-player-row,
+  .valuation-app .team-superfractor-head,
+  .valuation-app .team-superfractor-row {
     grid-template-columns: minmax(170px, 1.2fr) minmax(170px, 1fr) minmax(105px, 0.62fr);
   }
 
@@ -14770,6 +14945,13 @@ button.sales-bucket-tile {
 
   .valuation-app .team-scan-player-actions {
     justify-content: flex-start;
+  }
+
+  .valuation-app .team-superfractor-head span:nth-child(4),
+  .valuation-app .team-superfractor-head span:nth-child(5),
+  .valuation-app .team-superfractor-money,
+  .valuation-app .team-superfractor-action {
+    grid-column: 1 / -1;
   }
 
   .valuation-app .team-hunt-strip > div {
@@ -14792,6 +14974,7 @@ button.sales-bucket-tile {
   .valuation-app .team-opportunity-panel,
   .valuation-app .team-coverage-engine,
   .valuation-app .team-scan-coverage,
+  .valuation-app .team-superfractor-watch,
   .valuation-app .team-board-band {
     border-radius: 8px;
     padding: 12px;
@@ -14827,6 +15010,10 @@ button.sales-bucket-tile {
     display: none;
   }
 
+  .valuation-app .team-superfractor-head {
+    display: none;
+  }
+
   .valuation-app .coverage-cadence,
   .valuation-app .coverage-release-bars,
   .valuation-app .coverage-next-head,
@@ -14842,6 +15029,18 @@ button.sales-bucket-tile {
 
   .valuation-app .team-scan-player-row {
     grid-template-columns: 1fr;
+  }
+
+  .valuation-app .team-superfractor-row {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .team-superfractor-rank {
+    justify-items: start;
+  }
+
+  .valuation-app .team-superfractor-actions .primary-button {
+    width: 100%;
   }
 
   .valuation-app .team-pricing-backlog summary {

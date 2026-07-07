@@ -614,7 +614,8 @@ function pathForAppRoute(route: AppRoute) {
 function scoreSettingsForSearchMode(settings: ScoreSettings, searchMode: BinSearchMode): ScoreSettings {
   return {
     ...settings,
-    targetUniverse: searchMode === 'low-serial-non-auto' ? 'low-serial-non-auto' : 'strict',
+    targetUniverse:
+      searchMode === 'low-serial-non-auto' ? 'low-serial-non-auto' : searchMode === 'superfractor' ? 'expanded' : 'strict',
   }
 }
 
@@ -3406,6 +3407,285 @@ function teamOpportunityPrimaryRank(opportunity: TeamChecklistOpportunity) {
       : null
 }
 
+type TeamSuperfractorEntry = {
+  listing: ProspectPulseListing
+  type: 'BIN' | 'Auction'
+  modelRow: PricingRow | null
+  modelValue: number | null
+  modelLabel: string
+  allInPrice: number
+  edgeDollars: number | null
+  roiPct: number | null
+  score: number
+  rankLabel: string | null
+}
+
+function rawListingNumber(value: unknown) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  const parsed = parseMoneyInput(String(value ?? ''))
+  return parsed ?? 0
+}
+
+function rawListingAllInPrice(listing: ProspectPulseListing) {
+  return rawListingNumber(listing.current_price ?? listing.price ?? listing.sold_price) + rawListingNumber(listing.shipping_cost)
+}
+
+function rawListingUrl(listing: ProspectPulseListing) {
+  return String(listing.listing_url ?? listing.url ?? '').trim()
+}
+
+function rawListingTitle(listing: ProspectPulseListing) {
+  return String(listing.title ?? '').trim()
+}
+
+function rawListingSerialDenominator(listing: ProspectPulseListing) {
+  const parsed = Number(String(listing.serial_denominator ?? '').replace(/[^0-9.]/g, ''))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function rawListingLooksLikeSuperfractor(listing: ProspectPulseListing) {
+  const text = `${listing.title ?? ''} ${listing.variation ?? ''}`.toLowerCase()
+  const hasSuperfractorText = /\bsuperfractor\b|\bsuper\s+fractor\b/.test(text)
+  const hasLooseSuperOneOfOne = rawListingSerialDenominator(listing) === 1 && /\bsuper\b/.test(text)
+  return Boolean(
+    (hasSuperfractorText || hasLooseSuperOneOfOne) &&
+      !/\bprinting\s+plate\b|\bplate\b|\bbunt\b|\bdigital\b|\bnft\b|\breprint\b|\bcustom\b/.test(text),
+  )
+}
+
+function superfractorQuoteForRow(row: PricingRow) {
+  return (
+    row.ladder.find((quote) => /\bsuperfractor\b|\bsuper\s+fractor\b|\/1\b/i.test(quote.label) && quote.price > 0) ?? null
+  )
+}
+
+function bestSuperfractorModelForListing(listing: ProspectPulseListing, rowsByPlayer: Map<string, PricingRow[]>) {
+  const playerRows = (rowsByPlayer.get(scanNameKey(rawListingPlayerName(listing))) ?? []).filter(rowHasModel)
+  if (playerRows.length === 0) return { row: null, value: null, label: 'Needs price lane' }
+
+  const modeledRows = playerRows
+    .map((row) => {
+      const quote = superfractorQuoteForRow(row)
+      const fallbackValue = row.baseTwmaPrice > 0 ? row.baseTwmaPrice * 40 : null
+      return {
+        row,
+        value: quote?.price ?? fallbackValue,
+        label: quote ? quote.label : fallbackValue ? 'Base x40 fallback' : 'Needs price lane',
+      }
+    })
+    .filter((entry) => entry.value !== null && entry.value > 0)
+
+  if (modeledRows.length === 0) return { row: playerRows[0] ?? null, value: null, label: 'Needs price lane' }
+
+  const bestModeledRow = modeledRows.sort(
+    (left, right) =>
+      scoreDynastyValueOpportunity(right.row) - scoreDynastyValueOpportunity(left.row) ||
+      (right.row.stsBinTargetScore ?? -1) - (left.row.stsBinTargetScore ?? -1) ||
+      (right.value ?? 0) - (left.value ?? 0),
+  )[0]
+  return bestModeledRow ?? { row: playerRows[0] ?? null, value: null, label: 'Needs price lane' }
+}
+
+function rawListingHoursToClose(listing: ProspectPulseListing) {
+  const endTime = listing.end_time ? new Date(listing.end_time).getTime() : Number.NaN
+  if (!Number.isFinite(endTime)) return null
+  const hours = (endTime - Date.now()) / (1000 * 60 * 60)
+  return Number.isFinite(hours) ? hours : null
+}
+
+function buildTeamSuperfractorEntries(
+  binScan: EbayBinScanResult | null,
+  auctionScan: EbayBinScanResult | null,
+  rows: PricingRow[],
+) {
+  const rowsByPlayer = pricingRowsByPlayer(rows)
+  const rawEntries = [
+    ...(binScan?.listings ?? []).map((listing) => ({ listing, type: 'BIN' as const })),
+    ...(auctionScan?.listings ?? []).map((listing) => ({ listing, type: 'Auction' as const })),
+  ]
+
+  return rawEntries
+    .filter(({ listing }) => rawListingLooksLikeSuperfractor(listing))
+    .map<TeamSuperfractorEntry>(({ listing, type }) => {
+      const model = bestSuperfractorModelForListing(listing, rowsByPlayer)
+      const allInPrice = rawListingAllInPrice(listing)
+      const edgeDollars = model.value !== null ? model.value - allInPrice : null
+      const roiPct = edgeDollars !== null && allInPrice > 0 ? edgeDollars / allInPrice : null
+      const ranking = findStsRanking(rawListingPlayerName(listing))
+      const rankLabel = model.row ? primaryRankLabel(model.row) : ranking ? primaryStsRankLabel(ranking) : null
+      const primaryRank = model.row ? primaryStsRank({ rank: model.row.stsRank, prospectRank: model.row.stsProspectRank }) : ranking ? primaryStsRank(ranking) : null
+      const edgeSignal = edgeDollars !== null ? clampNumber(edgeDollars / Math.max(80, (model.value ?? 0) * 0.4), -0.25, 1) * 42 : 0
+      const roiSignal = roiPct !== null ? clampNumber((roiPct + 0.08) / 0.7, 0, 1) * 18 : 0
+      const rankSignal = primaryRank ? clampNumber((700 - Math.min(primaryRank, 700)) / 700, 0, 1) * 18 : 0
+      const dynastySignal = model.row ? clampNumber(scoreDynastyValueOpportunity(model.row) / 80, 0, 1) * 14 : 0
+      const auctionHours = type === 'Auction' ? rawListingHoursToClose(listing) : null
+      const auctionSignal = auctionHours !== null && auctionHours > 0 ? clampNumber((24 - Math.min(auctionHours, 24)) / 24, 0, 1) * 8 : 0
+      return {
+        listing,
+        type,
+        modelRow: model.row,
+        modelValue: model.value,
+        modelLabel: model.label,
+        allInPrice,
+        edgeDollars,
+        roiPct,
+        score: Math.round(edgeSignal + roiSignal + rankSignal + dynastySignal + auctionSignal),
+        rankLabel,
+      }
+    })
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        (right.edgeDollars ?? Number.NEGATIVE_INFINITY) - (left.edgeDollars ?? Number.NEGATIVE_INFINITY) ||
+        left.allInPrice - right.allInPrice,
+    )
+}
+
+function TeamSuperfractorWatch({
+  rows,
+  binScan,
+  auctionScan,
+  loading,
+  error,
+  canScan,
+  checklistPlayerCount,
+  onScan,
+}: {
+  rows: PricingRow[]
+  binScan: EbayBinScanResult | null
+  auctionScan: EbayBinScanResult | null
+  loading: boolean
+  error: string | null
+  canScan: boolean
+  checklistPlayerCount: number
+  onScan: () => void
+}) {
+  const entries = useMemo(() => buildTeamSuperfractorEntries(binScan, auctionScan, rows), [auctionScan, binScan, rows])
+  const hasScan = Boolean(binScan || auctionScan)
+  const queryCount = (binScan?.stats.queriesRun ?? 0) + (auctionScan?.stats.queriesRun ?? 0)
+  const rawListingCount = (binScan?.listings.length ?? 0) + (auctionScan?.listings.length ?? 0)
+  const latestScanTime = [binScan?.fetchedAt, auctionScan?.fetchedAt]
+    .map((value) => (value ? Date.parse(value) : Number.NaN))
+    .filter(Number.isFinite)
+    .sort((left, right) => right - left)[0]
+  const latestLabel = latestScanTime ? new Date(latestScanTime).toLocaleTimeString() : 'Not scanned'
+
+  return (
+    <section className="team-superfractor-watch" aria-label="Marlins Superfractor watch">
+      <div className="team-section-head">
+        <div>
+          <span>Superfractor Watch</span>
+          <strong>All Marlins Bowman /1s we can see</strong>
+          <small>Player-wide search across Superfractor, Super Fractor, and Bowman /1 language. Release/year text is allowed to float.</small>
+        </div>
+        <div className="team-section-pills">
+          <span>{entries.length.toLocaleString()} /1 hits</span>
+          <span>{rawListingCount.toLocaleString()} raw listings</span>
+          <span>{queryCount.toLocaleString()} queries</span>
+          <span>{checklistPlayerCount.toLocaleString()} players</span>
+          <span>{latestLabel}</span>
+        </div>
+      </div>
+
+      <div className="team-superfractor-actions">
+        <button className="primary-button" type="button" onClick={onScan} disabled={!canScan}>
+          <Gem size={15} />
+          {loading ? 'Scanning /1s' : 'Scan Marlins Superfractors'}
+        </button>
+        <small>Broad /1 sweep, separate from the normal buy-grade board.</small>
+      </div>
+
+      {error ? (
+        <div className="bin-radar-alert superfractor-alert">
+          <ShieldCheck size={16} />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {loading && entries.length === 0 ? (
+        <div className="bin-empty-state ready compact-empty">
+          <RefreshCw size={24} className="spin" />
+          <div>
+            <strong>Sweeping the Marlins /1 market.</strong>
+            <span>Checking every loaded Miami checklist player against active Superfractor and Bowman /1 language.</span>
+          </div>
+        </div>
+      ) : !hasScan ? (
+        <div className="bin-empty-state ready compact-empty">
+          <Gem size={24} />
+          <div>
+            <strong>Run the Marlins Superfractor sweep.</strong>
+            <span>This is intentionally broader than the normal auto model so odd release text does not hide a /1.</span>
+          </div>
+        </div>
+      ) : entries.length === 0 ? (
+        <div className="bin-empty-state muted compact-empty">
+          <Activity size={24} />
+          <div>
+            <strong>No active Marlins Superfractors surfaced.</strong>
+            <span>The latest sweep returned raw listings, but none cleared the /1 title guard.</span>
+          </div>
+        </div>
+      ) : (
+        <div className="team-superfractor-list">
+          <div className="team-superfractor-head">
+            <span>Rank</span>
+            <span>Listing</span>
+            <span>All In</span>
+            <span>Model</span>
+            <span>Action</span>
+          </div>
+          {entries.slice(0, 18).map((entry, index) => {
+            const url = rawListingUrl(entry.listing)
+            const signal =
+              entry.edgeDollars !== null
+                ? entry.edgeDollars >= 0
+                  ? `${money(entry.edgeDollars)} under`
+                  : `${money(Math.abs(entry.edgeDollars))} over`
+                : 'Watch'
+            return (
+              <article className="team-superfractor-row" key={`superfractor:${entry.type}:${entry.listing.item_id ?? entry.listing.listing_url ?? index}`}>
+                <div className="team-superfractor-rank">
+                  <strong>#{index + 1}</strong>
+                  <span>{entry.score}</span>
+                </div>
+                <div className="team-superfractor-main">
+                  <strong>{rawListingPlayerName(entry.listing) || 'Marlins player'}</strong>
+                  <span>{rawListingTitle(entry.listing)}</span>
+                  <div className="bin-evidence-strip">
+                    <small>{entry.type}</small>
+                    <small className="deal-score-chip">/1 Watch</small>
+                    {entry.rankLabel ? <small className="sts-chip">{entry.rankLabel}</small> : null}
+                    <small>{rawListingMarketplaceLabel(entry.listing)}</small>
+                    {entry.roiPct !== null ? <small className={entry.roiPct >= 0 ? 'sold-lane-chip good' : 'warning'}>{percent(entry.roiPct)} edge</small> : null}
+                  </div>
+                </div>
+                <div className="team-superfractor-money">
+                  <strong>{money(entry.allInPrice)}</strong>
+                  <span>{entry.type === 'Auction' ? 'current bid + ship' : 'ask + ship'}</span>
+                </div>
+                <div className="team-superfractor-money">
+                  <strong>{entry.modelValue !== null ? money(entry.modelValue) : '--'}</strong>
+                  <span>{entry.modelLabel}</span>
+                </div>
+                <div className="team-superfractor-action">
+                  <strong>{signal}</strong>
+                  {url ? (
+                    <a href={url} target="_blank" rel="noreferrer">
+                      <ExternalLink size={14} />
+                      Open
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function TeamDealCommandCenter({
   checklistOpportunities,
   dealEntries,
@@ -3537,12 +3817,16 @@ function MarlinsTeamPage({
   auctionOpportunities,
   binScan,
   auctionScan,
+  superfractorBinScan,
+  superfractorAuctionScan,
   cachedObservedAt,
   checklistLoading,
   binLoading,
   auctionLoading,
+  superfractorLoading,
   binError,
   auctionError,
+  superfractorError,
   ebayStatus,
   modelCount,
   checklistPlayerCount,
@@ -3555,6 +3839,7 @@ function MarlinsTeamPage({
   lastRejectedListing,
   resultsRef,
   onScanTeam,
+  onScanSuperfractors,
   onRefreshCoverage,
   onOpenDesk,
   onSelectRow,
@@ -3570,12 +3855,16 @@ function MarlinsTeamPage({
   auctionOpportunities: Opportunity[]
   binScan: EbayBinScanResult | null
   auctionScan: EbayBinScanResult | null
+  superfractorBinScan: EbayBinScanResult | null
+  superfractorAuctionScan: EbayBinScanResult | null
   cachedObservedAt?: string | null
   checklistLoading: boolean
   binLoading: boolean
   auctionLoading: boolean
+  superfractorLoading: boolean
   binError: string | null
   auctionError: string | null
+  superfractorError: string | null
   ebayStatus: EbayStatus | null
   modelCount: number
   checklistPlayerCount: number
@@ -3588,6 +3877,7 @@ function MarlinsTeamPage({
   lastRejectedListing: ListingRejection | null
   resultsRef: RefObject<HTMLDivElement | null>
   onScanTeam: () => void
+  onScanSuperfractors: () => void
   onRefreshCoverage: () => void
   onOpenDesk: () => void
   onSelectRow: (rowId: string) => void
@@ -3619,7 +3909,9 @@ function MarlinsTeamPage({
   const marketplaceCounts = marketplaceCountsFromOpportunities(liveEntries)
   const configured = Boolean(ebayStatus?.configured)
   const busy = binLoading || auctionLoading
+  const superfractorBusy = superfractorLoading
   const canScan = configured && checklistPlayerCount > 0 && !busy && !checklistLoading
+  const canScanSuperfractors = configured && checklistPlayerCount > 0 && !superfractorBusy && !checklistLoading
   const scanButtonLabel = busy
     ? 'Scanning Full Miami Checklist'
     : checklistLoading
@@ -3655,6 +3947,10 @@ function MarlinsTeamPage({
             <button className="primary-button" type="button" onClick={onScanTeam} disabled={!canScan}>
               <RefreshCw size={16} className={busy ? 'spin' : undefined} />
               {scanButtonLabel}
+            </button>
+            <button className="ghost-button" type="button" onClick={onScanSuperfractors} disabled={!canScanSuperfractors}>
+              <Gem size={15} className={superfractorBusy ? 'spin' : undefined} />
+              {superfractorBusy ? 'Scanning /1s' : 'Superfractor Sweep'}
             </button>
             {topLive?.listing.listingUrl ? (
               <a className="ghost-button" href={topLive.listing.listingUrl} target="_blank" rel="noreferrer">
@@ -3730,6 +4026,10 @@ function MarlinsTeamPage({
             <RefreshCw size={16} className={busy ? 'spin' : undefined} />
             {scanButtonLabel}
           </button>
+          <button className="ghost-button" type="button" onClick={onScanSuperfractors} disabled={!canScanSuperfractors}>
+            <Gem size={15} className={superfractorBusy ? 'spin' : undefined} />
+            {superfractorBusy ? 'Scanning /1s' : 'Scan /1 Watch'}
+          </button>
           <small>
             {scanQueryCount > 0
               ? `${scanQueryCount.toLocaleString()} latest marketplace queries`
@@ -3768,6 +4068,17 @@ function MarlinsTeamPage({
         busy={busy}
         onScanTeam={onScanTeam}
         onScanPlayer={onScanChecklistPlayer}
+      />
+
+      <TeamSuperfractorWatch
+        rows={rows}
+        binScan={superfractorBinScan}
+        auctionScan={superfractorAuctionScan}
+        loading={superfractorLoading}
+        error={superfractorError}
+        canScan={canScanSuperfractors}
+        checklistPlayerCount={checklistPlayerCount}
+        onScan={onScanSuperfractors}
       />
 
       <TeamChecklistOpportunityBoard
@@ -5558,6 +5869,7 @@ function BinRadar({
   onScanTopProspects,
   onScanBaseAutos,
   onScanLowSerial,
+  onScanSuperfractors,
   resultsRef,
 }: {
   models: ChecklistModel[]
@@ -5600,6 +5912,7 @@ function BinRadar({
   onScanTopProspects: () => void
   onScanBaseAutos: () => void
   onScanLowSerial: () => void
+  onScanSuperfractors: () => void
   resultsRef: RefObject<HTMLDivElement | null>
 }) {
   const configured = Boolean(ebayStatus?.configured)
@@ -5624,6 +5937,7 @@ function BinRadar({
   const trimmedSearchTerm = searchTerm.trim()
   const isBaseAutoMode = searchMode === 'base-auto'
   const isLowSerialMode = searchMode === 'low-serial-non-auto'
+  const isSuperfractorMode = searchMode === 'superfractor'
   const requiresFocus = searchMode === 'player' || searchMode === 'variation'
   const selectedVariationOption = variationOptions.find((option) => option.label === searchTerm)
   const hasStructuredVariationOptions = variationOptions.length > 0
@@ -5653,6 +5967,7 @@ function BinRadar({
   const canScan = configured && setCount > 0 && hasPlayerUniverse && hasFocus && hasTargetQueue && !busy && !modelLoading
   const canScanBaseAutos = configured && setCount > 0 && hasPlayerUniverse && hasTargetQueue && !busy && !modelLoading
   const canScanLowSerial = configured && setCount > 0 && hasPlayerUniverse && valuePlayerCount > 0 && !busy && !modelLoading
+  const canScanSuperfractors = configured && setCount > 0 && hasPlayerUniverse && !busy && !modelLoading
   const canScanValueTargets = configured && setCount > 0 && hasPlayerUniverse && valuePlayerCount > 0 && !busy && !modelLoading
   const canScanTopProspects = configured && setCount > 0 && hasPlayerUniverse && prospectPlayerCount > 0 && !busy && !modelLoading
   const queueWaitingLabel =
@@ -5668,6 +5983,7 @@ function BinRadar({
   if (loading || auctionLoading) scanButtonLabel = 'Scanning'
   else if (isBaseAutoMode) scanButtonLabel = 'Scan Base Market'
   else if (isLowSerialMode) scanButtonLabel = 'Scan Low Serial'
+  else if (isSuperfractorMode) scanButtonLabel = 'Scan Superfractors'
   else if (modelLoading) scanButtonLabel = 'Model loading'
   else if (rateLimited && !scan) scanButtonLabel = 'Retry Scan'
   else if (!configured) scanButtonLabel = 'eBay offline'
@@ -5701,6 +6017,8 @@ function BinRadar({
         ? `Scanning true base chrome autos across ${selectedSetLabel}; parallel/color terms are rejected.`
       : isLowSerialMode
         ? `Scanning 1st Bowman non-auto parallels numbered /99 and lower across ${selectedSetLabel}; results require exact sold-lane support.`
+      : isSuperfractorMode
+        ? `Scanning Bowman Superfractors and Bowman /1 listings across ${selectedSetLabel}; release/year text is not required.`
       : searchMode === 'variation'
         ? selectedVariationOption
           ? `Scanning ${selectedVariationOption.label} listings across ${selectedSetLabel}.`
@@ -5736,7 +6054,9 @@ function BinRadar({
                 ? 'Base auto scan'
                 : isLowSerialMode
                   ? 'Low serial scan'
-                : `${searchMode}: ${trimmedSearchTerm || 'focus needed'}`}
+                  : isSuperfractorMode
+                    ? 'Superfractor scan'
+                    : `${searchMode}: ${trimmedSearchTerm || 'focus needed'}`}
           </span>
           <span>{listingCount.toLocaleString()} BINs</span>
           {visibleMarketplaceCounts.map((provider) => (
@@ -5778,6 +6098,13 @@ function BinRadar({
           <span>
             <strong>Low serial</strong>
             <small>/99 and lower only</small>
+          </span>
+        </button>
+        <button className="preset-scan-card" type="button" onClick={onScanSuperfractors} disabled={!canScanSuperfractors}>
+          <Gem size={17} />
+          <span>
+            <strong>Superfractors</strong>
+            <small>Bowman /1 watch</small>
           </span>
         </button>
       </div>
@@ -5829,6 +6156,7 @@ function BinRadar({
                 <option value="checklist">Full checklist</option>
                 <option value="base-auto">Base autos</option>
                 <option value="low-serial-non-auto">Low serial non-auto</option>
+                <option value="superfractor">Superfractor /1</option>
                 <option value="player">Single player</option>
                 <option value="variation">Variation</option>
               </select>
@@ -5865,7 +6193,15 @@ function BinRadar({
             ) : (
               <div className="bin-control stacked bin-focus-placeholder">
                 <span>Focus</span>
-                <strong>{isBaseAutoMode ? 'Base autos only' : isLowSerialMode ? 'Numbered /99 and lower' : 'Whole board'}</strong>
+                <strong>
+                  {isBaseAutoMode
+                    ? 'Base autos only'
+                    : isLowSerialMode
+                      ? 'Numbered /99 and lower'
+                      : isSuperfractorMode
+                        ? 'Bowman /1 watch'
+                        : 'Whole board'}
+                </strong>
               </div>
             )}
           </div>
@@ -7729,10 +8065,15 @@ function App() {
   const [marlinsCoverage, setMarlinsCoverage] = useState<ChecklistCoveragePayload | null>(null)
   const [marlinsCoverageLoading, setMarlinsCoverageLoading] = useState(false)
   const [marlinsCoverageError, setMarlinsCoverageError] = useState<string | null>(null)
+  const [marlinsSuperfractorBinScan, setMarlinsSuperfractorBinScan] = useState<EbayBinScanResult | null>(null)
+  const [marlinsSuperfractorAuctionScan, setMarlinsSuperfractorAuctionScan] = useState<EbayBinScanResult | null>(null)
+  const [marlinsSuperfractorLoading, setMarlinsSuperfractorLoading] = useState(false)
+  const [marlinsSuperfractorError, setMarlinsSuperfractorError] = useState<string | null>(null)
   const [rankingsRefreshing, setRankingsRefreshing] = useState(false)
   const [rankingsDatasetVersion, setRankingsDatasetVersion] = useState(0)
   const checklistRequestRef = useRef<AbortController | null>(null)
   const coverageRequestRef = useRef<AbortController | null>(null)
+  const marlinsSuperfractorRequestRef = useRef<AbortController | null>(null)
   const checklistRequestIdRef = useRef(0)
   const binRequestRef = useRef<AbortController | null>(null)
   const auctionRequestRef = useRef<AbortController | null>(null)
@@ -8011,6 +8352,7 @@ function App() {
       checklistRequestIdRef.current += 1
       checklistRequestRef.current?.abort()
       coverageRequestRef.current?.abort()
+      marlinsSuperfractorRequestRef.current?.abort()
       binRequestRef.current?.abort()
       auctionRequestRef.current?.abort()
       caseHitRequestRef.current?.abort()
@@ -8229,7 +8571,12 @@ function App() {
       releaseScope: effectiveBinModelKey === BIN_ALL_MODELS_KEY ? ('all' as const) : ('selected' as const),
       targetCategory: selectedModel?.category ?? 'bowman',
       targetReleaseYear: selectedModel?.releaseYear ?? 2026,
-      targetUniverse: binSearchMode === 'low-serial-non-auto' ? ('low-serial-non-auto' as const) : ('strict' as const),
+      targetUniverse:
+        binSearchMode === 'low-serial-non-auto'
+          ? ('low-serial-non-auto' as const)
+          : binSearchMode === 'superfractor'
+            ? ('expanded' as const)
+            : ('strict' as const),
     }
   }, [binMinPrice, binSearchMode, effectiveBinModelKey, selectedBinModels])
   const binOpportunities = useMemo(
@@ -8287,6 +8634,14 @@ function App() {
   const displayedMarlinsAuctionOpportunities = useMemo(
     () => marlinsAuctionOpportunitySource.filter((opportunity) => opportunityMatchesTeamUniverse(opportunity, MARLINS_TEAM_CODE, marlinsPlayerKeys)),
     [marlinsAuctionOpportunitySource, marlinsPlayerKeys],
+  )
+  const visibleMarlinsSuperfractorBinScan = useMemo(
+    () => (marlinsSuperfractorBinScan ? filterRejectedScanResult(marlinsSuperfractorBinScan, rejectedListingKeys) : null),
+    [marlinsSuperfractorBinScan, rejectedListingKeys],
+  )
+  const visibleMarlinsSuperfractorAuctionScan = useMemo(
+    () => (marlinsSuperfractorAuctionScan ? filterRejectedScanResult(marlinsSuperfractorAuctionScan, rejectedListingKeys) : null),
+    [marlinsSuperfractorAuctionScan, rejectedListingKeys],
   )
   const waxComps = useMemo(() => parseWaxComps(waxCompText), [waxCompText])
   const waxManualListings = useMemo(() => parseDaveAdamsQuotes(waxDaveAdamsText, waxQuery), [waxDaveAdamsText, waxQuery])
@@ -8674,6 +9029,137 @@ function App() {
     revealDealResults()
     void scanEbayBinListings(scanOptions)
     void scanEbayAuctionListings(scanOptions)
+    void scanMarlinsSuperfractors()
+  }
+
+  async function scanMarlinsSuperfractors() {
+    if (marlinsChecklistPlayerNames.length === 0) {
+      setMarlinsSuperfractorError('No Marlins checklist players are loaded yet.')
+      return
+    }
+
+    if (!ebayStatus?.configured) {
+      setMarlinsSuperfractorError(ebayStatus?.message ?? 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in .env.local')
+      return
+    }
+
+    const scanModels = binModelOptions.filter((model) => (marlinsChecklistPlayerNamesByModel.get(checklistModelKey(model))?.length ?? 0) > 0)
+    if (scanModels.length === 0) {
+      setMarlinsSuperfractorError('No loaded checklist model has Marlins players yet.')
+      return
+    }
+
+    navigateAppRoute('marlins')
+    marlinsSuperfractorRequestRef.current?.abort()
+    const controller = new AbortController()
+    marlinsSuperfractorRequestRef.current = controller
+    setMarlinsSuperfractorLoading(true)
+    setMarlinsSuperfractorError(null)
+
+    try {
+      const settledScans = await mapWithConcurrency(scanModels, BIN_SCAN_CONCURRENCY, async (model) => {
+        const modelPlayerNames = marlinsChecklistPlayerNamesByModel.get(checklistModelKey(model)) ?? []
+        try {
+          const providerOptions = {
+            model,
+            minPrice: 0,
+            playerLimit: null,
+            playerNames: modelPlayerNames,
+            searchMode: 'superfractor' as const,
+            searchTerm: '',
+            limitPerPlayer: 80,
+            maxPagesPerPlayer: 1,
+            signal: controller.signal,
+          }
+          const providerScans = await Promise.allSettled([
+            fetchEbayBinListings(providerOptions),
+            fetchFanaticsCollectBinListings(providerOptions),
+            fetchEbayAuctionListings({
+              ...providerOptions,
+              maxHoursToClose: 24 * 14,
+            }),
+          ])
+          const successfulBinScans = providerScans.flatMap((providerResult, providerIndex) =>
+            providerResult.status === 'fulfilled' && providerIndex < 2 ? [providerResult.value] : [],
+          )
+          const successfulAuctionScans = providerScans.flatMap((providerResult, providerIndex) =>
+            providerResult.status === 'fulfilled' && providerIndex === 2 ? [providerResult.value] : [],
+          )
+          const providerErrors = providerScans.flatMap((providerResult, providerIndex) =>
+            providerResult.status === 'rejected'
+              ? [
+                  {
+                    query: `${checklistModelLabel(model)} / ${
+                      providerIndex === 0 ? 'eBay' : providerIndex === 1 ? 'Fanatics Collect' : 'eBay auctions'
+                    }`,
+                    error:
+                      providerResult.reason instanceof Error
+                        ? providerResult.reason.message
+                        : providerIndex === 2
+                          ? 'eBay auction Superfractor scan failed'
+                          : 'Marketplace Superfractor scan failed',
+                  },
+                ]
+              : [],
+          )
+
+          if (successfulBinScans.length === 0 && successfulAuctionScans.length === 0) {
+            throw new Error(providerErrors[0]?.error ?? 'Marlins Superfractor scan failed')
+          }
+
+          return {
+            status: 'fulfilled' as const,
+            bin: successfulBinScans.length > 0 ? mergeBinScans(successfulBinScans, providerErrors) : null,
+            auction: successfulAuctionScans.length > 0 ? mergeBinScans(successfulAuctionScans) : null,
+            errors: successfulBinScans.length > 0 ? [] : providerErrors,
+          }
+        } catch (reason) {
+          return {
+            status: 'rejected' as const,
+            model,
+            reason,
+          }
+        }
+      })
+      if (controller.signal.aborted) return
+
+      const successfulBinScans = settledScans.flatMap((result) =>
+        result.status === 'fulfilled' && result.bin ? [result.bin] : [],
+      )
+      const successfulAuctionScans = settledScans.flatMap((result) =>
+        result.status === 'fulfilled' && result.auction ? [result.auction] : [],
+      )
+      const failedScans = settledScans.flatMap((result) =>
+        result.status === 'rejected'
+          ? [
+              {
+                query: checklistModelLabel(result.model),
+                error: result.reason instanceof Error ? result.reason.message : 'Marlins Superfractor scan failed',
+              },
+            ]
+          : result.errors,
+      )
+
+      if (successfulBinScans.length === 0 && successfulAuctionScans.length === 0) {
+        throw new Error(failedScans[0]?.error ?? 'Marlins Superfractor scan failed')
+      }
+
+      const binResult = successfulBinScans.length > 0 ? mergeBinScans(successfulBinScans, failedScans) : null
+      const auctionResult = successfulAuctionScans.length > 0 ? mergeBinScans(successfulAuctionScans, binResult ? [] : failedScans) : null
+      setMarlinsSuperfractorBinScan(binResult)
+      setMarlinsSuperfractorAuctionScan(auctionResult)
+      setMarlinsSuperfractorError(
+        binResult ? binScanErrorSummary(binResult) : auctionResult ? binScanErrorSummary(auctionResult) : null,
+      )
+    } catch (scanError) {
+      if (controller.signal.aborted) return
+      setMarlinsSuperfractorError(friendlyBinError(scanError))
+    } finally {
+      if (marlinsSuperfractorRequestRef.current === controller) {
+        setMarlinsSuperfractorLoading(false)
+        marlinsSuperfractorRequestRef.current = null
+      }
+    }
   }
 
   function scanMarlinsChecklistPlayer(playerName: string) {
@@ -8817,6 +9303,27 @@ function App() {
       playerScope: 'value-25' as const,
       searchMode: 'low-serial-non-auto' as const,
       searchTerm: '',
+    }
+    void scanEbayBinListings(scanOptions)
+    void scanEbayAuctionListings(scanOptions)
+  }
+
+  function scanSuperfractors() {
+    setWorkMode('deals')
+    revealDealResults()
+    setBinSearchMode('superfractor')
+    setBinSearchTerm('')
+    setBinPlayerScope('all')
+    setBinListings([])
+    setBinScan(null)
+    setBinError(null)
+    resetAuctionScan()
+
+    const scanOptions = {
+      playerScope: 'all' as const,
+      searchMode: 'superfractor' as const,
+      searchTerm: '',
+      minPrice: 0,
     }
     void scanEbayBinListings(scanOptions)
     void scanEbayAuctionListings(scanOptions)
@@ -9512,12 +10019,16 @@ function App() {
           auctionOpportunities={displayedMarlinsAuctionOpportunities}
           binScan={binScan}
           auctionScan={auctionScan}
+          superfractorBinScan={visibleMarlinsSuperfractorBinScan}
+          superfractorAuctionScan={visibleMarlinsSuperfractorAuctionScan}
           cachedObservedAt={cachedLiveMarket?.observedAt ?? null}
           checklistLoading={checklistLoading}
           binLoading={binLoading}
           auctionLoading={auctionLoading}
+          superfractorLoading={marlinsSuperfractorLoading}
           binError={binError}
           auctionError={auctionError}
+          superfractorError={marlinsSuperfractorError}
           ebayStatus={ebayStatus}
           modelCount={marlinsChecklistModelCount}
           checklistPlayerCount={marlinsChecklistPlayerNames.length}
@@ -9530,6 +10041,7 @@ function App() {
           lastRejectedListing={lastRejectedListing}
           resultsRef={dealResultsRef}
           onScanTeam={scanMarlinsTeamDeals}
+          onScanSuperfractors={scanMarlinsSuperfractors}
           onRefreshCoverage={refreshMarlinsCoverage}
           onOpenDesk={() => navigateAppRoute('desk')}
           onSelectRow={setSelectedRowId}
@@ -9861,6 +10373,7 @@ function App() {
             onScanTopProspects={scanTop100Prospects}
             onScanBaseAutos={scanBaseAutos}
             onScanLowSerial={scanLowSerialNonAutos}
+            onScanSuperfractors={scanSuperfractors}
             resultsRef={dealResultsRef}
           />
           <LiveMarketMap
