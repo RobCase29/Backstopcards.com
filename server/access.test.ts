@@ -28,6 +28,8 @@ describe('private access gate', () => {
     expect(safeNextPath('https://example.com')).toBe('/')
     expect(safeNextPath('//example.com')).toBe('/')
     expect(safeNextPath('/api/access-login')).toBe('/')
+    expect(safeNextPath('/api/access/login')).toBe('/')
+    expect(safeNextPath('/api/access/logout')).toBe('/')
     expect(safeNextPath('/access.html?next=/')).toBe('/')
   })
 })

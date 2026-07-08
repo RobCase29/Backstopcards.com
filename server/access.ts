@@ -114,7 +114,7 @@ export function readCookie(cookieHeader: string | null, name: string) {
 export function safeNextPath(value: string | null | undefined, fallback = '/') {
   const next = (value || '').trim()
   if (!next || !next.startsWith('/') || next.startsWith('//')) return fallback
-  if (next.startsWith('/api/access-login') || next.startsWith('/api/access-logout')) return fallback
+  if (next.startsWith('/api/access-login') || next.startsWith('/api/access-logout') || next.startsWith('/api/access/')) return fallback
   if (next.startsWith('/access.html')) return fallback
   return next
 }
