@@ -27,6 +27,9 @@ describe('card title guards', () => {
     expect(titleMatchesVariationTerm('2026 Bowman Chrome Eli Willits 1st Bowman Gold Ink Auto /15', 'Gold Image Variation /15')).toBe(
       true,
     )
+    expect(titleMatchesVariationTerm('2026 Bowman Chrome Prospect Gold Ink Dillon Lewis 1st ROOKIE AUTO /15 EXCH', 'Gold Image Variation /15')).toBe(
+      true,
+    )
     expect(titleMatchesVariationTerm('2026 Bowman Chrome Eli Willits 1st Bowman Gold Refractor Auto /50', 'Gold Image Variation /15')).toBe(
       false,
     )

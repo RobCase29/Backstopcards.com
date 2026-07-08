@@ -84,6 +84,14 @@ export function variationQueryTerm(variationTerm = '') {
   return variationTerm
 }
 
+export function titleLooksLikeGoldInkAuto(title: string) {
+  return /\bgold\s+ink\b/i.test(title) && titleLooksLikePackIssuedAuto(title)
+}
+
+export function goldInkVariationLabel(title: string) {
+  return `Gold Image Variation /${titleSerialDenominator(title) ?? 15}`
+}
+
 const BASE_AUTO_EXCLUSION_PATTERN =
   /\b(?:superfractor|super\s+fractor|refractor|xfractor|x-fractor|logofractor|firefractor|packfractor|speckle|atomic|mini\s*diamond|shimmer|lava|wave|raywave|mojo|sapphire|image\s+variation|peanuts?|popcorn|sunflower|gum\s*ball|gumball|snack\s+pack)\b/i
 const BASE_AUTO_COLOR_PARALLEL_PATTERN =

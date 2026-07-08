@@ -1,9 +1,11 @@
 import type { ChecklistModel, ProspectPulseListing } from '../types'
 import {
+  goldInkVariationLabel,
   lowSerialNonAutoVariationLabel,
   normalizedTitleKey,
   superfractorVariationLabel,
   titleEligibleForBowmanChromeAutoModel,
+  titleLooksLikeGoldInkAuto,
   titleLooksLikeBaseAuto,
   titleLooksLikeLowSerialNonAuto,
   titleLooksLikeSuperfractor,
@@ -214,6 +216,16 @@ function buildSuperfractorQueries(playerName: string): EbayQueryMeta[] {
   }))
 }
 
+function priorityAuctionVariationTerms(model: ChecklistModel) {
+  return [
+    ...new Set(
+      model.multipliers
+        .map((variation) => variation.variation)
+        .filter((variation) => /\bgold\b/i.test(variation) && /\bimage\b|\bink\b/i.test(variation) && /\/\s*15\b/.test(variation)),
+    ),
+  ]
+}
+
 function selectedPlayers(options: {
   model: ChecklistModel
   playerLimit?: number | null
@@ -289,11 +301,14 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   const price = currentListingPrice(item, listingMode)
   const stsRanking = findStsRanking(playerName)
   const isHandSigned = titleLooksHandSignedAuto(title)
-  const parsedSerialDenominator = titleSerialDenominator(title)
+  const isGoldInk = titleLooksLikeGoldInkAuto(title)
+  const parsedSerialDenominator = titleSerialDenominator(title) ?? (isGoldInk ? 15 : null)
   const serialDenominator = isHandSigned || meta?.baseAutoOnly ? null : meta?.superfractorOnly ? parsedSerialDenominator ?? 1 : parsedSerialDenominator
   const inferredVariation =
     isHandSigned
       ? 'Hand Signed Auto'
+      : isGoldInk
+        ? goldInkVariationLabel(title)
       : meta?.superfractorOnly
         ? superfractorVariationLabel(title)
       : meta?.lowSerialNonAuto
@@ -393,20 +408,27 @@ async function fetchEbayListings(options: FetchEbayListingsOptions & { listingMo
     throw new Error(searchMode === 'player' ? `No ${releaseLabel} checklist player matches "${searchTerm}".` : 'No checklist players are available to scan.')
   }
 
-  const queries = players.flatMap((player) =>
-    searchMode === 'low-serial-non-auto'
-      ? buildLowSerialNonAutoQueries(options.model, player.playerName)
-      : searchMode === 'superfractor'
-        ? buildSuperfractorQueries(player.playerName)
-      : [
-          buildPlayerQuery(
-            options.model,
-            player.playerName,
-            searchMode === 'variation' ? searchTerm : '',
-            searchMode === 'base-auto',
-          ),
-        ],
-  )
+  const goldInkAuctionTerms =
+    options.listingMode === 'auction' && (searchMode === 'checklist' || searchMode === 'player')
+      ? priorityAuctionVariationTerms(options.model)
+      : []
+  const queries = players.flatMap((player) => {
+    if (searchMode === 'low-serial-non-auto') return buildLowSerialNonAutoQueries(options.model, player.playerName)
+    if (searchMode === 'superfractor') return buildSuperfractorQueries(player.playerName)
+
+    const baseQuery = buildPlayerQuery(
+      options.model,
+      player.playerName,
+      searchMode === 'variation' ? searchTerm : '',
+      searchMode === 'base-auto',
+    )
+    if (searchMode === 'variation' || searchMode === 'base-auto' || goldInkAuctionTerms.length === 0) return [baseQuery]
+
+    return [
+      baseQuery,
+      ...goldInkAuctionTerms.map((variationTerm) => buildPlayerQuery(options.model, player.playerName, variationTerm)),
+    ]
+  })
   const response = await fetch('/api/ebay/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

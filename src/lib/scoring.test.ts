@@ -81,6 +81,22 @@ describe('normalizeListing', () => {
     expect(normalized.isTargetAuto).toBe(true)
   })
 
+  it('normalizes Gold Ink exchange auctions into the Gold Image /15 lane', () => {
+    const normalized = normalizeListing(
+      listing({
+        title: '2026 Bowman Chrome Prospect Gold Ink Dillon Lewis 1st ROOKIE AUTO /15 EXCH',
+        player_name: 'Dillon Lewis',
+        buying_format: 'Auction',
+        variation: '',
+        serial_denominator: null,
+      }),
+    )
+
+    expect(normalized.variationLabel).toBe('Gold Image Variation /15')
+    expect(normalized.serialDenominator).toBe(15)
+    expect(normalized.isTargetAuto).toBe(true)
+  })
+
   it('detects graded cards from title metadata even when is_graded is missing', () => {
     const normalized = normalizeListing(
       listing({

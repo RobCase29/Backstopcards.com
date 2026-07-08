@@ -39,6 +39,7 @@ const TEAM_COLOR_WORD_CONTEXT_PATTERN = /\b(?:red\s+sox|white\s+sox|reds?|blue\s
 
 const TITLE_PARALLEL_CUES: Array<{ label: string; denominator: number; pattern: RegExp }> = [
   { label: 'Superfractor', denominator: 1, pattern: /\bsuperfractor\b|\bsuper\s*(?:auto|refractor)\b/i },
+  { label: 'Gold Image Variation', denominator: 15, pattern: /\bgold\s+ink\b/i },
   { label: 'Red', denominator: 5, pattern: /\bred\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+red\b/i },
   { label: 'Orange', denominator: 25, pattern: /\borange\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+orange\b/i },
   { label: 'Gold', denominator: 50, pattern: /\bgold\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+gold\b/i },
@@ -296,6 +297,7 @@ function comparableText(value: string) {
   return value
     .toLowerCase()
     .replace(TEAM_COLOR_WORD_CONTEXT_PATTERN, ' ')
+    .replace(/\bgold\s+ink\b/g, 'gold image')
     .replace(/\bsunflower\s+seeds?\b/g, 'sunflower snack pack')
     .replace(/\bsunflower\b(?!\s+snack\s+pack)/g, 'sunflower snack pack')
     .replace(/\bgum\s*ball\b(?!\s+snack\s+pack)|\bbubble\s+gum\b(?!\s+snack\s+pack)/g, 'gumball snack pack')

@@ -854,6 +854,71 @@ describe('fetchEbayAuctionListings', () => {
     expect(result.stats.rejectedPlayerMismatches).toBe(1)
   })
 
+  it('adds targeted Gold Ink auction queries when the release has a Gold Image /15 lane', async () => {
+    const soonEnd = new Date(Date.now() + 2 * 60 * 60 * 1_000).toISOString()
+    const goldInkModel: ChecklistModel = {
+      ...model,
+      multipliers: [{ variation: 'Gold Image Variation /15', avgMultiplier: 12, totalSales: 20 }],
+      players: [
+        {
+          playerName: 'Dillon Lewis',
+          baseAvgPrice: 12,
+          baseSalesCount: 0,
+          variations: [],
+        },
+      ],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          queries: Array<{ q: string; playerName: string; variationTerm?: string }>
+          buyingOption: string
+        }
+        expect(body.queries).toHaveLength(2)
+        expect(body.queries[0]?.q).toBe('Dillon Lewis 2026 bowman chrome 1st auto')
+        expect(body.queries[1]?.q).toBe('Dillon Lewis gold ink 2026 bowman chrome 1st auto')
+        expect(body.queries[1]?.variationTerm).toBe('Gold Image Variation /15')
+        expect(body.buyingOption).toBe('AUCTION')
+
+        return new Response(
+          JSON.stringify({
+            fetchedAt: '2026-06-20T12:00:00.000Z',
+            items: [
+              {
+                itemId: 'gold-ink-auction',
+                title: '2026 Bowman Chrome Prospect Gold Ink Dillon Lewis 1st ROOKIE AUTO /15 EXCH',
+                itemWebUrl: 'https://www.ebay.com/itm/gold-ink-auction',
+                currentBidPrice: { value: '81.00', currency: 'USD' },
+                buyingOptions: ['AUCTION'],
+                itemEndDate: soonEnd,
+                bidCount: 5,
+                _bowmanTraderQuery: body.queries[1],
+              },
+            ],
+            stats: {
+              queriesRun: 2,
+              queriesSucceeded: 2,
+              queriesFailed: 0,
+              pagesFetched: 2,
+              upstreamTotal: 1,
+              dedupedItems: 1,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }),
+    )
+
+    const result = await fetchEbayAuctionListings({ model: goldInkModel, playerLimit: 1 })
+
+    expect(result.listings).toHaveLength(1)
+    expect(result.listings[0]?.item_id).toBe('gold-ink-auction')
+    expect(result.listings[0]?.variation).toBe('Gold Image Variation /15')
+    expect(result.listings[0]?.serial_denominator).toBe(15)
+    expect(result.listings[0]?.buying_format).toBe('Auction')
+  })
+
   it('uses current bid price plus shipping when Browse omits auction price', async () => {
     const soonEnd = new Date(Date.now() + 2 * 60 * 60 * 1_000).toISOString()
     vi.stubGlobal(
