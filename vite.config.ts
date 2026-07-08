@@ -10,6 +10,8 @@ import {
   handleProspectPulseNodeRequest,
   handleRankingsNodeRequest,
   handleSalesCacheNodeRequest,
+  handleScanCoverageNodeRequest,
+  handleScanQueueNodeRequest,
 } from './server/proxy'
 
 function prospectPulseProxy(): Plugin {
@@ -124,6 +126,32 @@ function liveMarketProxy(): Plugin {
   }
 }
 
+function scanCoverageProxy(): Plugin {
+  return {
+    name: 'scan-coverage-local-proxy',
+    configureServer(server) {
+      const env = loadEnv(server.config.mode, process.cwd(), '')
+
+      server.middlewares.use('/api/scan-coverage', async (request, response) => {
+        await handleScanCoverageNodeRequest(request, response, env)
+      })
+    },
+  }
+}
+
+function scanQueueProxy(): Plugin {
+  return {
+    name: 'scan-queue-local-proxy',
+    configureServer(server) {
+      const env = loadEnv(server.config.mode, process.cwd(), '')
+
+      server.middlewares.use('/api/scan-queue', async (request, response) => {
+        await handleScanQueueNodeRequest(request, response, env)
+      })
+    },
+  }
+}
+
 function rankingsProxy(): Plugin {
   return {
     name: 'rankings-local-proxy',
@@ -147,6 +175,8 @@ export default defineConfig({
     salesCacheProxy(),
     checklistProxy(),
     liveMarketProxy(),
+    scanCoverageProxy(),
+    scanQueueProxy(),
     rankingsProxy(),
   ],
 })

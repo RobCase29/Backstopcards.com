@@ -72,6 +72,8 @@ const SALES_CACHE_ROUTES = new Set(['status', 'player', 'players', 'flag-sale', 
 const SALES_CACHE_WRITE_ROUTES = new Set(['flag-sale', 'merge-bucket'])
 const CHECKLIST_ROUTES = new Set(['status', 'universe', 'catalog', 'model', 'coverage'])
 const LIVE_MARKET_ROUTES = new Set(['status', 'snapshot', 'latest', 'prune'])
+const SCAN_COVERAGE_ROUTES = new Set(['status', 'run'])
+const SCAN_QUEUE_ROUTES = new Set(['status', 'schedule', 'claim', 'complete', 'cron'])
 const RANKINGS_ROUTES = new Set(['status', 'refresh', 'data'])
 const MAX_SALES_CACHE_PLAYER_LENGTH = 100
 const MAX_SALES_CACHE_BUCKETS = 72
@@ -82,6 +84,11 @@ const MAX_CHECKLIST_COVERAGE_ROWS = 2_500
 const MAX_SALES_CACHE_NOTE_LENGTH = 240
 const MAX_LIVE_MARKET_LISTINGS = 900
 const MAX_LIVE_MARKET_SCAN_KEY_LENGTH = 180
+const MAX_SCAN_COVERAGE_TARGETS = 3_000
+const MAX_SCAN_COVERAGE_STATUS_ROWS = 1_000
+const MAX_SCAN_QUEUE_JOBS = 3_000
+const MAX_SCAN_QUEUE_CLAIM = 80
+const MAX_SCAN_QUEUE_STATUS_ROWS = 500
 const LIVE_MARKET_BIN_TTL_SECONDS = 45 * 60
 const LIVE_MARKET_AUCTION_TTL_SECONDS = 10 * 60
 const LIVE_MARKET_MAX_TTL_SECONDS = 6 * 60 * 60
@@ -235,6 +242,91 @@ type LiveMarketSnapshotPayload = {
   stats?: unknown
   marketplaces?: string[]
   listings?: LiveMarketListingPayload[]
+}
+
+type ScanCoverageTargetPayload = {
+  targetKey?: string
+  playerName?: string
+  playerKey?: string
+  releaseKey?: string
+  releaseYear?: number
+  releaseName?: string
+  modelKey?: string
+  teamCode?: string
+  targetType?: string
+  status?: string
+  listingCount?: number
+  opportunityCount?: number
+  bestEdgeDollars?: number | null
+  bestScore?: number | null
+  marketplaces?: unknown
+  error?: string
+}
+
+type ScanCoverageRunPayload = {
+  runId?: string
+  scanType?: string
+  scanKey?: string
+  teamCode?: string
+  teamLabel?: string
+  targetType?: string
+  searchMode?: string
+  playerScope?: string
+  releaseScope?: string
+  observedAt?: string
+  status?: string
+  marketplaces?: string[]
+  request?: unknown
+  stats?: unknown
+  targets?: ScanCoverageTargetPayload[]
+}
+
+type ScanQueueJobPayload = {
+  queueKey?: string
+  teamCode?: string
+  teamLabel?: string
+  scanType?: string
+  targetType?: string
+  playerName?: string
+  playerKey?: string
+  releaseKey?: string
+  releaseYear?: number
+  releaseName?: string
+  modelKey?: string
+  searchMode?: string
+  playerScope?: string
+  priority?: number
+  runAfter?: string
+  maxAttempts?: number
+  payload?: unknown
+}
+
+type ScanQueueSchedulePayload = {
+  source?: string
+  teamCode?: string
+  teamLabel?: string
+  scanType?: string
+  targetType?: string
+  runAfter?: string
+  jobs?: ScanQueueJobPayload[]
+}
+
+type ScanQueueClaimPayload = {
+  teamCode?: string
+  scanType?: string
+  targetType?: string
+  leaseOwner?: string
+  leaseSeconds?: number
+  limit?: number
+}
+
+type ScanQueueCompletePayload = {
+  leaseOwner?: string
+  jobs?: Array<{
+    jobId?: string
+    status?: string
+    error?: string
+  }>
 }
 
 type EbayTokenCache = {
@@ -454,6 +546,107 @@ function ensureLiveMarketSchema(db: SqliteDatabase) {
   `)
   ensureSqliteColumn(db, 'live_market_listings', 'marketplace', "TEXT NOT NULL DEFAULT 'ebay'")
   ensureSqliteColumn(db, 'live_market_listings', 'marketplace_label', "TEXT NOT NULL DEFAULT 'eBay'")
+}
+
+function ensureScanCoverageSchema(db: SqliteDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scan_coverage_runs (
+      run_id TEXT PRIMARY KEY,
+      scan_type TEXT NOT NULL,
+      scan_key TEXT NOT NULL,
+      team_code TEXT NOT NULL DEFAULT '',
+      team_label TEXT NOT NULL DEFAULT '',
+      target_type TEXT NOT NULL DEFAULT 'listing',
+      search_mode TEXT NOT NULL DEFAULT '',
+      player_scope TEXT NOT NULL DEFAULT '',
+      release_scope TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'complete',
+      observed_at TEXT NOT NULL,
+      target_count INTEGER NOT NULL DEFAULT 0,
+      listing_count INTEGER NOT NULL DEFAULT 0,
+      opportunity_count INTEGER NOT NULL DEFAULT 0,
+      queries_run INTEGER NOT NULL DEFAULT 0,
+      queries_succeeded INTEGER NOT NULL DEFAULT 0,
+      queries_failed INTEGER NOT NULL DEFAULT 0,
+      marketplaces_json TEXT NOT NULL DEFAULT '[]',
+      request_json TEXT NOT NULL DEFAULT '{}',
+      stats_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS scan_coverage_targets (
+      run_id TEXT NOT NULL,
+      target_key TEXT NOT NULL,
+      player_name TEXT NOT NULL,
+      player_key TEXT NOT NULL DEFAULT '',
+      release_key TEXT NOT NULL DEFAULT '',
+      release_year INTEGER,
+      release_name TEXT NOT NULL DEFAULT '',
+      model_key TEXT NOT NULL DEFAULT '',
+      team_code TEXT NOT NULL DEFAULT '',
+      target_type TEXT NOT NULL DEFAULT 'listing',
+      status TEXT NOT NULL DEFAULT 'scanned_no_hits',
+      listing_count INTEGER NOT NULL DEFAULT 0,
+      opportunity_count INTEGER NOT NULL DEFAULT 0,
+      best_edge_dollars REAL,
+      best_score REAL,
+      marketplaces_json TEXT NOT NULL DEFAULT '[]',
+      error TEXT NOT NULL DEFAULT '',
+      observed_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (run_id, target_key),
+      FOREIGN KEY(run_id) REFERENCES scan_coverage_runs(run_id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scan_coverage_runs_team
+      ON scan_coverage_runs(team_code, scan_type, observed_at);
+    CREATE INDEX IF NOT EXISTS idx_scan_coverage_runs_key
+      ON scan_coverage_runs(scan_key, observed_at);
+    CREATE INDEX IF NOT EXISTS idx_scan_coverage_targets_latest
+      ON scan_coverage_targets(team_code, target_type, player_key, release_key, observed_at);
+    CREATE INDEX IF NOT EXISTS idx_scan_coverage_targets_status
+      ON scan_coverage_targets(status, observed_at);
+  `)
+}
+
+function ensureScanQueueSchema(db: SqliteDatabase) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scan_queue_jobs (
+      job_id TEXT PRIMARY KEY,
+      queue_key TEXT NOT NULL UNIQUE,
+      team_code TEXT NOT NULL DEFAULT '',
+      team_label TEXT NOT NULL DEFAULT '',
+      scan_type TEXT NOT NULL,
+      target_type TEXT NOT NULL DEFAULT 'listing',
+      player_name TEXT NOT NULL,
+      player_key TEXT NOT NULL DEFAULT '',
+      release_key TEXT NOT NULL DEFAULT '',
+      release_year INTEGER,
+      release_name TEXT NOT NULL DEFAULT '',
+      model_key TEXT NOT NULL DEFAULT '',
+      search_mode TEXT NOT NULL DEFAULT 'checklist',
+      player_scope TEXT NOT NULL DEFAULT 'all',
+      priority INTEGER NOT NULL DEFAULT 50,
+      status TEXT NOT NULL DEFAULT 'queued',
+      run_after TEXT NOT NULL,
+      lease_owner TEXT NOT NULL DEFAULT '',
+      lease_expires_at TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      last_error TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scan_queue_due
+      ON scan_queue_jobs(status, run_after, priority);
+    CREATE INDEX IF NOT EXISTS idx_scan_queue_team
+      ON scan_queue_jobs(team_code, scan_type, target_type, status, run_after);
+    CREATE INDEX IF NOT EXISTS idx_scan_queue_player
+      ON scan_queue_jobs(player_key, release_key, scan_type);
+  `)
 }
 
 function ensureCardHedgeUsageSchema(db: SqliteDatabase) {
@@ -1616,6 +1809,882 @@ function mapLiveMarketListing(row: SqliteRow) {
     observedAt: rowString(row, 'observedAt'),
     expiresAt: rowString(row, 'expiresAt'),
     raw: parseJsonText(rowString(row, 'rawJson'), null),
+  }
+}
+
+function compactScanCoverageText(value: unknown, maxLength = 180) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+function scanCoverageKeyText(value: unknown, maxLength = 80) {
+  return compactScanCoverageText(value, maxLength)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function scanCoveragePlayerKey(playerName: string, fallback = '') {
+  return (
+    playerName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/\b(jr|sr|ii|iii|iv|v)\b\.?/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .replace(/\s+/g, '-') ||
+    scanCoverageKeyText(fallback) ||
+    'unknown-player'
+  )
+}
+
+function safeScanCoverageType(value: unknown) {
+  const scanType = compactScanCoverageText(value || 'bin', 40).toLowerCase()
+  if (scanType === 'auction' || scanType === 'superfractor') return scanType
+  return 'bin'
+}
+
+function safeScanCoverageStatus(value: unknown) {
+  const status = compactScanCoverageText(value || 'complete', 40).toLowerCase()
+  if (status === 'partial' || status === 'failed' || status === 'running') return status
+  return 'complete'
+}
+
+function safeScanCoverageTargetStatus(value: unknown, listingCount: number, opportunityCount: number) {
+  const status = compactScanCoverageText(value, 60).toLowerCase()
+  if (
+    status === 'live_opportunity' ||
+    status === 'live_hits' ||
+    status === 'scanned_no_hits' ||
+    status === 'failed' ||
+    status === 'not_scanned'
+  ) {
+    return status
+  }
+  if (opportunityCount > 0) return 'live_opportunity'
+  if (listingCount > 0) return 'live_hits'
+  return 'scanned_no_hits'
+}
+
+function scanCoverageRunId(scanType: string, scanKey: string, observedAt: string, explicit?: string) {
+  const cleaned = compactScanCoverageText(explicit, 220)
+  if (cleaned) return cleaned
+  const digest = sha256(stableJson({ scanType, scanKey, observedAt, random: Math.random() })).slice(0, 12)
+  const compactKey = scanCoverageKeyText(scanKey, 48) || 'manual'
+  return `${scanType}:${compactKey}:${Date.parse(observedAt) || Date.now()}:${digest}`
+}
+
+function scanCoverageTargetKey(scanType: string, run: ScanCoverageRunPayload, target: ScanCoverageTargetPayload, index: number) {
+  const explicit = compactScanCoverageText(target.targetKey, 220)
+  if (explicit) return explicit
+  const playerName = compactScanCoverageText(target.playerName, 140)
+  const playerKey = scanCoveragePlayerKey(playerName, String(index))
+  const releaseKey = scanCoverageKeyText(target.releaseKey || target.modelKey || target.releaseName || target.releaseYear || 'release')
+  const targetType = scanCoverageKeyText(target.targetType || run.targetType || 'listing')
+  return [scanType, targetType, releaseKey || 'release', playerKey].join(':')
+}
+
+function scanCoverageTargetFromPayload(
+  scanType: string,
+  run: ScanCoverageRunPayload,
+  target: ScanCoverageTargetPayload,
+  index: number,
+) {
+  const playerName = compactScanCoverageText(target.playerName || `Target ${index + 1}`, 140)
+  const playerKey = compactScanCoverageText(target.playerKey || scanCoveragePlayerKey(playerName), 120)
+  const listingCount = Math.max(0, Math.floor(Number(target.listingCount ?? 0) || 0))
+  const opportunityCount = Math.max(0, Math.floor(Number(target.opportunityCount ?? 0) || 0))
+  const bestEdge = Number(target.bestEdgeDollars)
+  const bestScore = Number(target.bestScore)
+  return {
+    targetKey: scanCoverageTargetKey(scanType, run, target, index),
+    playerName,
+    playerKey,
+    releaseKey: compactScanCoverageText(target.releaseKey, 120),
+    releaseYear: Number.isFinite(Number(target.releaseYear)) ? Number(target.releaseYear) : null,
+    releaseName: compactScanCoverageText(target.releaseName, 180),
+    modelKey: compactScanCoverageText(target.modelKey, 160),
+    teamCode: compactScanCoverageText(target.teamCode || run.teamCode, 20).toUpperCase(),
+    targetType: compactScanCoverageText(target.targetType || run.targetType || 'listing', 60).toLowerCase(),
+    status: safeScanCoverageTargetStatus(target.status, listingCount, opportunityCount),
+    listingCount,
+    opportunityCount,
+    bestEdgeDollars: Number.isFinite(bestEdge) ? bestEdge : null,
+    bestScore: Number.isFinite(bestScore) ? bestScore : null,
+    marketplaces: target.marketplaces ?? [],
+    error: compactScanCoverageText(target.error, 500),
+  }
+}
+
+function scanCoverageStatsNumber(stats: unknown, key: string) {
+  if (!stats || typeof stats !== 'object') return 0
+  const parsed = Number((stats as Record<string, unknown>)[key])
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0
+}
+
+function insertScanCoverageRun(db: SqliteDatabase, payload: ScanCoverageRunPayload, nowIso = new Date().toISOString()) {
+  ensureScanCoverageSchema(db)
+  const scanType = safeScanCoverageType(payload.scanType)
+  const scanKey = compactScanCoverageText(payload.scanKey || `${scanType}:manual`, MAX_LIVE_MARKET_SCAN_KEY_LENGTH)
+  const observedAt = safeIsoDate(payload.observedAt, new Date(nowIso))
+  const runId = scanCoverageRunId(scanType, scanKey, observedAt, payload.runId)
+  const targets = (payload.targets ?? [])
+    .slice(0, MAX_SCAN_COVERAGE_TARGETS)
+    .map((target, index) => scanCoverageTargetFromPayload(scanType, payload, target, index))
+  const listingCount = targets.reduce((total, target) => total + target.listingCount, 0)
+  const opportunityCount = targets.reduce((total, target) => total + target.opportunityCount, 0)
+  const stats = payload.stats
+
+  db.exec('BEGIN')
+  try {
+    db.prepare(`
+      INSERT OR REPLACE INTO scan_coverage_runs (
+        run_id, scan_type, scan_key, team_code, team_label, target_type, search_mode, player_scope,
+        release_scope, status, observed_at, target_count, listing_count, opportunity_count,
+        queries_run, queries_succeeded, queries_failed, marketplaces_json, request_json, stats_json, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      runId,
+      scanType,
+      scanKey,
+      compactScanCoverageText(payload.teamCode, 20).toUpperCase(),
+      compactScanCoverageText(payload.teamLabel, 80),
+      compactScanCoverageText(payload.targetType || 'listing', 60).toLowerCase(),
+      compactScanCoverageText(payload.searchMode, 80),
+      compactScanCoverageText(payload.playerScope, 80),
+      compactScanCoverageText(payload.releaseScope, 80),
+      safeScanCoverageStatus(payload.status),
+      observedAt,
+      targets.length,
+      listingCount,
+      opportunityCount,
+      scanCoverageStatsNumber(stats, 'queriesRun'),
+      scanCoverageStatsNumber(stats, 'queriesSucceeded'),
+      scanCoverageStatsNumber(stats, 'queriesFailed'),
+      jsonText(payload.marketplaces ?? [], '[]'),
+      jsonText(payload.request),
+      jsonText(payload.stats),
+      nowIso,
+    )
+
+    db.prepare('DELETE FROM scan_coverage_targets WHERE run_id = ?').run(runId)
+    const insertTarget = db.prepare(`
+      INSERT INTO scan_coverage_targets (
+        run_id, target_key, player_name, player_key, release_key, release_year, release_name, model_key,
+        team_code, target_type, status, listing_count, opportunity_count, best_edge_dollars, best_score,
+        marketplaces_json, error, observed_at, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const target of targets) {
+      insertTarget.run(
+        runId,
+        target.targetKey,
+        target.playerName,
+        target.playerKey,
+        target.releaseKey,
+        target.releaseYear,
+        target.releaseName,
+        target.modelKey,
+        target.teamCode,
+        target.targetType,
+        target.status,
+        target.listingCount,
+        target.opportunityCount,
+        target.bestEdgeDollars,
+        target.bestScore,
+        jsonText(target.marketplaces, '[]'),
+        target.error,
+        observedAt,
+        nowIso,
+      )
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+
+  return {
+    available: true,
+    runId,
+    scanType,
+    scanKey,
+    observedAt,
+    targetCount: targets.length,
+    listingCount,
+    opportunityCount,
+    status: safeScanCoverageStatus(payload.status),
+  }
+}
+
+function mapScanCoverageRun(row: SqliteRow) {
+  return {
+    runId: rowString(row, 'runId'),
+    scanType: rowString(row, 'scanType'),
+    scanKey: rowString(row, 'scanKey'),
+    teamCode: rowString(row, 'teamCode'),
+    teamLabel: rowString(row, 'teamLabel'),
+    targetType: rowString(row, 'targetType'),
+    searchMode: rowString(row, 'searchMode'),
+    playerScope: rowString(row, 'playerScope'),
+    releaseScope: rowString(row, 'releaseScope'),
+    status: rowString(row, 'status'),
+    observedAt: rowString(row, 'observedAt'),
+    targetCount: rowNumber(row, 'targetCount'),
+    listingCount: rowNumber(row, 'listingCount'),
+    opportunityCount: rowNumber(row, 'opportunityCount'),
+    queriesRun: rowNumber(row, 'queriesRun'),
+    queriesSucceeded: rowNumber(row, 'queriesSucceeded'),
+    queriesFailed: rowNumber(row, 'queriesFailed'),
+    marketplaces: parseJsonText(rowString(row, 'marketplacesJson'), []),
+    createdAt: rowString(row, 'createdAt'),
+  }
+}
+
+function mapScanCoverageTarget(row: SqliteRow) {
+  return {
+    runId: rowString(row, 'runId'),
+    targetKey: rowString(row, 'targetKey'),
+    playerName: rowString(row, 'playerName'),
+    playerKey: rowString(row, 'playerKey'),
+    releaseKey: rowString(row, 'releaseKey'),
+    releaseYear: rowNumberOrNull(row, 'releaseYear'),
+    releaseName: rowString(row, 'releaseName'),
+    modelKey: rowString(row, 'modelKey'),
+    teamCode: rowString(row, 'teamCode'),
+    targetType: rowString(row, 'targetType'),
+    status: rowString(row, 'targetStatus') || rowString(row, 'status'),
+    listingCount: rowNumber(row, 'listingCount'),
+    opportunityCount: rowNumber(row, 'opportunityCount'),
+    bestEdgeDollars: rowNumberOrNull(row, 'bestEdgeDollars'),
+    bestScore: rowNumberOrNull(row, 'bestScore'),
+    marketplaces: parseJsonText(rowString(row, 'marketplacesJson'), []),
+    error: rowString(row, 'error'),
+    observedAt: rowString(row, 'observedAt'),
+  }
+}
+
+function safeScanQueueStatus(value: unknown) {
+  const status = compactScanCoverageText(value || 'queued', 40).toLowerCase()
+  if (status === 'leased' || status === 'done' || status === 'failed' || status === 'cancelled') return status
+  return 'queued'
+}
+
+function safeScanQueueRunAfter(value: unknown, fallback = new Date()) {
+  const parsed = Date.parse(String(value ?? ''))
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback.toISOString()
+}
+
+function scanQueueJobId(queueKey: string) {
+  return `sq:${sha256(queueKey).slice(0, 24)}`
+}
+
+function scanQueueKey(job: ScanQueueJobPayload, fallback: ScanQueueSchedulePayload, index: number) {
+  const explicit = compactScanCoverageText(job.queueKey, 260)
+  if (explicit) return explicit
+  const scanType = safeScanCoverageType(job.scanType || fallback.scanType)
+  const targetType = compactScanCoverageText(job.targetType || fallback.targetType || 'listing', 60).toLowerCase()
+  const teamCode = compactScanCoverageText(job.teamCode || fallback.teamCode, 20).toUpperCase()
+  const releaseKey = scanCoverageKeyText(job.releaseKey || job.modelKey || job.releaseName || job.releaseYear || 'release')
+  const playerKey = compactScanCoverageText(job.playerKey || scanCoveragePlayerKey(compactScanCoverageText(job.playerName), String(index)), 120)
+  return [teamCode || 'team', scanType, targetType, releaseKey || 'release', playerKey || `target-${index + 1}`].join(':')
+}
+
+function normalizeScanQueueJob(job: ScanQueueJobPayload, fallback: ScanQueueSchedulePayload, index: number, nowIso: string) {
+  const queueKey = scanQueueKey(job, fallback, index)
+  const playerName = compactScanCoverageText(job.playerName || `Target ${index + 1}`, 140)
+  const priority = clampInt(job.priority, 50, 0, 100)
+  const maxAttempts = clampInt(job.maxAttempts, 3, 1, 10)
+  const runAfter = safeScanQueueRunAfter(job.runAfter || fallback.runAfter, new Date(nowIso))
+  return {
+    jobId: scanQueueJobId(queueKey),
+    queueKey,
+    teamCode: compactScanCoverageText(job.teamCode || fallback.teamCode, 20).toUpperCase(),
+    teamLabel: compactScanCoverageText(job.teamLabel || fallback.teamLabel, 80),
+    scanType: safeScanCoverageType(job.scanType || fallback.scanType),
+    targetType: compactScanCoverageText(job.targetType || fallback.targetType || 'listing', 60).toLowerCase(),
+    playerName,
+    playerKey: compactScanCoverageText(job.playerKey || scanCoveragePlayerKey(playerName, String(index)), 120),
+    releaseKey: compactScanCoverageText(job.releaseKey, 120),
+    releaseYear: Number.isFinite(Number(job.releaseYear)) ? Number(job.releaseYear) : null,
+    releaseName: compactScanCoverageText(job.releaseName, 180),
+    modelKey: compactScanCoverageText(job.modelKey, 160),
+    searchMode: compactScanCoverageText(job.searchMode || 'checklist', 80),
+    playerScope: compactScanCoverageText(job.playerScope || 'all', 80),
+    priority,
+    runAfter,
+    maxAttempts,
+    payload: job.payload ?? {},
+  }
+}
+
+function scheduleScanQueueJobs(db: SqliteDatabase, payload: ScanQueueSchedulePayload, nowIso = new Date().toISOString()) {
+  ensureScanQueueSchema(db)
+  const jobs = (payload.jobs ?? [])
+    .slice(0, MAX_SCAN_QUEUE_JOBS)
+    .map((job, index) => normalizeScanQueueJob(job, payload, index, nowIso))
+  if (jobs.length === 0) return { queued: 0, updated: 0, skipped: 0, jobs: [] as ReturnType<typeof mapScanQueueJob>[] }
+
+  const existingStatement = db.prepare('SELECT queue_key AS queueKey, status, run_after AS runAfter FROM scan_queue_jobs WHERE queue_key = ?')
+  const upsert = db.prepare(`
+    INSERT INTO scan_queue_jobs (
+      job_id, queue_key, team_code, team_label, scan_type, target_type, player_name, player_key,
+      release_key, release_year, release_name, model_key, search_mode, player_scope, priority, status,
+      run_after, attempts, max_attempts, payload_json, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?)
+    ON CONFLICT(queue_key) DO UPDATE SET
+      team_code = excluded.team_code,
+      team_label = excluded.team_label,
+      scan_type = excluded.scan_type,
+      target_type = excluded.target_type,
+      player_name = excluded.player_name,
+      player_key = excluded.player_key,
+      release_key = excluded.release_key,
+      release_year = excluded.release_year,
+      release_name = excluded.release_name,
+      model_key = excluded.model_key,
+      search_mode = excluded.search_mode,
+      player_scope = excluded.player_scope,
+      priority = MAX(scan_queue_jobs.priority, excluded.priority),
+      status = CASE
+        WHEN scan_queue_jobs.status = 'leased' AND COALESCE(scan_queue_jobs.lease_expires_at, '') > excluded.updated_at THEN scan_queue_jobs.status
+        ELSE 'queued'
+      END,
+      run_after = CASE
+        WHEN scan_queue_jobs.status = 'leased' AND COALESCE(scan_queue_jobs.lease_expires_at, '') > excluded.updated_at THEN scan_queue_jobs.run_after
+        ELSE excluded.run_after
+      END,
+      lease_owner = CASE
+        WHEN scan_queue_jobs.status = 'leased' AND COALESCE(scan_queue_jobs.lease_expires_at, '') > excluded.updated_at THEN scan_queue_jobs.lease_owner
+        ELSE ''
+      END,
+      lease_expires_at = CASE
+        WHEN scan_queue_jobs.status = 'leased' AND COALESCE(scan_queue_jobs.lease_expires_at, '') > excluded.updated_at THEN scan_queue_jobs.lease_expires_at
+        ELSE NULL
+      END,
+      last_error = '',
+      payload_json = excluded.payload_json,
+      updated_at = excluded.updated_at,
+      completed_at = NULL
+  `)
+
+  let queued = 0
+  let updated = 0
+  db.exec('BEGIN')
+  try {
+    for (const job of jobs) {
+      const existed = Boolean(existingStatement.get(job.queueKey))
+      upsert.run(
+        job.jobId,
+        job.queueKey,
+        job.teamCode,
+        job.teamLabel,
+        job.scanType,
+        job.targetType,
+        job.playerName,
+        job.playerKey,
+        job.releaseKey,
+        job.releaseYear,
+        job.releaseName,
+        job.modelKey,
+        job.searchMode,
+        job.playerScope,
+        job.priority,
+        job.runAfter,
+        job.maxAttempts,
+        jsonText(job.payload),
+        nowIso,
+        nowIso,
+      )
+      if (existed) updated += 1
+      else queued += 1
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+
+  const rows = db.prepare(`
+    SELECT
+      job_id AS jobId,
+      queue_key AS queueKey,
+      team_code AS teamCode,
+      team_label AS teamLabel,
+      scan_type AS scanType,
+      target_type AS targetType,
+      player_name AS playerName,
+      player_key AS playerKey,
+      release_key AS releaseKey,
+      release_year AS releaseYear,
+      release_name AS releaseName,
+      model_key AS modelKey,
+      search_mode AS searchMode,
+      player_scope AS playerScope,
+      priority,
+      status,
+      run_after AS runAfter,
+      lease_owner AS leaseOwner,
+      lease_expires_at AS leaseExpiresAt,
+      attempts,
+      max_attempts AS maxAttempts,
+      last_error AS lastError,
+      payload_json AS payloadJson,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      completed_at AS completedAt
+    FROM scan_queue_jobs
+    WHERE queue_key IN (${jobs.map(() => '?').join(', ')})
+    ORDER BY priority DESC, run_after, player_name
+  `).all(...jobs.map((job) => job.queueKey))
+
+  return { queued, updated, skipped: 0, jobs: rows.map(mapScanQueueJob) }
+}
+
+function requeueExpiredScanQueueJobs(db: SqliteDatabase, nowIso: string) {
+  ensureScanQueueSchema(db)
+  const expired = db.prepare(`
+    SELECT job_id AS jobId
+    FROM scan_queue_jobs
+    WHERE status = 'leased'
+      AND COALESCE(lease_expires_at, '') <= ?
+  `).all(nowIso)
+  db.prepare(`
+    UPDATE scan_queue_jobs
+    SET status = 'queued',
+        lease_owner = '',
+        lease_expires_at = NULL,
+        updated_at = ?
+    WHERE status = 'leased'
+      AND COALESCE(lease_expires_at, '') <= ?
+  `).run(nowIso, nowIso)
+  return expired.length
+}
+
+function mapScanQueueJob(row: SqliteRow) {
+  return {
+    jobId: rowString(row, 'jobId'),
+    queueKey: rowString(row, 'queueKey'),
+    teamCode: rowString(row, 'teamCode'),
+    teamLabel: rowString(row, 'teamLabel'),
+    scanType: rowString(row, 'scanType'),
+    targetType: rowString(row, 'targetType'),
+    playerName: rowString(row, 'playerName'),
+    playerKey: rowString(row, 'playerKey'),
+    releaseKey: rowString(row, 'releaseKey'),
+    releaseYear: rowNumberOrNull(row, 'releaseYear'),
+    releaseName: rowString(row, 'releaseName'),
+    modelKey: rowString(row, 'modelKey'),
+    searchMode: rowString(row, 'searchMode'),
+    playerScope: rowString(row, 'playerScope'),
+    priority: rowNumber(row, 'priority'),
+    status: rowString(row, 'status'),
+    runAfter: rowString(row, 'runAfter'),
+    leaseOwner: rowString(row, 'leaseOwner'),
+    leaseExpiresAt: rowString(row, 'leaseExpiresAt') || null,
+    attempts: rowNumber(row, 'attempts'),
+    maxAttempts: rowNumber(row, 'maxAttempts'),
+    lastError: rowString(row, 'lastError'),
+    payload: parseJsonText(rowString(row, 'payloadJson'), {}),
+    createdAt: rowString(row, 'createdAt'),
+    updatedAt: rowString(row, 'updatedAt'),
+    completedAt: rowString(row, 'completedAt') || null,
+  }
+}
+
+function claimScanQueueJobs(db: SqliteDatabase, payload: ScanQueueClaimPayload, nowIso = new Date().toISOString()) {
+  ensureScanQueueSchema(db)
+  const limit = clampInt(payload.limit, 20, 1, MAX_SCAN_QUEUE_CLAIM)
+  const leaseSeconds = clampInt(payload.leaseSeconds, 15 * 60, 60, 60 * 60)
+  const leaseOwner = compactScanCoverageText(payload.leaseOwner || `worker:${Math.random().toString(36).slice(2, 10)}`, 120)
+  const teamCode = compactScanCoverageText(payload.teamCode, 20).toUpperCase()
+  const scanType = compactScanCoverageText(payload.scanType, 40).toLowerCase()
+  const targetType = compactScanCoverageText(payload.targetType, 60).toLowerCase()
+  const leaseExpiresAt = new Date(Date.parse(nowIso) + leaseSeconds * 1_000).toISOString()
+  requeueExpiredScanQueueJobs(db, nowIso)
+
+  const filters = [
+    "status = 'queued'",
+    'run_after <= ?',
+    'attempts < max_attempts',
+  ]
+  const values: Array<string | number> = [nowIso]
+  if (teamCode) {
+    filters.push('team_code = ?')
+    values.push(teamCode)
+  }
+  if (scanType) {
+    filters.push('scan_type = ?')
+    values.push(scanType)
+  }
+  if (targetType) {
+    filters.push('target_type = ?')
+    values.push(targetType)
+  }
+
+  const candidates = db.prepare(`
+    SELECT job_id AS jobId
+    FROM scan_queue_jobs
+    WHERE ${filters.join(' AND ')}
+    ORDER BY priority DESC, run_after, updated_at
+    LIMIT ?
+  `).all(...values, limit)
+  const jobIds = candidates.map((row) => rowString(row, 'jobId')).filter(Boolean)
+  if (jobIds.length === 0) return { leaseOwner, leaseExpiresAt, claimed: 0, jobs: [] as ReturnType<typeof mapScanQueueJob>[] }
+
+  db.prepare(`
+    UPDATE scan_queue_jobs
+    SET status = 'leased',
+        lease_owner = ?,
+        lease_expires_at = ?,
+        attempts = attempts + 1,
+        updated_at = ?
+    WHERE job_id IN (${jobIds.map(() => '?').join(', ')})
+  `).run(leaseOwner, leaseExpiresAt, nowIso, ...jobIds)
+
+  const rows = db.prepare(`
+    SELECT
+      job_id AS jobId,
+      queue_key AS queueKey,
+      team_code AS teamCode,
+      team_label AS teamLabel,
+      scan_type AS scanType,
+      target_type AS targetType,
+      player_name AS playerName,
+      player_key AS playerKey,
+      release_key AS releaseKey,
+      release_year AS releaseYear,
+      release_name AS releaseName,
+      model_key AS modelKey,
+      search_mode AS searchMode,
+      player_scope AS playerScope,
+      priority,
+      status,
+      run_after AS runAfter,
+      lease_owner AS leaseOwner,
+      lease_expires_at AS leaseExpiresAt,
+      attempts,
+      max_attempts AS maxAttempts,
+      last_error AS lastError,
+      payload_json AS payloadJson,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      completed_at AS completedAt
+    FROM scan_queue_jobs
+    WHERE job_id IN (${jobIds.map(() => '?').join(', ')})
+    ORDER BY priority DESC, run_after, player_name
+  `).all(...jobIds)
+
+  return { leaseOwner, leaseExpiresAt, claimed: rows.length, jobs: rows.map(mapScanQueueJob) }
+}
+
+function completeScanQueueJobs(db: SqliteDatabase, payload: ScanQueueCompletePayload, nowIso = new Date().toISOString()) {
+  ensureScanQueueSchema(db)
+  const jobs = (payload.jobs ?? []).slice(0, MAX_SCAN_QUEUE_CLAIM)
+  const leaseOwner = compactScanCoverageText(payload.leaseOwner, 120)
+  let completed = 0
+  let failed = 0
+  let skipped = 0
+
+  const update = db.prepare(`
+    UPDATE scan_queue_jobs
+    SET status = ?,
+        lease_owner = '',
+        lease_expires_at = NULL,
+        last_error = ?,
+        updated_at = ?,
+        completed_at = CASE WHEN ? = 'done' THEN ? ELSE completed_at END
+    WHERE job_id = ?
+      AND (? = '' OR lease_owner = ?)
+  `)
+
+  for (const job of jobs) {
+    const jobId = compactScanCoverageText(job.jobId, 140)
+    if (!jobId) {
+      skipped += 1
+      continue
+    }
+    const status = safeScanQueueStatus(job.status === 'done' ? 'done' : job.status === 'failed' ? 'failed' : 'queued')
+    const before = db.prepare('SELECT status, lease_owner AS leaseOwner FROM scan_queue_jobs WHERE job_id = ?').get(jobId)
+    if (!before || (leaseOwner && rowString(before, 'leaseOwner') !== leaseOwner)) {
+      skipped += 1
+      continue
+    }
+    update.run(status, compactScanCoverageText(job.error, 500), nowIso, status, nowIso, jobId, leaseOwner, leaseOwner)
+    const after = db.prepare('SELECT status FROM scan_queue_jobs WHERE job_id = ?').get(jobId)
+    if (rowString(after, 'status') !== status) {
+      skipped += 1
+      continue
+    }
+    if (status === 'done') completed += 1
+    if (status === 'failed') failed += 1
+  }
+
+  return { completed, failed, skipped }
+}
+
+function scanQueueRefreshMinutes(scanType: string, status: string, targetType: string) {
+  if (status === 'failed') return 30
+  if (scanType === 'auction') return status === 'live_opportunity' || status === 'live_hits' ? 10 : 90
+  if (scanType === 'superfractor' || targetType === 'superfractor') return status === 'live_opportunity' || status === 'live_hits' ? 6 * 60 : 24 * 60
+  if (status === 'live_opportunity') return 45
+  if (status === 'live_hits') return 2 * 60
+  return 8 * 60
+}
+
+function scanQueuePriority(scanType: string, status: string, targetType: string) {
+  let priority = 45
+  if (status === 'live_opportunity') priority = 95
+  else if (status === 'failed') priority = 85
+  else if (status === 'live_hits') priority = 75
+  else if (status === 'scanned_no_hits') priority = 45
+  if (scanType === 'auction') priority += 5
+  if (scanType === 'superfractor' || targetType === 'superfractor') priority += 8
+  return Math.min(100, priority)
+}
+
+function scheduleScanQueueJobsFromCoverage(
+  db: SqliteDatabase,
+  options: { teamCode?: string; limit?: number } = {},
+  nowIso = new Date().toISOString(),
+) {
+  ensureScanCoverageSchema(db)
+  ensureScanQueueSchema(db)
+  const teamCode = compactScanCoverageText(options.teamCode, 20).toUpperCase()
+  const limit = clampInt(options.limit, 500, 1, MAX_SCAN_QUEUE_JOBS)
+  const rows = db.prepare(`
+    WITH ranked_targets AS (
+      SELECT
+        r.scan_type AS scanType,
+        r.team_code AS teamCode,
+        r.team_label AS teamLabel,
+        r.search_mode AS searchMode,
+        r.player_scope AS playerScope,
+        t.target_key AS targetKey,
+        t.player_name AS playerName,
+        t.player_key AS playerKey,
+        t.release_key AS releaseKey,
+        t.release_year AS releaseYear,
+        t.release_name AS releaseName,
+        t.model_key AS modelKey,
+        t.target_type AS targetType,
+        t.status AS targetStatus,
+        t.listing_count AS listingCount,
+        t.opportunity_count AS opportunityCount,
+        t.observed_at AS observedAt,
+        ROW_NUMBER() OVER (
+          PARTITION BY r.scan_type, t.target_key
+          ORDER BY t.observed_at DESC, r.created_at DESC
+        ) AS rowNum
+      FROM scan_coverage_targets t
+      JOIN scan_coverage_runs r ON r.run_id = t.run_id
+      WHERE (? = '' OR UPPER(t.team_code) = ? OR UPPER(r.team_code) = ?)
+    )
+    SELECT *
+    FROM ranked_targets
+    WHERE rowNum = 1
+    ORDER BY observedAt ASC, playerName
+    LIMIT ?
+  `).all(teamCode, teamCode, teamCode, limit)
+
+  const nowMs = Date.parse(nowIso)
+  const jobs: ScanQueueJobPayload[] = []
+  for (const row of rows) {
+    const scanType = safeScanCoverageType(rowString(row, 'scanType'))
+    const targetType = compactScanCoverageText(rowString(row, 'targetType') || 'listing', 60).toLowerCase()
+    const status = rowString(row, 'targetStatus')
+    const observedAt = Date.parse(rowString(row, 'observedAt'))
+    const refreshMinutes = scanQueueRefreshMinutes(scanType, status, targetType)
+    const dueAt = Number.isFinite(observedAt) ? observedAt + refreshMinutes * 60_000 : 0
+    if (Number.isFinite(nowMs) && dueAt > nowMs) continue
+    jobs.push({
+      queueKey: rowString(row, 'targetKey') ? `coverage:${scanType}:${rowString(row, 'targetKey')}` : undefined,
+      teamCode: rowString(row, 'teamCode') || teamCode,
+      teamLabel: rowString(row, 'teamLabel'),
+      scanType,
+      targetType,
+      playerName: rowString(row, 'playerName'),
+      playerKey: rowString(row, 'playerKey'),
+      releaseKey: rowString(row, 'releaseKey'),
+      releaseYear: rowNumberOrNull(row, 'releaseYear') ?? undefined,
+      releaseName: rowString(row, 'releaseName'),
+      modelKey: rowString(row, 'modelKey'),
+      searchMode: rowString(row, 'searchMode') || (targetType === 'superfractor' ? 'superfractor' : 'checklist'),
+      playerScope: rowString(row, 'playerScope') || 'all',
+      priority: scanQueuePriority(scanType, status, targetType),
+      runAfter: nowIso,
+      payload: {
+        source: 'coverage-ledger',
+        previousStatus: status,
+        listingCount: rowNumber(row, 'listingCount'),
+        opportunityCount: rowNumber(row, 'opportunityCount'),
+        observedAt: rowString(row, 'observedAt'),
+      },
+    })
+  }
+
+  const scheduled = scheduleScanQueueJobs(
+    db,
+    {
+      source: 'coverage-ledger',
+      teamCode,
+      jobs,
+    },
+    nowIso,
+  )
+  return {
+    evaluated: rows.length,
+    due: jobs.length,
+    ...scheduled,
+  }
+}
+
+function scanQueueStatusPayload(
+  db: SqliteDatabase,
+  dbPath: string,
+  params: URLSearchParams,
+  nowIso = new Date().toISOString(),
+) {
+  ensureScanQueueSchema(db)
+  const teamCode = compactScanCoverageText(params.get('team') ?? params.get('teamCode'), 20).toUpperCase()
+  const scanType = compactScanCoverageText(params.get('scanType'), 40).toLowerCase()
+  const targetType = compactScanCoverageText(params.get('targetType'), 60).toLowerCase()
+  const limit = clampInt(params.get('limit'), 120, 1, MAX_SCAN_QUEUE_STATUS_ROWS)
+  const filters = ['1 = 1']
+  const values: Array<string | number> = []
+  if (teamCode) {
+    filters.push('team_code = ?')
+    values.push(teamCode)
+  }
+  if (scanType) {
+    filters.push('scan_type = ?')
+    values.push(scanType)
+  }
+  if (targetType) {
+    filters.push('target_type = ?')
+    values.push(targetType)
+  }
+  const whereSql = filters.join(' AND ')
+  const byStatus = db.prepare(`
+    SELECT
+      status,
+      COUNT(*) AS jobs,
+      MIN(CASE WHEN status = 'queued' THEN run_after ELSE NULL END) AS nextRunAfter,
+      MAX(updated_at) AS latestUpdatedAt
+    FROM scan_queue_jobs
+    WHERE ${whereSql}
+    GROUP BY status
+    ORDER BY jobs DESC, status
+  `).all(...values)
+  const byScanType = db.prepare(`
+    SELECT
+      scan_type AS scanType,
+      target_type AS targetType,
+      COUNT(*) AS jobs,
+      SUM(CASE WHEN status = 'queued' AND run_after <= ? THEN 1 ELSE 0 END) AS dueJobs,
+      MIN(CASE WHEN status = 'queued' THEN run_after ELSE NULL END) AS nextRunAfter,
+      MAX(updated_at) AS latestUpdatedAt
+    FROM scan_queue_jobs
+    WHERE ${whereSql}
+    GROUP BY scan_type, target_type
+    ORDER BY jobs DESC, scan_type, target_type
+  `).all(nowIso, ...values)
+  const recentJobs = db.prepare(`
+    SELECT
+      job_id AS jobId,
+      queue_key AS queueKey,
+      team_code AS teamCode,
+      team_label AS teamLabel,
+      scan_type AS scanType,
+      target_type AS targetType,
+      player_name AS playerName,
+      player_key AS playerKey,
+      release_key AS releaseKey,
+      release_year AS releaseYear,
+      release_name AS releaseName,
+      model_key AS modelKey,
+      search_mode AS searchMode,
+      player_scope AS playerScope,
+      priority,
+      status,
+      run_after AS runAfter,
+      lease_owner AS leaseOwner,
+      lease_expires_at AS leaseExpiresAt,
+      attempts,
+      max_attempts AS maxAttempts,
+      last_error AS lastError,
+      payload_json AS payloadJson,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      completed_at AS completedAt
+    FROM scan_queue_jobs
+    WHERE ${whereSql}
+    ORDER BY
+      CASE status
+        WHEN 'queued' THEN 0
+        WHEN 'leased' THEN 1
+        WHEN 'failed' THEN 2
+        WHEN 'done' THEN 3
+        ELSE 4
+      END,
+      priority DESC,
+      run_after,
+      updated_at DESC
+    LIMIT ?
+  `).all(...values, limit)
+  const countRow = db.prepare(`
+    SELECT
+      COUNT(*) AS totalJobs,
+      SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queuedJobs,
+      SUM(CASE WHEN status = 'queued' AND run_after <= ? THEN 1 ELSE 0 END) AS dueJobs,
+      SUM(CASE WHEN status = 'leased' THEN 1 ELSE 0 END) AS leasedJobs,
+      SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS doneJobs,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failedJobs,
+      SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelledJobs,
+      MIN(CASE WHEN status = 'queued' THEN run_after ELSE NULL END) AS nextRunAfter,
+      MAX(updated_at) AS latestUpdatedAt
+    FROM scan_queue_jobs
+    WHERE ${whereSql}
+  `).get(nowIso, ...values)
+
+  return {
+    available: true,
+    dbName: basename(dbPath),
+    filters: {
+      teamCode,
+      scanType,
+      targetType,
+      limit,
+    },
+    summary: {
+      totalJobs: rowNumber(countRow, 'totalJobs'),
+      queuedJobs: rowNumber(countRow, 'queuedJobs'),
+      dueJobs: rowNumber(countRow, 'dueJobs'),
+      leasedJobs: rowNumber(countRow, 'leasedJobs'),
+      doneJobs: rowNumber(countRow, 'doneJobs'),
+      failedJobs: rowNumber(countRow, 'failedJobs'),
+      cancelledJobs: rowNumber(countRow, 'cancelledJobs'),
+      nextRunAfter: rowString(countRow, 'nextRunAfter'),
+      latestUpdatedAt: rowString(countRow, 'latestUpdatedAt'),
+      byStatus: byStatus.map((row) => ({
+        status: rowString(row, 'status'),
+        jobs: rowNumber(row, 'jobs'),
+        nextRunAfter: rowString(row, 'nextRunAfter'),
+        latestUpdatedAt: rowString(row, 'latestUpdatedAt'),
+      })),
+      byScanType: byScanType.map((row) => ({
+        scanType: rowString(row, 'scanType'),
+        targetType: rowString(row, 'targetType'),
+        jobs: rowNumber(row, 'jobs'),
+        dueJobs: rowNumber(row, 'dueJobs'),
+        nextRunAfter: rowString(row, 'nextRunAfter'),
+        latestUpdatedAt: rowString(row, 'latestUpdatedAt'),
+      })),
+    },
+    recentJobs: recentJobs.map(mapScanQueueJob),
   }
 }
 
@@ -4517,6 +5586,377 @@ export async function handleLiveMarketRoute(route: string, request: Request, env
   }
 }
 
+export async function handleScanCoverageRoute(route: string, request: Request, env: ServerEnv) {
+  if (!SCAN_COVERAGE_ROUTES.has(route)) return new Response(null, { status: 404 })
+  if (route === 'run' && request.method !== 'POST') return new Response(null, { status: 404 })
+  if (route === 'status' && request.method !== 'GET') return new Response(null, { status: 404 })
+
+  let db: SqliteDatabase | null = null
+  try {
+    if (route === 'run') {
+      const unsafePost = rejectUnsafePost(request)
+      if (unsafePost) return unsafePost
+    }
+
+    const opened = route === 'run' ? await openOptionalWritableMarketDb(env) : await openSalesCacheDb(env)
+    db = opened.db
+    if (!db) {
+      return jsonResponse(200, {
+        available: false,
+        dbName: basename(opened.dbPath),
+        message: 'Scan coverage ledger is unavailable until the local market database exists.',
+        summary: {
+          totalTargets: 0,
+          scannedTargets: 0,
+          liveHitTargets: 0,
+          opportunityTargets: 0,
+          noHitTargets: 0,
+          failedTargets: 0,
+          listingCount: 0,
+          opportunityCount: 0,
+          latestObservedAt: '',
+          byStatus: [],
+          byScanType: [],
+        },
+        latestRuns: [],
+        targets: [],
+      })
+    }
+
+    ensureScanCoverageSchema(db)
+
+    if (route === 'run') {
+      const payload = await readJsonBody<ScanCoverageRunPayload>(request, MAX_JSON_BODY_BYTES)
+      const saved = insertScanCoverageRun(db, payload)
+      return jsonResponse(200, saved)
+    }
+
+    const params = new URL(request.url).searchParams
+    const teamCode = compactScanCoverageText(params.get('team') ?? params.get('teamCode'), 20).toUpperCase()
+    const scanType = compactScanCoverageText(params.get('scanType'), 40).toLowerCase()
+    const targetType = compactScanCoverageText(params.get('targetType'), 60).toLowerCase()
+    const limit = clampInt(params.get('limit'), 240, 1, MAX_SCAN_COVERAGE_STATUS_ROWS)
+
+    const filters = ['1 = 1']
+    const values: Array<string | number> = []
+    if (teamCode) {
+      filters.push('UPPER(r.team_code) = ?')
+      values.push(teamCode)
+    }
+    if (scanType) {
+      filters.push('r.scan_type = ?')
+      values.push(scanType)
+    }
+    if (targetType) {
+      filters.push('t.target_type = ?')
+      values.push(targetType)
+    }
+    const whereSql = filters.join(' AND ')
+    const runFilters = ['1 = 1']
+    const runValues: Array<string | number> = []
+    if (teamCode) {
+      runFilters.push('UPPER(r.team_code) = ?')
+      runValues.push(teamCode)
+    }
+    if (scanType) {
+      runFilters.push('r.scan_type = ?')
+      runValues.push(scanType)
+    }
+
+    const targets = db.prepare(`
+      WITH ranked_targets AS (
+        SELECT
+          r.run_id AS runId,
+          r.scan_type AS scanType,
+          r.scan_key AS scanKey,
+          t.target_key AS targetKey,
+          t.player_name AS playerName,
+          t.player_key AS playerKey,
+          t.release_key AS releaseKey,
+          t.release_year AS releaseYear,
+          t.release_name AS releaseName,
+          t.model_key AS modelKey,
+          t.team_code AS teamCode,
+          t.target_type AS targetType,
+          t.status AS targetStatus,
+          t.listing_count AS listingCount,
+          t.opportunity_count AS opportunityCount,
+          t.best_edge_dollars AS bestEdgeDollars,
+          t.best_score AS bestScore,
+          t.marketplaces_json AS marketplacesJson,
+          t.error,
+          t.observed_at AS observedAt,
+          ROW_NUMBER() OVER (
+            PARTITION BY r.scan_type, t.target_key
+            ORDER BY t.observed_at DESC, r.created_at DESC
+          ) AS rowNum
+        FROM scan_coverage_targets t
+        JOIN scan_coverage_runs r ON r.run_id = t.run_id
+        WHERE ${whereSql}
+      )
+      SELECT *
+      FROM ranked_targets
+      WHERE rowNum = 1
+      ORDER BY
+        CASE targetStatus
+          WHEN 'live_opportunity' THEN 0
+          WHEN 'live_hits' THEN 1
+          WHEN 'failed' THEN 2
+          WHEN 'scanned_no_hits' THEN 3
+          ELSE 4
+        END,
+        observedAt DESC,
+        playerName
+      LIMIT ?
+    `).all(...values, limit)
+
+    const byStatus = db.prepare(`
+      WITH ranked_targets AS (
+        SELECT
+          r.scan_type,
+          t.target_key,
+          t.status,
+          t.listing_count,
+          t.opportunity_count,
+          t.observed_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY r.scan_type, t.target_key
+            ORDER BY t.observed_at DESC, r.created_at DESC
+          ) AS rowNum
+        FROM scan_coverage_targets t
+        JOIN scan_coverage_runs r ON r.run_id = t.run_id
+        WHERE ${whereSql}
+      )
+      SELECT
+        status,
+        COUNT(*) AS targets,
+        COALESCE(SUM(listing_count), 0) AS listingCount,
+        COALESCE(SUM(opportunity_count), 0) AS opportunityCount,
+        MAX(observed_at) AS latestObservedAt
+      FROM ranked_targets
+      WHERE rowNum = 1
+      GROUP BY status
+      ORDER BY targets DESC, status
+    `).all(...values)
+
+    const byScanType = db.prepare(`
+      WITH ranked_targets AS (
+        SELECT
+          r.scan_type,
+          t.target_key,
+          t.status,
+          t.listing_count,
+          t.opportunity_count,
+          t.observed_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY r.scan_type, t.target_key
+            ORDER BY t.observed_at DESC, r.created_at DESC
+          ) AS rowNum
+        FROM scan_coverage_targets t
+        JOIN scan_coverage_runs r ON r.run_id = t.run_id
+        WHERE ${whereSql}
+      )
+      SELECT
+        scan_type AS scanType,
+        COUNT(*) AS targets,
+        COALESCE(SUM(listing_count), 0) AS listingCount,
+        COALESCE(SUM(opportunity_count), 0) AS opportunityCount,
+        MAX(observed_at) AS latestObservedAt
+      FROM ranked_targets
+      WHERE rowNum = 1
+      GROUP BY scan_type
+      ORDER BY scan_type
+    `).all(...values)
+
+    const latestRuns = db.prepare(`
+      SELECT
+        run_id AS runId,
+        scan_type AS scanType,
+        scan_key AS scanKey,
+        team_code AS teamCode,
+        team_label AS teamLabel,
+        target_type AS targetType,
+        search_mode AS searchMode,
+        player_scope AS playerScope,
+        release_scope AS releaseScope,
+        status,
+        observed_at AS observedAt,
+        target_count AS targetCount,
+        listing_count AS listingCount,
+        opportunity_count AS opportunityCount,
+        queries_run AS queriesRun,
+        queries_succeeded AS queriesSucceeded,
+        queries_failed AS queriesFailed,
+        marketplaces_json AS marketplacesJson,
+        created_at AS createdAt
+      FROM scan_coverage_runs r
+      WHERE ${runFilters.join(' AND ')}
+      ORDER BY observed_at DESC, created_at DESC
+      LIMIT 20
+    `).all(...runValues)
+
+    const totalTargets = byStatus.reduce((total, row) => total + rowNumber(row, 'targets'), 0)
+    const listingCount = byStatus.reduce((total, row) => total + rowNumber(row, 'listingCount'), 0)
+    const opportunityCount = byStatus.reduce((total, row) => total + rowNumber(row, 'opportunityCount'), 0)
+    const latestObservedAt = byStatus
+      .map((row) => Date.parse(rowString(row, 'latestObservedAt')))
+      .filter(Number.isFinite)
+      .sort((left, right) => right - left)[0]
+
+    return jsonResponse(200, {
+      available: true,
+      dbName: basename(opened.dbPath),
+      filters: {
+        teamCode,
+        scanType,
+        targetType,
+        limit,
+      },
+      summary: {
+        totalTargets,
+        scannedTargets: totalTargets - (byStatus.find((row) => rowString(row, 'status') === 'not_scanned') ? rowNumber(byStatus.find((row) => rowString(row, 'status') === 'not_scanned'), 'targets') : 0),
+        liveHitTargets: byStatus
+          .filter((row) => rowString(row, 'status') === 'live_hits' || rowString(row, 'status') === 'live_opportunity')
+          .reduce((total, row) => total + rowNumber(row, 'targets'), 0),
+        opportunityTargets: byStatus
+          .filter((row) => rowString(row, 'status') === 'live_opportunity')
+          .reduce((total, row) => total + rowNumber(row, 'targets'), 0),
+        noHitTargets: byStatus
+          .filter((row) => rowString(row, 'status') === 'scanned_no_hits')
+          .reduce((total, row) => total + rowNumber(row, 'targets'), 0),
+        failedTargets: byStatus
+          .filter((row) => rowString(row, 'status') === 'failed')
+          .reduce((total, row) => total + rowNumber(row, 'targets'), 0),
+        listingCount,
+        opportunityCount,
+        latestObservedAt: Number.isFinite(latestObservedAt) ? new Date(latestObservedAt).toISOString() : '',
+        byStatus: byStatus.map((row) => ({
+          status: rowString(row, 'status'),
+          targets: rowNumber(row, 'targets'),
+          listingCount: rowNumber(row, 'listingCount'),
+          opportunityCount: rowNumber(row, 'opportunityCount'),
+          latestObservedAt: rowString(row, 'latestObservedAt'),
+        })),
+        byScanType: byScanType.map((row) => ({
+          scanType: rowString(row, 'scanType'),
+          targets: rowNumber(row, 'targets'),
+          listingCount: rowNumber(row, 'listingCount'),
+          opportunityCount: rowNumber(row, 'opportunityCount'),
+          latestObservedAt: rowString(row, 'latestObservedAt'),
+        })),
+      },
+      latestRuns: latestRuns.map(mapScanCoverageRun),
+      targets: targets.map(mapScanCoverageTarget),
+    })
+  } catch (error) {
+    return jsonResponse(routeErrorStatus(error), { error: routeErrorMessage(error, 'Scan coverage request failed') })
+  } finally {
+    db?.close()
+  }
+}
+
+function scanQueueWorkerAuth(request: Request, env: ServerEnv) {
+  const secret = env.SCAN_QUEUE_SECRET || env.CRON_SECRET
+  if (!secret) return null
+  if (request.headers.get('authorization') !== `Bearer ${secret}`) {
+    return jsonResponse(401, { error: 'Unauthorized scan queue worker' })
+  }
+  return null
+}
+
+function emptyScanQueueStatus(dbPath: string) {
+  return {
+    available: false,
+    dbName: basename(dbPath),
+    message: 'Scan queue is unavailable until the local market database exists.',
+    summary: {
+      totalJobs: 0,
+      queuedJobs: 0,
+      dueJobs: 0,
+      leasedJobs: 0,
+      doneJobs: 0,
+      failedJobs: 0,
+      cancelledJobs: 0,
+      nextRunAfter: '',
+      latestUpdatedAt: '',
+      byStatus: [],
+      byScanType: [],
+    },
+    recentJobs: [],
+  }
+}
+
+export async function handleScanQueueRoute(route: string, request: Request, env: ServerEnv) {
+  if (!SCAN_QUEUE_ROUTES.has(route)) return new Response(null, { status: 404 })
+  if (route === 'status' && request.method !== 'GET') return new Response(null, { status: 404 })
+  if (route === 'cron' && request.method !== 'GET') return new Response(null, { status: 404 })
+  if ((route === 'schedule' || route === 'claim' || route === 'complete') && request.method !== 'POST') {
+    return new Response(null, { status: 404 })
+  }
+
+  let db: SqliteDatabase | null = null
+  try {
+    if (route === 'schedule' || route === 'claim' || route === 'complete') {
+      const unsafePost = rejectUnsafePost(request)
+      if (unsafePost) return unsafePost
+    }
+    if (route === 'claim' || route === 'complete') {
+      const unauthorized = scanQueueWorkerAuth(request, env)
+      if (unauthorized) return unauthorized
+    }
+    if (route === 'cron') {
+      const secret = env.CRON_SECRET
+      if (!secret || request.headers.get('authorization') !== `Bearer ${secret}`) {
+        return jsonResponse(401, { error: 'Unauthorized scan queue maintenance' })
+      }
+    }
+
+    const opened = route === 'status' ? await openSalesCacheDb(env) : await openOptionalWritableMarketDb(env)
+    db = opened.db
+    if (!db) return jsonResponse(200, emptyScanQueueStatus(opened.dbPath))
+
+    if (route === 'status') {
+      return jsonResponse(200, scanQueueStatusPayload(db, opened.dbPath, new URL(request.url).searchParams))
+    }
+    if (route === 'schedule') {
+      const payload = await readJsonBody<ScanQueueSchedulePayload>(request, MAX_JSON_BODY_BYTES)
+      const scheduled = scheduleScanQueueJobs(db, payload)
+      return jsonResponse(200, { available: true, ...scheduled })
+    }
+    if (route === 'claim') {
+      const payload = await readJsonBody<ScanQueueClaimPayload>(request, MAX_JSON_BODY_BYTES)
+      const claimed = claimScanQueueJobs(db, payload)
+      return jsonResponse(200, { available: true, ...claimed })
+    }
+    if (route === 'complete') {
+      const payload = await readJsonBody<ScanQueueCompletePayload>(request, MAX_JSON_BODY_BYTES)
+      const completed = completeScanQueueJobs(db, payload)
+      return jsonResponse(200, { available: true, ...completed })
+    }
+
+    const nowIso = new Date().toISOString()
+    const params = new URL(request.url).searchParams
+    const expiredLeases = requeueExpiredScanQueueJobs(db, nowIso)
+    const scheduledFromCoverage = scheduleScanQueueJobsFromCoverage(
+      db,
+      {
+        teamCode: params.get('team') ?? params.get('teamCode') ?? undefined,
+        limit: clampInt(params.get('limit'), 1_000, 1, MAX_SCAN_QUEUE_JOBS),
+      },
+      nowIso,
+    )
+    return jsonResponse(200, {
+      ...scanQueueStatusPayload(db, opened.dbPath, params, nowIso),
+      expiredLeases,
+      scheduledFromCoverage,
+    })
+  } catch (error) {
+    return jsonResponse(routeErrorStatus(error), { error: routeErrorMessage(error, 'Scan queue request failed') })
+  } finally {
+    db?.close()
+  }
+}
+
 export async function handleRankingsRoute(route: string, request: Request) {
   if (!RANKINGS_ROUTES.has(route)) return new Response(null, { status: 404 })
   if (route === 'status') {
@@ -5911,6 +7351,16 @@ export async function handleChecklistNodeRequest(request: IncomingMessage, respo
 export async function handleLiveMarketNodeRequest(request: IncomingMessage, response: ServerResponse, env: ServerEnv) {
   const fetchRequest = await nodeToFetchRequest(request)
   await writeNodeResponse(response, await handleLiveMarketRoute(nodeRoute(request), fetchRequest, env))
+}
+
+export async function handleScanCoverageNodeRequest(request: IncomingMessage, response: ServerResponse, env: ServerEnv) {
+  const fetchRequest = await nodeToFetchRequest(request)
+  await writeNodeResponse(response, await handleScanCoverageRoute(nodeRoute(request), fetchRequest, env))
+}
+
+export async function handleScanQueueNodeRequest(request: IncomingMessage, response: ServerResponse, env: ServerEnv) {
+  const fetchRequest = await nodeToFetchRequest(request)
+  await writeNodeResponse(response, await handleScanQueueRoute(nodeRoute(request), fetchRequest, env))
 }
 
 export async function handleRankingsNodeRequest(request: IncomingMessage, response: ServerResponse) {

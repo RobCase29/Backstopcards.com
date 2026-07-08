@@ -52,6 +52,19 @@ import {
   type LiveMarketStatus,
 } from './lib/liveMarket'
 import {
+  fetchScanCoverageStatus,
+  saveScanCoverageRun,
+  type ScanCoverageStatus,
+  type ScanCoverageStatusKey,
+  type ScanCoverageTargetPayload,
+} from './lib/scanCoverage'
+import {
+  fetchScanQueueStatus,
+  scheduleScanQueueJobs,
+  type ScanQueueJobPayload,
+  type ScanQueueStatus,
+} from './lib/scanQueue'
+import {
   fetchSalesCacheStatus,
   fetchSalesCachePlayers,
   fetchSalesCachePlayer,
@@ -2156,6 +2169,173 @@ function liveMarketScanKey(options: {
   return `${options.scanType}:${modelLabel}:${focus}`.replace(/\s+/g, ' ').trim()
 }
 
+function scanCoverageListingPlayerKey(listing: ProspectPulseListing) {
+  return scanNameKey(String(listing.player_name ?? listing.prospect?.name ?? ''))
+}
+
+function scanCoverageOpportunityPlayerKey(opportunity: Opportunity) {
+  return scanNameKey(opportunity.listing.playerName)
+}
+
+function scanCoverageListingReleaseYear(listing: ProspectPulseListing) {
+  const parsed = Number(String(listing.release_year ?? '').replace(/[^0-9]/g, ''))
+  if (Number.isFinite(parsed) && parsed >= 1900 && parsed <= 2100) return parsed
+  const titleYear = String(listing.title ?? '').match(/\b(20[0-9]{2}|19[0-9]{2})\b/)
+  return titleYear ? Number(titleYear[1]) : null
+}
+
+function scanCoverageOpportunityReleaseYear(opportunity: Opportunity) {
+  return opportunity.listing.releaseYear ?? null
+}
+
+function scanCoverageTargetPlayers(model: ChecklistModel, playerScope: BinPlayerScope, playerNames: string[]) {
+  const requestedKeys = new Set(playerNames.map(scanNameKey).filter(Boolean))
+  const players = [...model.players].sort(
+    (left, right) => right.baseAvgPrice - left.baseAvgPrice || left.playerName.localeCompare(right.playerName),
+  )
+  if (requestedKeys.size > 0) return players.filter((player) => requestedKeys.has(scanNameKey(player.playerName)))
+  if (playerScope === 'top-40') return players.slice(0, 40)
+  return players
+}
+
+function scanCoverageMarketplaceHits(listings: ProspectPulseListing[]) {
+  const counts = new Map<string, { marketplace: string; label: string; listings: number }>()
+  for (const listing of listings) {
+    const marketplace = String(listing.marketplace ?? 'unknown')
+    const label = rawListingMarketplaceLabel(listing)
+    const existing = counts.get(marketplace) ?? { marketplace, label, listings: 0 }
+    existing.listings += 1
+    counts.set(marketplace, existing)
+  }
+  return [...counts.values()].sort((left, right) => right.listings - left.listings || left.label.localeCompare(right.label))
+}
+
+function scanCoverageTargetStatus(listingCount: number, opportunityCount: number): ScanCoverageStatusKey {
+  if (opportunityCount > 0) return 'live_opportunity'
+  if (listingCount > 0) return 'live_hits'
+  return 'scanned_no_hits'
+}
+
+function buildScanCoverageTargets(options: {
+  models: ChecklistModel[]
+  playerNames?: string[]
+  playerScope: BinPlayerScope
+  scanResult: EbayBinScanResult
+  opportunities?: Opportunity[]
+  teamCode?: string
+  targetType?: string
+}) {
+  const playerNames = [...new Set((options.playerNames ?? []).map((name) => name.trim()).filter(Boolean))]
+  const targetType = options.targetType ?? 'listing'
+  const targets: ScanCoverageTargetPayload[] = []
+
+  for (const model of options.models) {
+    for (const player of scanCoverageTargetPlayers(model, options.playerScope, playerNames)) {
+      const playerKey = scanNameKey(player.playerName)
+      if (!playerKey) continue
+      const matchingListings = options.scanResult.listings.filter((listing) => {
+        if (scanCoverageListingPlayerKey(listing) !== playerKey) return false
+        const listingYear = scanCoverageListingReleaseYear(listing)
+        return listingYear === null || listingYear === model.releaseYear
+      })
+      const matchingOpportunities = (options.opportunities ?? []).filter((opportunity) => {
+        if (scanCoverageOpportunityPlayerKey(opportunity) !== playerKey) return false
+        const listingYear = scanCoverageOpportunityReleaseYear(opportunity)
+        return listingYear === null || listingYear === model.releaseYear
+      })
+      const bestOpportunity = [...matchingOpportunities].sort(
+        (left, right) =>
+          right.edgeDollars - left.edgeDollars ||
+          right.score - left.score,
+      )[0] ?? null
+      targets.push({
+        targetKey: `${targetType}:${checklistModelKey(model)}:${playerKey}`,
+        playerName: player.playerName,
+        playerKey,
+        releaseKey: model.release,
+        releaseYear: model.releaseYear,
+        releaseName: checklistModelLabel(model),
+        modelKey: checklistModelKey(model),
+        teamCode: options.teamCode,
+        targetType,
+        status: scanCoverageTargetStatus(matchingListings.length, matchingOpportunities.length),
+        listingCount: matchingListings.length,
+        opportunityCount: matchingOpportunities.length,
+        bestEdgeDollars: bestOpportunity?.edgeDollars ?? null,
+        bestScore: bestOpportunity?.score ?? null,
+        marketplaces: scanCoverageMarketplaceHits(matchingListings),
+      })
+    }
+  }
+
+  return targets
+}
+
+function scanCoverageStatsPayload(stats: EbayBinScanResult['stats']) {
+  return { ...stats } as Record<string, unknown>
+}
+
+function scanQueueRefreshMinutesForTarget(scanType: LiveMarketScanType | 'superfractor', targetType: string, status?: ScanCoverageStatusKey) {
+  if (scanType === 'auction') return status === 'live_opportunity' || status === 'live_hits' ? 10 : 90
+  if (scanType === 'superfractor' || targetType === 'superfractor') {
+    return status === 'live_opportunity' || status === 'live_hits' ? 6 * 60 : 24 * 60
+  }
+  if (status === 'live_opportunity') return 45
+  if (status === 'live_hits') return 2 * 60
+  return 8 * 60
+}
+
+function scanQueuePriorityForTarget(scanType: LiveMarketScanType | 'superfractor', targetType: string, target: ScanCoverageTargetPayload) {
+  let priority = target.status === 'live_opportunity' ? 95 : target.status === 'live_hits' ? 75 : 45
+  if (scanType === 'auction') priority += 5
+  if (scanType === 'superfractor' || targetType === 'superfractor') priority += 8
+  return Math.min(100, priority)
+}
+
+function buildScanQueueJobsFromTargets(options: {
+  targets: ScanCoverageTargetPayload[]
+  scanType: LiveMarketScanType | 'superfractor'
+  teamCode: string
+  teamLabel: string
+  targetType: string
+  searchMode: BinSearchMode | 'superfractor'
+  playerScope: BinPlayerScope
+  observedAt?: string
+}) {
+  const observedMs = Date.parse(options.observedAt ?? '')
+  const baseMs = Number.isFinite(observedMs) ? observedMs : Date.now()
+  return options.targets.map((target): ScanQueueJobPayload => {
+    const refreshMinutes = scanQueueRefreshMinutesForTarget(options.scanType, options.targetType, target.status)
+    const runAfter = new Date(baseMs + refreshMinutes * 60_000).toISOString()
+    return {
+      queueKey: target.targetKey ? `coverage:${options.scanType}:${target.targetKey}` : undefined,
+      teamCode: options.teamCode,
+      teamLabel: options.teamLabel,
+      scanType: options.scanType,
+      targetType: options.targetType,
+      playerName: target.playerName,
+      playerKey: target.playerKey,
+      releaseKey: target.releaseKey,
+      releaseYear: target.releaseYear,
+      releaseName: target.releaseName,
+      modelKey: target.modelKey,
+      searchMode: options.searchMode,
+      playerScope: options.playerScope,
+      priority: scanQueuePriorityForTarget(options.scanType, options.targetType, target),
+      runAfter,
+      payload: {
+        source: 'marlins-page',
+        coverageStatus: target.status,
+        listingCount: target.listingCount ?? 0,
+        opportunityCount: target.opportunityCount ?? 0,
+        bestEdgeDollars: target.bestEdgeDollars ?? null,
+        bestScore: target.bestScore ?? null,
+        observedAt: options.observedAt,
+      },
+    }
+  })
+}
+
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<R>) {
   const results: R[] = []
   let cursor = 0
@@ -3898,11 +4078,19 @@ function MarlinsTeamPage({
   coverageEngine,
   coverageLoading,
   coverageError,
+  scanLedger,
+  scanLedgerLoading,
+  scanLedgerError,
+  scanQueue,
+  scanQueueLoading,
+  scanQueueError,
   lastRejectedListing,
   resultsRef,
   onScanTeam,
   onScanSuperfractors,
   onRefreshCoverage,
+  onRefreshScanLedger,
+  onRefreshScanQueue,
   onOpenDesk,
   onSelectRow,
   onScanPlayer,
@@ -3936,11 +4124,19 @@ function MarlinsTeamPage({
   coverageEngine: ChecklistCoveragePayload | null
   coverageLoading: boolean
   coverageError: string | null
+  scanLedger: ScanCoverageStatus | null
+  scanLedgerLoading: boolean
+  scanLedgerError: string | null
+  scanQueue: ScanQueueStatus | null
+  scanQueueLoading: boolean
+  scanQueueError: string | null
   lastRejectedListing: ListingRejection | null
   resultsRef: RefObject<HTMLDivElement | null>
   onScanTeam: () => void
   onScanSuperfractors: () => void
   onRefreshCoverage: () => void
+  onRefreshScanLedger: () => void
+  onRefreshScanQueue: () => void
   onOpenDesk: () => void
   onSelectRow: (rowId: string) => void
   onScanPlayer: (row: PricingRow) => void
@@ -3984,6 +4180,28 @@ function MarlinsTeamPage({
   const hasLiveSource = Boolean(binScan || auctionScan || cachedObservedAt)
   const liveListingCount = binOpportunities.length + auctionOpportunities.length
   const scanQueryCount = (binScan?.stats.queriesRun ?? 0) + (auctionScan?.stats.queriesRun ?? 0)
+  const ledgerSummary = scanLedger?.summary ?? null
+  const ledgerLatestLabel = ledgerSummary?.latestObservedAt
+    ? ageLabel(ledgerSummary.latestObservedAt)
+    : scanLedgerLoading
+      ? 'loading'
+      : 'not recorded'
+  const ledgerHitLabel = ledgerSummary
+    ? `${ledgerSummary.liveHitTargets.toLocaleString()} with hits / ${ledgerSummary.noHitTargets.toLocaleString()} no-hit`
+    : scanLedgerError
+      ? 'ledger unavailable'
+      : 'ledger ready'
+  const queueSummary = scanQueue?.summary ?? null
+  const queueNextLabel = queueSummary?.nextRunAfter
+    ? `next ${new Date(queueSummary.nextRunAfter).toLocaleTimeString()}`
+    : scanQueueLoading
+      ? 'loading'
+      : 'no queued scans'
+  const queueHealthLabel = queueSummary
+    ? `${queueSummary.dueJobs.toLocaleString()} due / ${queueSummary.queuedJobs.toLocaleString()} queued`
+    : scanQueueError
+      ? 'queue unavailable'
+      : 'queue ready'
 
   return (
     <section className="team-page marlins-page" aria-label="Miami Marlins team deals">
@@ -4072,6 +4290,16 @@ function MarlinsTeamPage({
           <strong>{modelCount.toLocaleString()}</strong>
           <small>{configured ? 'Live marketplace access configured' : ebayStatus?.message ?? 'Live marketplace access pending'}</small>
         </div>
+        <div>
+          <span>Coverage Ledger</span>
+          <strong>{ledgerSummary ? `${ledgerSummary.scannedTargets.toLocaleString()} / ${ledgerSummary.totalTargets.toLocaleString()}` : 'Waiting'}</strong>
+          <small>{ledgerHitLabel}</small>
+        </div>
+        <div>
+          <span>Scan Queue</span>
+          <strong>{queueSummary ? queueSummary.totalJobs.toLocaleString() : 'Waiting'}</strong>
+          <small>{queueHealthLabel}</small>
+        </div>
       </div>
 
       <section className="team-scan-console" aria-label="Marlins full checklist scan">
@@ -4092,6 +4320,14 @@ function MarlinsTeamPage({
             <Gem size={15} className={superfractorBusy ? 'spin' : undefined} />
             {superfractorBusy ? 'Scanning /1s' : 'Scan /1 Watch'}
           </button>
+          <button className="ghost-button" type="button" onClick={onRefreshScanLedger} disabled={scanLedgerLoading}>
+            <Database size={15} className={scanLedgerLoading ? 'spin' : undefined} />
+            Ledger
+          </button>
+          <button className="ghost-button" type="button" onClick={onRefreshScanQueue} disabled={scanQueueLoading}>
+            <Radio size={15} className={scanQueueLoading ? 'spin' : undefined} />
+            Queue
+          </button>
           <small>
             {scanQueryCount > 0
               ? `${scanQueryCount.toLocaleString()} latest marketplace queries`
@@ -4101,6 +4337,20 @@ function MarlinsTeamPage({
           </small>
         </div>
         <div className="team-scan-models" aria-label="Loaded Marlins checklist lanes">
+          <span>
+            Ledger {ledgerSummary ? `${ledgerSummary.scannedTargets.toLocaleString()} scanned` : 'not recorded'} / {ledgerLatestLabel}
+          </span>
+          {ledgerSummary ? (
+            <span>
+              {ledgerSummary.listingCount.toLocaleString()} raw hits / {ledgerSummary.opportunityCount.toLocaleString()} modeled windows
+            </span>
+          ) : null}
+          <span>
+            Queue {queueSummary ? `${queueSummary.totalJobs.toLocaleString()} jobs` : 'not scheduled'} / {queueNextLabel}
+          </span>
+          {queueSummary ? <span>{queueHealthLabel}</span> : null}
+          {scanLedgerError ? <span>Ledger note: {scanLedgerError}</span> : null}
+          {scanQueueError ? <span>Queue note: {scanQueueError}</span> : null}
           {checklistModelSummaries.map((summary) => (
             <span key={summary.key}>
               {summary.label} / {summary.playerCount.toLocaleString()}
@@ -8127,6 +8377,12 @@ function App() {
   const [marlinsCoverage, setMarlinsCoverage] = useState<ChecklistCoveragePayload | null>(null)
   const [marlinsCoverageLoading, setMarlinsCoverageLoading] = useState(false)
   const [marlinsCoverageError, setMarlinsCoverageError] = useState<string | null>(null)
+  const [marlinsScanLedger, setMarlinsScanLedger] = useState<ScanCoverageStatus | null>(null)
+  const [marlinsScanLedgerLoading, setMarlinsScanLedgerLoading] = useState(false)
+  const [marlinsScanLedgerError, setMarlinsScanLedgerError] = useState<string | null>(null)
+  const [marlinsScanQueue, setMarlinsScanQueue] = useState<ScanQueueStatus | null>(null)
+  const [marlinsScanQueueLoading, setMarlinsScanQueueLoading] = useState(false)
+  const [marlinsScanQueueError, setMarlinsScanQueueError] = useState<string | null>(null)
   const [marlinsSuperfractorBinScan, setMarlinsSuperfractorBinScan] = useState<EbayBinScanResult | null>(null)
   const [marlinsSuperfractorAuctionScan, setMarlinsSuperfractorAuctionScan] = useState<EbayBinScanResult | null>(null)
   const [marlinsSuperfractorLoading, setMarlinsSuperfractorLoading] = useState(false)
@@ -8135,6 +8391,8 @@ function App() {
   const [rankingsDatasetVersion, setRankingsDatasetVersion] = useState(0)
   const checklistRequestRef = useRef<AbortController | null>(null)
   const coverageRequestRef = useRef<AbortController | null>(null)
+  const scanLedgerRequestRef = useRef<AbortController | null>(null)
+  const scanQueueRequestRef = useRef<AbortController | null>(null)
   const marlinsSuperfractorRequestRef = useRef<AbortController | null>(null)
   const checklistRequestIdRef = useRef(0)
   const binRequestRef = useRef<AbortController | null>(null)
@@ -8414,6 +8672,8 @@ function App() {
       checklistRequestIdRef.current += 1
       checklistRequestRef.current?.abort()
       coverageRequestRef.current?.abort()
+      scanLedgerRequestRef.current?.abort()
+      scanQueueRequestRef.current?.abort()
       marlinsSuperfractorRequestRef.current?.abort()
       binRequestRef.current?.abort()
       auctionRequestRef.current?.abort()
@@ -8555,6 +8815,90 @@ function App() {
       if (coverageRequestRef.current === controller) coverageRequestRef.current = null
     })
   }, [loadMarlinsCoverage])
+  const loadMarlinsScanLedger = useCallback(async (signal?: AbortSignal) => {
+    setMarlinsScanLedgerLoading(true)
+    setMarlinsScanLedgerError(null)
+    try {
+      const ledger = await fetchScanCoverageStatus({
+        teamCode: MARLINS_TEAM_CODE,
+        limit: Math.max(220, marlinsChecklistPlayerNames.length * 4),
+      }, signal)
+      if (!signal?.aborted) setMarlinsScanLedger(ledger)
+      return ledger
+    } catch (error) {
+      if (!signal?.aborted) {
+        setMarlinsScanLedger(null)
+        setMarlinsScanLedgerError(cleanModelLanguage(error instanceof Error ? error.message : 'Scan coverage ledger failed'))
+      }
+      return null
+    } finally {
+      if (!signal?.aborted) setMarlinsScanLedgerLoading(false)
+    }
+  }, [marlinsChecklistPlayerNames.length])
+  useEffect(() => {
+    scanLedgerRequestRef.current?.abort()
+    if (!marlinsCoveragePlayerKey) return
+    const controller = new AbortController()
+    scanLedgerRequestRef.current = controller
+    const timer = window.setTimeout(() => {
+      void loadMarlinsScanLedger(controller.signal)
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+      if (scanLedgerRequestRef.current === controller) scanLedgerRequestRef.current = null
+    }
+  }, [loadMarlinsScanLedger, marlinsCoveragePlayerKey])
+  const refreshMarlinsScanLedger = useCallback(() => {
+    scanLedgerRequestRef.current?.abort()
+    const controller = new AbortController()
+    scanLedgerRequestRef.current = controller
+    void loadMarlinsScanLedger(controller.signal).finally(() => {
+      if (scanLedgerRequestRef.current === controller) scanLedgerRequestRef.current = null
+    })
+  }, [loadMarlinsScanLedger])
+  const loadMarlinsScanQueue = useCallback(async (signal?: AbortSignal) => {
+    setMarlinsScanQueueLoading(true)
+    setMarlinsScanQueueError(null)
+    try {
+      const queue = await fetchScanQueueStatus({
+        teamCode: MARLINS_TEAM_CODE,
+        limit: Math.max(160, marlinsChecklistPlayerNames.length * 3),
+      }, signal)
+      if (!signal?.aborted) setMarlinsScanQueue(queue)
+      return queue
+    } catch (error) {
+      if (!signal?.aborted) {
+        setMarlinsScanQueue(null)
+        setMarlinsScanQueueError(cleanModelLanguage(error instanceof Error ? error.message : 'Scan queue failed'))
+      }
+      return null
+    } finally {
+      if (!signal?.aborted) setMarlinsScanQueueLoading(false)
+    }
+  }, [marlinsChecklistPlayerNames.length])
+  useEffect(() => {
+    scanQueueRequestRef.current?.abort()
+    if (!marlinsCoveragePlayerKey) return
+    const controller = new AbortController()
+    scanQueueRequestRef.current = controller
+    const timer = window.setTimeout(() => {
+      void loadMarlinsScanQueue(controller.signal)
+    }, 0)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+      if (scanQueueRequestRef.current === controller) scanQueueRequestRef.current = null
+    }
+  }, [loadMarlinsScanQueue, marlinsCoveragePlayerKey])
+  const refreshMarlinsScanQueue = useCallback(() => {
+    scanQueueRequestRef.current?.abort()
+    const controller = new AbortController()
+    scanQueueRequestRef.current = controller
+    void loadMarlinsScanQueue(controller.signal).finally(() => {
+      if (scanQueueRequestRef.current === controller) scanQueueRequestRef.current = null
+    })
+  }, [loadMarlinsScanQueue])
   const defaultBinModelKey = useMemo(
     () => (bowman2026Model ? checklistModelKey(bowman2026Model) : binModelOptions[0] ? checklistModelKey(binModelOptions[0]) : ''),
     [binModelOptions, bowman2026Model],
@@ -9086,6 +9430,8 @@ function App() {
       playerNames: marlinsChecklistPlayerNames,
       searchMode: 'checklist' as const,
       searchTerm: '',
+      coverageTeamCode: MARLINS_TEAM_CODE,
+      coverageTeamLabel: 'Miami Marlins',
     }
 
     revealDealResults()
@@ -9213,6 +9559,66 @@ function App() {
       setMarlinsSuperfractorError(
         binResult ? binScanErrorSummary(binResult) : auctionResult ? binScanErrorSummary(auctionResult) : null,
       )
+      try {
+        const coverageScans = [binResult, auctionResult].filter((scan): scan is EbayBinScanResult => Boolean(scan))
+        const coverageScan = mergeBinScans(coverageScans, failedScans)
+        const targets = buildScanCoverageTargets({
+          models: scanModels,
+          playerNames: marlinsChecklistPlayerNames,
+          playerScope: 'all',
+          scanResult: coverageScan,
+          teamCode: MARLINS_TEAM_CODE,
+          targetType: 'superfractor',
+        })
+        if (targets.length > 0) {
+          await saveScanCoverageRun({
+            scanType: 'superfractor',
+            scanKey: 'superfractor:Miami Marlins:all',
+            teamCode: MARLINS_TEAM_CODE,
+            teamLabel: 'Miami Marlins',
+            targetType: 'superfractor',
+            searchMode: 'superfractor',
+            playerScope: 'all',
+            releaseScope: 'all',
+            observedAt: coverageScan.fetchedAt,
+            status: failedScans.length > 0 ? 'partial' : 'complete',
+            marketplaces: ['ebay', 'fanatics-collect'],
+            request: {
+              modelKeys: scanModels.map(checklistModelKey),
+              playerNames: marlinsChecklistPlayerNames,
+              listingsReviewed: coverageScan.listings.length,
+              failedScans,
+            },
+            stats: scanCoverageStatsPayload(coverageScan.stats),
+            targets,
+          })
+          try {
+            await scheduleScanQueueJobs({
+              source: 'marlins-superfractor-scan',
+              teamCode: MARLINS_TEAM_CODE,
+              teamLabel: 'Miami Marlins',
+              scanType: 'superfractor',
+              targetType: 'superfractor',
+              jobs: buildScanQueueJobsFromTargets({
+                targets,
+                scanType: 'superfractor',
+                teamCode: MARLINS_TEAM_CODE,
+                teamLabel: 'Miami Marlins',
+                targetType: 'superfractor',
+                searchMode: 'superfractor',
+                playerScope: 'all',
+                observedAt: coverageScan.fetchedAt,
+              }),
+            })
+            void loadMarlinsScanQueue()
+          } catch (queueError) {
+            console.warn('Marlins Superfractor scan queue was not scheduled', queueError)
+          }
+          void loadMarlinsScanLedger()
+        }
+      } catch (coverageError) {
+        console.warn('Marlins Superfractor coverage ledger was not saved', coverageError)
+      }
     } catch (scanError) {
       if (controller.signal.aborted) return
       setMarlinsSuperfractorError(friendlyBinError(scanError))
@@ -9256,6 +9662,8 @@ function App() {
       playerNames: [playerName],
       searchMode: 'checklist' as const,
       searchTerm: '',
+      coverageTeamCode: MARLINS_TEAM_CODE,
+      coverageTeamLabel: 'Miami Marlins',
     }
 
     revealDealResults()
@@ -9425,6 +9833,9 @@ function App() {
     searchMode: BinSearchMode
     searchTerm: string
     salesCacheModels?: Record<string, SalesCachePlayerModel>
+    coverageTeamCode?: string
+    coverageTeamLabel?: string
+    coverageTargetType?: string
   }) {
     const scanResult = filterRejectedScanResult(options.scanResult, rejectedListingKeys)
     const activeScoreSettings = scoreSettingsForSearchMode(binScoreSettings, options.searchMode)
@@ -9435,10 +9846,11 @@ function App() {
       binResultSort,
     )
     const capped = capLiveMarketOpportunities(ranked, options.scanType === 'auction' ? 4 : 8).slice(0, options.scanType === 'auction' ? 180 : 360)
+    const scanKey = liveMarketScanKey(options)
     try {
       await saveLiveMarketSnapshot({
         scanType: options.scanType,
-        scanKey: liveMarketScanKey(options),
+        scanKey,
         searchMode: options.searchMode,
         playerScope: options.playerScope,
         releaseScope: effectiveBinModelKey === BIN_ALL_MODELS_KEY ? 'all' : 'selected',
@@ -9458,6 +9870,69 @@ function App() {
     } catch (cacheError) {
       console.warn('Live market snapshot was not saved', cacheError)
     }
+    try {
+      const targets = buildScanCoverageTargets({
+        models: options.models,
+        playerNames: options.playerNames,
+        playerScope: options.playerScope,
+        scanResult,
+        opportunities: ranked,
+        teamCode: options.coverageTeamCode,
+        targetType: options.coverageTargetType ?? 'listing',
+      })
+      if (targets.length > 0) {
+        await saveScanCoverageRun({
+          scanType: options.scanType,
+          scanKey,
+          teamCode: options.coverageTeamCode,
+          teamLabel: options.coverageTeamLabel,
+          targetType: options.coverageTargetType ?? 'listing',
+          searchMode: options.searchMode,
+          playerScope: options.playerScope,
+          releaseScope: effectiveBinModelKey === BIN_ALL_MODELS_KEY ? 'all' : 'selected',
+          observedAt: options.scanResult.fetchedAt,
+          status: scanResult.errors.length > 0 ? 'partial' : 'complete',
+          marketplaces: ['ebay', 'fanatics-collect'],
+          request: {
+            minPrice: options.minPrice,
+            modelKeys: options.models.map(checklistModelKey),
+            playerNames: options.playerNames ?? [],
+            searchTerm: options.searchTerm.trim(),
+            listingsReviewed: options.scanResult.listings.length,
+          },
+          stats: scanCoverageStatsPayload(scanResult.stats),
+          targets,
+        })
+        if (options.coverageTeamCode === MARLINS_TEAM_CODE) {
+          const targetType = options.coverageTargetType ?? 'listing'
+          try {
+            await scheduleScanQueueJobs({
+              source: 'marlins-live-market-scan',
+              teamCode: MARLINS_TEAM_CODE,
+              teamLabel: options.coverageTeamLabel,
+              scanType: options.scanType,
+              targetType,
+              jobs: buildScanQueueJobsFromTargets({
+                targets,
+                scanType: options.scanType,
+                teamCode: MARLINS_TEAM_CODE,
+                teamLabel: options.coverageTeamLabel ?? 'Miami Marlins',
+                targetType,
+                searchMode: options.searchMode,
+                playerScope: options.playerScope,
+                observedAt: options.scanResult.fetchedAt,
+              }),
+            })
+            void loadMarlinsScanQueue()
+          } catch (queueError) {
+            console.warn('Marlins scan queue was not scheduled', queueError)
+          }
+          void loadMarlinsScanLedger()
+        }
+      }
+    } catch (coverageError) {
+      console.warn('Scan coverage ledger was not saved', coverageError)
+    }
   }
 
   async function scanEbayBinListings(
@@ -9468,6 +9943,9 @@ function App() {
       playerNames?: string[]
       searchMode?: BinSearchMode
       searchTerm?: string
+      coverageTeamCode?: string
+      coverageTeamLabel?: string
+      coverageTargetType?: string
     } = {},
   ) {
     const activeModels = overrides.models ?? selectedBinModels
@@ -9632,6 +10110,9 @@ function App() {
         searchMode: activeSearchMode,
         searchTerm: activeSearchTerm,
         salesCacheModels: scanSalesCacheModels,
+        coverageTeamCode: overrides.coverageTeamCode,
+        coverageTeamLabel: overrides.coverageTeamLabel,
+        coverageTargetType: overrides.coverageTargetType,
       })
     } catch (scanError) {
       if (controller.signal.aborted) return
@@ -9652,6 +10133,9 @@ function App() {
       playerNames?: string[]
       searchMode?: BinSearchMode
       searchTerm?: string
+      coverageTeamCode?: string
+      coverageTeamLabel?: string
+      coverageTargetType?: string
     } = {},
   ) {
     const activeModels = overrides.models ?? selectedBinModels
@@ -9792,6 +10276,9 @@ function App() {
         searchMode: activeSearchMode,
         searchTerm: activeSearchTerm,
         salesCacheModels: scanSalesCacheModels,
+        coverageTeamCode: overrides.coverageTeamCode,
+        coverageTeamLabel: overrides.coverageTeamLabel,
+        coverageTargetType: overrides.coverageTargetType,
       })
     } catch (scanError) {
       if (controller.signal.aborted) return
@@ -10100,11 +10587,19 @@ function App() {
           coverageEngine={marlinsCoverage}
           coverageLoading={marlinsCoverageLoading}
           coverageError={marlinsCoverageError}
+          scanLedger={marlinsScanLedger}
+          scanLedgerLoading={marlinsScanLedgerLoading}
+          scanLedgerError={marlinsScanLedgerError}
+          scanQueue={marlinsScanQueue}
+          scanQueueLoading={marlinsScanQueueLoading}
+          scanQueueError={marlinsScanQueueError}
           lastRejectedListing={lastRejectedListing}
           resultsRef={dealResultsRef}
           onScanTeam={scanMarlinsTeamDeals}
           onScanSuperfractors={scanMarlinsSuperfractors}
           onRefreshCoverage={refreshMarlinsCoverage}
+          onRefreshScanLedger={refreshMarlinsScanLedger}
+          onRefreshScanQueue={refreshMarlinsScanQueue}
           onOpenDesk={() => navigateAppRoute('desk')}
           onSelectRow={setSelectedRowId}
           onScanPlayer={scanBinsForLookupRow}
