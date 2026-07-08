@@ -12,7 +12,7 @@ declare const process: {
 }
 
 const PUBLIC_PATHS = new Set(['/access.html', '/backstop-logo.jpeg', '/favicon.svg'])
-const PUBLIC_PREFIXES = ['/api/access-login', '/api/access-logout']
+const PUBLIC_PREFIXES = ['/api/access-login', '/api/access-logout', '/api/access']
 
 export const config = {
   matcher: ['/((?!_vercel/insights|_vercel/speed-insights).*)'],
