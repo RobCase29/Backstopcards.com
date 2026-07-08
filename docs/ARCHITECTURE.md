@@ -75,6 +75,7 @@ The value board should use current base-auto price against rank-implied base pri
 - Broad scans should use cached query pages and constrained player buckets.
 - Hosted scans should check Redis before spending marketplace API requests and should write fresh snapshots to Neon after scoring.
 - Classification fixes should be encoded as parser rules or bucket overrides after repeated misses.
+- Rankings refresh through the hosted `/api/rankings/refresh` cron path and persist to Redis or Vercel Runtime Cache. Bundled CSV files are fallback snapshots, not the production write target.
 
 ## Subscription Decisions
 
@@ -82,9 +83,8 @@ For the current architecture, Card Hedge and eBay are the important paid/credent
 
 ## Next Refactors
 
-1. Rename `ProspectPulseListing` to a neutral marketplace listing type.
-2. Promote the shared marketplace listing model so eBay, Fanatics Collect, COMC, and future sources use the same query/result contract.
-3. Rename `/api/sales-cache` and `salesCache` UI copy to canonical sold model.
-4. Split the beta case-hit lab and sales model lab into lazily loaded modules.
-5. Add a scheduled Card Hedge refresh pipeline that writes canonical rows without manual browser capture.
-6. Add an admin-only source health page for cache hit rate, marketplace saved calls, and stale lanes.
+1. Promote the shared marketplace listing model so eBay, Fanatics Collect, COMC, and future sources use the same query/result contract.
+2. Rename `/api/sales-cache` and `salesCache` internals to canonical sold model while preserving backward-compatible routes.
+3. Split the case-hit lab, sealed wax page, and sales model lab into lazily loaded modules.
+4. Add a scheduled Card Hedge refresh pipeline that writes canonical rows without manual browser capture.
+5. Add an admin-only source health page for cache hit rate, marketplace saved calls, and stale lanes.

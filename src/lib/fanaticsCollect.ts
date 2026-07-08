@@ -1,4 +1,4 @@
-import type { ChecklistModel, ProspectPulseListing } from '../types'
+import type { ChecklistModel, MarketplaceListing } from '../types'
 import {
   lowSerialNonAutoVariationLabel,
   normalizedTitleKey,
@@ -228,7 +228,7 @@ function imageUrlFrom(value: unknown): string {
   return ''
 }
 
-function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleaseLabel: string): ProspectPulseListing | null {
+function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleaseLabel: string): MarketplaceListing | null {
   const meta = item._backstopQuery
   const playerName = firstString([meta?.playerName])
   const title = firstString([item.title])
@@ -294,13 +294,13 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
   }
 }
 
-function listingIdentity(listing: ProspectPulseListing) {
+function listingIdentity(listing: MarketplaceListing) {
   return String(listing.item_id ?? listing.id ?? listing.listing_url ?? listing.url ?? listing.title ?? '')
 }
 
-function dedupeListings(listings: ProspectPulseListing[]) {
+function dedupeListings(listings: MarketplaceListing[]) {
   const seen = new Set<string>()
-  const deduped: ProspectPulseListing[] = []
+  const deduped: MarketplaceListing[] = []
   for (const listing of listings) {
     const identity = listingIdentity(listing)
     if (!identity || seen.has(identity)) continue

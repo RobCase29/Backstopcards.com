@@ -57,7 +57,7 @@ export interface CompSale {
   title?: string
 }
 
-export interface ProspectPulseListing {
+export interface MarketplaceListing {
   id?: string
   item_id?: string
   title?: string
@@ -297,7 +297,7 @@ export interface ScoreSettings {
 }
 
 export interface PulseSnapshot {
-  listings: ProspectPulseListing[]
+  listings: MarketplaceListing[]
   analytics?: unknown
   source: 'live' | 'import'
   fetchedAt: string

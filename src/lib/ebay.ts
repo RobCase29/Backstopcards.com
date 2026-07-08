@@ -1,4 +1,4 @@
-import type { ChecklistModel, ProspectPulseListing } from '../types'
+import type { ChecklistModel, MarketplaceListing } from '../types'
 import {
   goldInkVariationLabel,
   lowSerialNonAutoVariationLabel,
@@ -106,7 +106,7 @@ export type EbayScanStats = {
 }
 
 export type EbayBinScanResult = {
-  listings: ProspectPulseListing[]
+  listings: MarketplaceListing[]
   fetchedAt: string
   errors: Array<{ query?: string; error: string }>
   stats: EbayScanStats
@@ -279,7 +279,7 @@ function itemImage(item: EbayItemSummary) {
   )
 }
 
-function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: string, listingMode: EbayListingMode): ProspectPulseListing | null {
+function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: string, listingMode: EbayListingMode): MarketplaceListing | null {
   const meta = item._bowmanTraderQuery
   const playerName = firstString([meta?.playerName], '')
   const title = firstString([item.title], '')
@@ -354,13 +354,13 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
   }
 }
 
-function listingIdentity(listing: ProspectPulseListing) {
+function listingIdentity(listing: MarketplaceListing) {
   return String(listing.item_id ?? listing.id ?? listing.listing_url ?? listing.url ?? listing.title ?? '')
 }
 
-function dedupeListings(listings: ProspectPulseListing[]) {
+function dedupeListings(listings: MarketplaceListing[]) {
   const seen = new Set<string>()
-  const deduped: ProspectPulseListing[] = []
+  const deduped: MarketplaceListing[] = []
   for (const listing of listings) {
     const identity = listingIdentity(listing)
     if (!identity || seen.has(identity)) continue

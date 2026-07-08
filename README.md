@@ -70,7 +70,7 @@ The generated snapshots are:
 - `src/data/sts_formulated_consensus_hitters.csv`
 - `src/data/sts_formulated_consensus_pitchers.csv`
 
-GitHub Actions also runs `.github/workflows/refresh-rankings.yml` daily. It refreshes both files, validates the ranking parser, and commits only when the data changed.
+Production rankings refresh through Vercel Cron at `/api/rankings/refresh`, which writes to the runtime cache instead of the read-only deployment filesystem. The bundled CSV files are fallback snapshots for local development and outage recovery.
 
 ## Legacy Checklist Feed (Fallback Only)
 

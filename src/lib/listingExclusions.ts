@@ -1,10 +1,10 @@
-import type { NormalizedListing, ProspectPulseListing } from '../types'
+import type { NormalizedListing, MarketplaceListing } from '../types'
 
 const LISTING_REJECTION_STORAGE_KEY = 'backstop-card-finder:listing-rejections:v1'
 const LISTING_REJECTION_MAX_RECORDS = 750
 
-type RejectableListing = Partial<ProspectPulseListing> | Partial<NormalizedListing>
-type ListingFields = Partial<ProspectPulseListing> & Partial<NormalizedListing>
+type RejectableListing = Partial<MarketplaceListing> | Partial<NormalizedListing>
+type ListingFields = Partial<MarketplaceListing> & Partial<NormalizedListing>
 
 export interface ListingRejection {
   key: string

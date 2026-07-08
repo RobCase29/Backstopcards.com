@@ -175,7 +175,7 @@ import {
   variationLabelWithSerial,
 } from './lib/salesLab'
 import { summarizeProximityMultiplier } from './lib/proximityMultiples'
-import type { ChecklistModel, GradingCompany, NormalizedListing, Opportunity, ProspectPulseListing, ScoreSettings } from './types'
+import type { ChecklistModel, GradingCompany, NormalizedListing, Opportunity, MarketplaceListing, ScoreSettings } from './types'
 
 type CategoryFilter = 'all' | ChecklistModel['category']
 type BaseSourceFilter = 'all' | BasePriceSource
@@ -686,7 +686,7 @@ function listingMarketplaceLabel(listing: Pick<NormalizedListing, 'marketplace' 
   return 'Listing'
 }
 
-function rawListingMarketplaceLabel(listing: ProspectPulseListing) {
+function rawListingMarketplaceLabel(listing: MarketplaceListing) {
   if (listing.marketplace_label) return listing.marketplace_label
   if (listing.marketplace === 'fanatics-collect') return 'Fanatics Collect'
   if (listing.marketplace === 'comc') return 'COMC'
@@ -705,7 +705,7 @@ function marketplaceCountsFromLabels(labels: string[]) {
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
 }
 
-function marketplaceCountsFromListings(listings: ProspectPulseListing[]) {
+function marketplaceCountsFromListings(listings: MarketplaceListing[]) {
   return marketplaceCountsFromLabels(listings.map(rawListingMarketplaceLabel))
 }
 
@@ -897,7 +897,7 @@ function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlay
   }
 }
 
-function playerNamesFromListings(listings: ProspectPulseListing[], limit = 160) {
+function playerNamesFromListings(listings: MarketplaceListing[], limit = 160) {
   return [
     ...new Set(
       listings
@@ -1852,7 +1852,7 @@ function playerFirstTeamDealEntries(entries: TeamDealEntry[]) {
   return [...leaders, ...repeats]
 }
 
-function rawListingPlayerName(listing: ProspectPulseListing) {
+function rawListingPlayerName(listing: MarketplaceListing) {
   return String(listing.player_name ?? listing.prospect?.name ?? listing.prospect?.normalized_name ?? '').trim()
 }
 
@@ -1860,7 +1860,7 @@ function normalizedWordSet(value: string) {
   return new Set(scanNameKey(value).split(' ').filter(Boolean))
 }
 
-function rawListingMatchesPlayer(listing: ProspectPulseListing, playerName: string) {
+function rawListingMatchesPlayer(listing: MarketplaceListing, playerName: string) {
   const playerKey = scanNameKey(playerName)
   if (!playerKey) return false
 
@@ -2076,9 +2076,9 @@ function isUrgentAuctionOpportunity(opportunity: Opportunity) {
   )
 }
 
-function dedupeBinListings(listings: ProspectPulseListing[]) {
+function dedupeBinListings(listings: MarketplaceListing[]) {
   const seen = new Set<string>()
-  const deduped: ProspectPulseListing[] = []
+  const deduped: MarketplaceListing[] = []
   for (const listing of listings) {
     const key = String(listing.item_id ?? listing.id ?? listing.listing_url ?? listing.url ?? listing.title ?? '')
     if (!key || seen.has(key)) continue
@@ -2169,7 +2169,7 @@ function liveMarketScanKey(options: {
   return `${options.scanType}:${modelLabel}:${focus}`.replace(/\s+/g, ' ').trim()
 }
 
-function scanCoverageListingPlayerKey(listing: ProspectPulseListing) {
+function scanCoverageListingPlayerKey(listing: MarketplaceListing) {
   return scanNameKey(String(listing.player_name ?? listing.prospect?.name ?? ''))
 }
 
@@ -2177,7 +2177,7 @@ function scanCoverageOpportunityPlayerKey(opportunity: Opportunity) {
   return scanNameKey(opportunity.listing.playerName)
 }
 
-function scanCoverageListingReleaseYear(listing: ProspectPulseListing) {
+function scanCoverageListingReleaseYear(listing: MarketplaceListing) {
   const parsed = Number(String(listing.release_year ?? '').replace(/[^0-9]/g, ''))
   if (Number.isFinite(parsed) && parsed >= 1900 && parsed <= 2100) return parsed
   const titleYear = String(listing.title ?? '').match(/\b(20[0-9]{2}|19[0-9]{2})\b/)
@@ -2198,7 +2198,7 @@ function scanCoverageTargetPlayers(model: ChecklistModel, playerScope: BinPlayer
   return players
 }
 
-function scanCoverageMarketplaceHits(listings: ProspectPulseListing[]) {
+function scanCoverageMarketplaceHits(listings: MarketplaceListing[]) {
   const counts = new Map<string, { marketplace: string; label: string; listings: number }>()
   for (const listing of listings) {
     const marketplace = String(listing.marketplace ?? 'unknown')
@@ -3592,7 +3592,7 @@ function teamOpportunityPrimaryRank(opportunity: TeamChecklistOpportunity) {
 }
 
 type TeamSuperfractorEntry = {
-  listing: ProspectPulseListing
+  listing: MarketplaceListing
   type: 'BIN' | 'Auction'
   modelRow: PricingRow | null
   modelValue: number | null
@@ -3612,28 +3612,28 @@ function rawListingNumber(value: unknown) {
   return parsed ?? 0
 }
 
-function rawListingAllInPrice(listing: ProspectPulseListing) {
+function rawListingAllInPrice(listing: MarketplaceListing) {
   return rawListingNumber(listing.current_price ?? listing.price ?? listing.sold_price) + rawListingNumber(listing.shipping_cost)
 }
 
-function rawListingUrl(listing: ProspectPulseListing) {
+function rawListingUrl(listing: MarketplaceListing) {
   return String(listing.listing_url ?? listing.url ?? '').trim()
 }
 
-function rawListingTitle(listing: ProspectPulseListing) {
+function rawListingTitle(listing: MarketplaceListing) {
   return String(listing.title ?? '').trim()
 }
 
-function rawListingSearchText(listing: ProspectPulseListing) {
+function rawListingSearchText(listing: MarketplaceListing) {
   return `${listing.title ?? ''} ${listing.variation ?? ''} ${listing.product_type ?? ''} ${listing.release ?? ''}`.toLowerCase()
 }
 
-function rawListingLooksLikeSuperfractor(listing: ProspectPulseListing) {
+function rawListingLooksLikeSuperfractor(listing: MarketplaceListing) {
   const text = `${listing.title ?? ''} ${listing.variation ?? ''} ${listing.base_color ?? ''} ${listing.product_type ?? ''} ${listing.release ?? ''}`
   return titleLooksLikeSuperfractor(text, { requireBowman: false })
 }
 
-function rawListingCanUseSuperfractorProxy(listing: ProspectPulseListing) {
+function rawListingCanUseSuperfractorProxy(listing: MarketplaceListing) {
   return titleCanUseBowmanSuperfractorAutoProxy(rawListingSearchText(listing))
 }
 
@@ -3643,14 +3643,14 @@ function superfractorQuoteForRow(row: PricingRow) {
   )
 }
 
-function rawListingReleaseYear(listing: ProspectPulseListing) {
+function rawListingReleaseYear(listing: MarketplaceListing) {
   const fieldYear = Number(String(listing.release_year ?? '').replace(/[^0-9]/g, ''))
   if (Number.isFinite(fieldYear) && fieldYear >= 1990 && fieldYear <= 2100) return fieldYear
   const titleYear = rawListingSearchText(listing).match(/\b(20[0-9]{2}|19[0-9]{2})\b/)
   return titleYear ? Number(titleYear[1]) : null
 }
 
-function rawListingRowMatchScore(row: PricingRow, listing: ProspectPulseListing) {
+function rawListingRowMatchScore(row: PricingRow, listing: MarketplaceListing) {
   const listingYear = rawListingReleaseYear(listing)
   const listingText = scanNameKey(rawListingSearchText(listing))
   let score = 0
@@ -3667,7 +3667,7 @@ function rawListingRowMatchScore(row: PricingRow, listing: ProspectPulseListing)
   return score
 }
 
-function bestSuperfractorModelForListing(listing: ProspectPulseListing, rowsByPlayer: Map<string, PricingRow[]>) {
+function bestSuperfractorModelForListing(listing: MarketplaceListing, rowsByPlayer: Map<string, PricingRow[]>) {
   const playerRows = (rowsByPlayer.get(scanNameKey(rawListingPlayerName(listing))) ?? []).filter(rowHasModel)
   if (playerRows.length === 0) return { row: null, value: null, label: 'Needs exact lane', source: 'missing' as const, matchScore: 0 }
 
@@ -3716,7 +3716,7 @@ function bestSuperfractorModelForListing(listing: ProspectPulseListing, rowsByPl
   return bestModeledRow ?? { row: fallbackRow, value: null, label: 'Needs exact lane', source: 'missing' as const, matchScore: 0 }
 }
 
-function rawListingHoursToClose(listing: ProspectPulseListing) {
+function rawListingHoursToClose(listing: MarketplaceListing) {
   const endTime = listing.end_time ? new Date(listing.end_time).getTime() : Number.NaN
   if (!Number.isFinite(endTime)) return null
   const hours = (endTime - Date.now()) / (1000 * 60 * 60)
@@ -3965,7 +3965,7 @@ function TeamDealCommandCenter({
 
   const primaryTitle = topBuy?.opportunity.listing.playerName ?? topTarget?.playerName ?? 'Marlins checklist loading'
   const primarySubtitle = topBuy
-    ? `${money(topBuy.opportunity.edgeDollars)} modeled edge / ${percent(topBuy.opportunity.expectedRoiPct)} ROI / ${listingMarketplaceLabel(topBuy.opportunity.listing)}`
+    ? `${money(topBuy.opportunity.edgeDollars)} modeled edge / ${percent(topBuy.opportunity.expectedRoiPct)} below model / ${listingMarketplaceLabel(topBuy.opportunity.listing)}`
     : topTarget
       ? `${topTarget.rankLabel ?? 'Rank pending'} / opportunity ${topTarget.score} / ${topTarget.checklistCount.toLocaleString()} checklist${topTarget.checklistCount === 1 ? '' : 's'}`
       : 'Waiting on Miami targets'
@@ -4912,8 +4912,8 @@ function LocalSoldModelPanel({
       <div className="detail-title">
         <Database size={18} />
         <div>
-          <span>Sold Comp Base</span>
-          <h2>{model?.available && baseAutoPrice ? money(baseAutoPrice) : model?.available ? 'No release base' : 'No Cache'}</h2>
+          <span>Sold Comp Model</span>
+          <h2>{model?.available && baseAutoPrice ? money(baseAutoPrice) : model?.available ? 'No release base' : 'No stored comps'}</h2>
           <small>{row ? `${playerName} / ${row.release}` : playerName || 'Select a player'}</small>
         </div>
       </div>
@@ -4921,7 +4921,7 @@ function LocalSoldModelPanel({
       {loading ? (
         <div className="empty-state compact">
           <RefreshCw size={20} className="spin" />
-          <strong>Checking sold cache.</strong>
+          <strong>Checking sold comps.</strong>
         </div>
       ) : error ? (
         <div className="sales-cache-note warning">
@@ -6084,14 +6084,6 @@ function SourceStackPanel({
       tone: ranking?.rows ? 'fresh' : 'watch',
       role: 'Consensus rank, trend, and coverage drive the value board.',
     },
-    {
-      key: 'legacy',
-      label: 'Legacy feed',
-      value: 'Fallback only',
-      detail: 'not part of normal pricing or live scans',
-      tone: 'neutral',
-      role: 'Keep as temporary checklist/multiplier backup until local coverage is complete.',
-    },
   ] satisfies Array<{
     key: string
     label: string
@@ -6134,7 +6126,7 @@ function SourceStackPanel({
       </div>
       <div className="source-stack-footer">
         <ShieldCheck size={15} />
-        <span>Decision: keep Card Hedge and eBay active; Market Movers and the legacy checklist feed are validation/fallback surfaces, not the default architecture.</span>
+        <span>Primary path: canonical sold comps plus live marketplace scans. Backup sources stay out of the normal user flow.</span>
       </div>
     </section>
   )
@@ -8322,7 +8314,7 @@ function App() {
     typeof window === 'undefined' ? 'desk' : appRouteFromPath(window.location.pathname),
   )
   const [ebayStatus, setEbayStatus] = useState<EbayStatus | null>(null)
-  const [binListings, setBinListings] = useState<ProspectPulseListing[]>([])
+  const [binListings, setBinListings] = useState<MarketplaceListing[]>([])
   const [binLoading, setBinLoading] = useState(false)
   const [binError, setBinError] = useState<string | null>(null)
   const [binMinPrice, setBinMinPrice] = useState(25)
@@ -8334,7 +8326,7 @@ function App() {
   const [binScan, setBinScan] = useState<EbayBinScanResult | null>(null)
   const [listingRejections, setListingRejections] = useState<ListingRejection[]>(() => readListingRejections())
   const [lastRejectedListing, setLastRejectedListing] = useState<ListingRejection | null>(null)
-  const [auctionListings, setAuctionListings] = useState<ProspectPulseListing[]>([])
+  const [auctionListings, setAuctionListings] = useState<MarketplaceListing[]>([])
   const [auctionLoading, setAuctionLoading] = useState(false)
   const [auctionError, setAuctionError] = useState<string | null>(null)
   const [auctionScan, setAuctionScan] = useState<EbayBinScanResult | null>(null)
@@ -9811,7 +9803,7 @@ function App() {
     setCaseHitError(null)
   }
 
-  async function loadSalesCacheModelsForListings(listings: ProspectPulseListing[], signal?: AbortSignal) {
+  async function loadSalesCacheModelsForListings(listings: MarketplaceListing[], signal?: AbortSignal) {
     const playerNames = playerNamesFromListings(listings)
     if (playerNames.length === 0) return {}
 

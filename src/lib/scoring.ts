@@ -7,7 +7,7 @@ import type {
   NormalizedListing,
   Opportunity,
   Prospect,
-  ProspectPulseListing,
+  MarketplaceListing,
   ScoreSettings,
   ValuationSource,
 } from '../types'
@@ -107,7 +107,7 @@ function normalizeComps(comps?: CompSale[]) {
     .filter((comp) => (comp.sale_price ?? 0) > 0)
 }
 
-function inferKind(listing: ProspectPulseListing): NormalizedListing['kind'] {
+function inferKind(listing: MarketplaceListing): NormalizedListing['kind'] {
   const format = String(listing.buying_format ?? '').toLowerCase()
   const status = String(listing.status ?? listing.listing_status ?? '').toLowerCase()
   if (listing.is_sold || listing.sold_price || status.includes('sold')) return 'sold'
@@ -115,7 +115,7 @@ function inferKind(listing: ProspectPulseListing): NormalizedListing['kind'] {
   return 'live'
 }
 
-function inferStatus(listing: ProspectPulseListing, kind: NormalizedListing['kind']): ListingStatus {
+function inferStatus(listing: MarketplaceListing, kind: NormalizedListing['kind']): ListingStatus {
   const statusText = String(listing.status ?? listing.listing_status ?? '').toLowerCase()
   const endTime = listing.end_time ? new Date(listing.end_time).getTime() : null
 
@@ -127,14 +127,14 @@ function inferStatus(listing: ProspectPulseListing, kind: NormalizedListing['kin
   return 'unknown'
 }
 
-function inferReleaseYear(listing: ProspectPulseListing) {
+function inferReleaseYear(listing: MarketplaceListing) {
   const explicitYear = positiveNumberValue(listing.release_year)
   if (explicitYear) return explicitYear
   const match = searchText(listing).match(/\b(20\d{2})\b/)
   return match ? Number(match[1]) : null
 }
 
-function releaseLabel(listing: ProspectPulseListing, releaseYear?: number | null) {
+function releaseLabel(listing: MarketplaceListing, releaseYear?: number | null) {
   const year = releaseYear ? String(releaseYear) : ''
   const explicitRelease = firstString([listing.release], '')
   if (explicitRelease && /\b20\d{2}\b/.test(explicitRelease)) {
@@ -144,7 +144,7 @@ function releaseLabel(listing: ProspectPulseListing, releaseYear?: number | null
   return product.includes(year) ? product : `${year} ${product}`.trim()
 }
 
-function inferSerialDenominator(listing: ProspectPulseListing) {
+function inferSerialDenominator(listing: MarketplaceListing) {
   const explicit = positiveNumberValue(listing.serial_denominator)
   if (explicit) return explicit
   const text = variationSearchText(listing)
@@ -156,7 +156,7 @@ function inferSerialDenominator(listing: ProspectPulseListing) {
   return isSnackPackAutoListing(listing) ? 5 : null
 }
 
-function variationLabel(listing: ProspectPulseListing, serialDenominator?: number | null) {
+function variationLabel(listing: MarketplaceListing, serialDenominator?: number | null) {
   if (isHandSignedAutoListing(listing)) return 'Hand Signed Auto'
   if (isSnackPackAutoListing(listing)) return `${snackPackVariant(listing)} Snack Pack /${serialDenominator ?? 5}`
   const explicitVariation = firstString([listing.variation, listing.base_color], '')
@@ -173,16 +173,16 @@ function variationLabel(listing: ProspectPulseListing, serialDenominator?: numbe
   return `${variation} ${serial}`.trim()
 }
 
-function isHandSignedAutoListing(listing: ProspectPulseListing) {
+function isHandSignedAutoListing(listing: MarketplaceListing) {
   return Boolean(listing.is_hand_signed) || titleLooksHandSignedAuto(searchText(listing))
 }
 
-function isSnackPackAutoListing(listing: ProspectPulseListing) {
+function isSnackPackAutoListing(listing: MarketplaceListing) {
   const text = searchText(listing)
   return SNACK_PACK_PATTERN.test(text) && /\b(auto|autos|autograph|autographed|autographs|signed|signature|redemption)\b/.test(text)
 }
 
-function snackPackVariant(listing: ProspectPulseListing) {
+function snackPackVariant(listing: MarketplaceListing) {
   const text = searchText(listing)
   if (/\bsunflower(?:\s+seeds?)?\b/i.test(text)) return 'Sunflower'
   if (/\bgum\s*ball\b|\bbubble\s+gum\b/i.test(text)) return 'Gumball'
@@ -191,12 +191,12 @@ function snackPackVariant(listing: ProspectPulseListing) {
   return 'Snack Pack'
 }
 
-function imageUrl(listing: ProspectPulseListing) {
+function imageUrl(listing: MarketplaceListing) {
   const gallery = Array.isArray(listing.gallery_urls) ? listing.gallery_urls[0] : listing.gallery_urls
   return firstString([listing.image_url, listing.image, listing.gallery_url, gallery], '') || null
 }
 
-function inferIsGraded(listing: ProspectPulseListing) {
+function inferIsGraded(listing: MarketplaceListing) {
   const text = gradingText(listing)
   const gradeText = String(listing.grade ?? '').trim()
   return Boolean(
@@ -210,7 +210,7 @@ function inferIsGraded(listing: ProspectPulseListing) {
   )
 }
 
-function gradingText(listing: ProspectPulseListing) {
+function gradingText(listing: MarketplaceListing) {
   return [
     listing.title,
     listing.grader,
@@ -237,7 +237,7 @@ function parseGradeNumber(value: unknown) {
   return direct ? Number(direct[1]) : null
 }
 
-function inferGradeDetails(listing: ProspectPulseListing) {
+function inferGradeDetails(listing: MarketplaceListing) {
   const text = gradingText(listing)
   const graderPattern = /\b(psa|bgs|sgc|cgc|beckett)\b/i
   const company = normalizeGradingCompany(listing.grader) ?? normalizeGradingCompany(text.match(graderPattern)?.[1])
@@ -275,7 +275,7 @@ function hoursUntil(endTime?: string | null) {
   return diffMs / (1000 * 60 * 60)
 }
 
-function searchText(listing: ProspectPulseListing) {
+function searchText(listing: MarketplaceListing) {
   return [
     listing.title,
     listing.player_name,
@@ -289,7 +289,7 @@ function searchText(listing: ProspectPulseListing) {
     .toLowerCase()
 }
 
-function variationSearchText(listing: ProspectPulseListing) {
+function variationSearchText(listing: MarketplaceListing) {
   return searchText(listing).replace(TEAM_COLOR_WORD_CONTEXT_PATTERN, ' ')
 }
 
@@ -370,7 +370,7 @@ function listingProductBlockedForModel(listing: NormalizedListing, model: Checkl
   return ADJACENT_PRODUCT_BLOCKERS.some((pattern) => pattern.test(listingText) && !pattern.test(modelText))
 }
 
-function detectUniverse(listing: ProspectPulseListing, serialDenominator?: number | null) {
+function detectUniverse(listing: MarketplaceListing, serialDenominator?: number | null) {
   const text = searchText(listing)
   const isBowman = /\bbowman\b/.test(text)
   const isHandSigned = isHandSignedAutoListing(listing)
@@ -430,7 +430,7 @@ function normalizeProspect(prospect?: Prospect | null): Prospect | undefined {
   }
 }
 
-export function normalizeListing(listing: ProspectPulseListing): NormalizedListing {
+export function normalizeListing(listing: MarketplaceListing): NormalizedListing {
   const comps = normalizeComps(listing.comps)
   const compAverage = average(comps.map((comp) => numberValue(comp.sale_price, 0)))
   const currentPrice = firstPositiveNumber([listing.current_price, listing.price, listing.sold_price])
@@ -1379,7 +1379,7 @@ export function scoreListing(
 }
 
 export function rankOpportunities(
-  listings: ProspectPulseListing[],
+  listings: MarketplaceListing[],
   settings: Partial<ScoreSettings> = {},
   checklistModel?: ChecklistModel | ChecklistModel[] | null,
   salesCacheModels?: SalesCacheModelsInput,

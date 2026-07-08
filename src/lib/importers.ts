@@ -1,4 +1,4 @@
-import type { ProspectPulseListing } from '../types'
+import type { MarketplaceListing } from '../types'
 
 function normalizeHeader(header: string) {
   return header.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
@@ -58,7 +58,7 @@ function get(row: Record<string, unknown>, keys: string[]) {
   return undefined
 }
 
-function rowToListing(row: Record<string, unknown>, index: number): ProspectPulseListing {
+function rowToListing(row: Record<string, unknown>, index: number): MarketplaceListing {
   const player = String(get(row, ['player', 'player_name', 'name']) ?? 'Unknown player')
   const price = num(get(row, ['current_price', 'price', 'price_paid', 'bid', 'ask'])) ?? 0
   const market =
@@ -95,17 +95,17 @@ function rowToListing(row: Record<string, unknown>, index: number): ProspectPuls
   }
 }
 
-export function parseListingText(text: string, filename = 'import'): ProspectPulseListing[] {
+export function parseListingText(text: string, filename = 'import'): MarketplaceListing[] {
   const trimmed = text.trim()
   if (!trimmed) return []
 
   if (filename.endsWith('.json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
     const parsed = JSON.parse(trimmed) as unknown
-    if (Array.isArray(parsed)) return parsed as ProspectPulseListing[]
+    if (Array.isArray(parsed)) return parsed as MarketplaceListing[]
     if (parsed && typeof parsed === 'object') {
       const record = parsed as Record<string, unknown>
       const rows = record.listings ?? record.data ?? record.items
-      if (Array.isArray(rows)) return rows as ProspectPulseListing[]
+      if (Array.isArray(rows)) return rows as MarketplaceListing[]
     }
     throw new Error('JSON import needs an array, or an object with listings/data/items.')
   }

@@ -1,4 +1,4 @@
-import type { ChecklistModel, ProspectPulseListing, PulseSnapshot } from '../types'
+import type { ChecklistModel, MarketplaceListing, PulseSnapshot } from '../types'
 
 const DEAL_INDEX_STORAGE_KEY = 'bowman-trader:deal-index:v1'
 const DEAL_INDEX_MAX_RECORDS = 1_200
@@ -7,7 +7,7 @@ const DEAL_INDEX_RETAIN_MS = 4 * 60 * 60_000
 
 interface DealIndexRecord {
   id: string
-  listing: ProspectPulseListing
+  listing: MarketplaceListing
   firstSeenAt: string
   lastSeenAt: string
   seenCount: number
@@ -23,7 +23,7 @@ function canUseStorage() {
   return typeof window !== 'undefined' && Boolean(window.localStorage)
 }
 
-function listingIdentity(listing: ProspectPulseListing) {
+function listingIdentity(listing: MarketplaceListing) {
   return String(listing.item_id ?? listing.id ?? listing.listing_url ?? listing.url ?? listing.title ?? '')
 }
 
@@ -37,7 +37,7 @@ function playerKey(value: string) {
     .trim()
 }
 
-function listingPlayerName(listing: ProspectPulseListing) {
+function listingPlayerName(listing: MarketplaceListing) {
   return String(listing.player_name ?? listing.prospect?.name ?? '').trim()
 }
 

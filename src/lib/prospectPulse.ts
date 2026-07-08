@@ -5,7 +5,7 @@ import type {
   FeedScanDepth,
   ListingKind,
   MarketMode,
-  ProspectPulseListing,
+  MarketplaceListing,
   PulseScanStats,
   PulseSnapshot,
 } from '../types'
@@ -43,13 +43,13 @@ export interface PulseSession {
 }
 
 interface ListingResponse {
-  listings?: ProspectPulseListing[]
+  listings?: MarketplaceListing[]
   nextCursor?: number | string | null
   totalCount?: number | null
 }
 
 interface ListingFeedResult {
-  listings: ProspectPulseListing[]
+  listings: MarketplaceListing[]
   totalCount?: number | null
   pagesFetched: number
 }
@@ -318,7 +318,7 @@ export async function callProspectPulse<T>(functionName: string, body: unknown, 
 }
 
 export async function fetchListingFeed(options: ListingFetchOptions, signal?: AbortSignal): Promise<ListingFeedResult> {
-  const listings: ProspectPulseListing[] = []
+  const listings: MarketplaceListing[] = []
   let cursor: number | string | null = 0
   let totalCount: number | null | undefined = null
   let pagesFetched = 0
@@ -357,13 +357,13 @@ export async function fetchListingFeed(options: ListingFetchOptions, signal?: Ab
   return { listings, totalCount, pagesFetched }
 }
 
-function listingIdentity(listing: ProspectPulseListing) {
+function listingIdentity(listing: MarketplaceListing) {
   return String(listing.item_id ?? listing.id ?? listing.listing_url ?? listing.url ?? listing.title ?? '')
 }
 
-function dedupeListings(listings: ProspectPulseListing[]) {
+function dedupeListings(listings: MarketplaceListing[]) {
   const seen = new Set<string>()
-  const deduped: ProspectPulseListing[] = []
+  const deduped: MarketplaceListing[] = []
 
   for (const listing of listings) {
     const identity = listingIdentity(listing)

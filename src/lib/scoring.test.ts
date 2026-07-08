@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS, normalizeListing, rankOpportunities } from './scoring'
-import type { ChecklistModel, ProspectPulseListing } from '../types'
+import type { ChecklistModel, MarketplaceListing } from '../types'
 import type { SalesCachePlayerModel } from './salesCache'
 
 const model: ChecklistModel = {
@@ -42,7 +42,7 @@ const draftModel: ChecklistModel = {
   releaseYear: 2025,
 }
 
-function listing(overrides: Partial<ProspectPulseListing> = {}): ProspectPulseListing {
+function listing(overrides: Partial<MarketplaceListing> = {}): MarketplaceListing {
   return {
     item_id: 'card-1',
     player_name: 'Eli Willits',

@@ -165,6 +165,18 @@ function rankingsProxy(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    rolldownOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('/react/') || id.includes('/react-dom/')) return 'vendor-react'
+          if (id.includes('/lucide-react/')) return 'vendor-icons'
+          return 'vendor'
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     prospectPulseProxy(),
