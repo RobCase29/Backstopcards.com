@@ -1,4 +1,5 @@
 import { BOWMAN_2026_CASE_HIT_CHECKLISTS } from '../data/bowman2026CaseHits'
+import { titleMatchesPlayerName } from './cardTitleGuards'
 import type { PricingRow, VariationQuote } from './matrix'
 
 export type CaseHitInsertKey = keyof typeof BOWMAN_2026_CASE_HIT_CHECKLISTS
@@ -341,16 +342,6 @@ function normalizeText(value: string) {
     .trim()
 }
 
-function normalizedWords(value: string) {
-  return normalizeText(value).split(' ').filter(Boolean)
-}
-
-function titleMatchesPlayer(title: string, playerName: string) {
-  const titleWords = new Set(normalizedWords(title))
-  const playerWords = normalizedWords(playerName).filter((word) => word.length > 1 && word !== 'jr')
-  return playerWords.every((word) => titleWords.has(word))
-}
-
 function titleMatchesCardNo(title: string, cardNo: string) {
   const match = cardNo.match(/^([A-Z]+)-?(\d+)$/i)
   if (!match) return false
@@ -592,13 +583,13 @@ function findChecklistCard(family: CaseHitFamily, title: string, playerName?: st
   const queryPlayer = firstString([playerName], '')
   if (queryPlayer) {
     const card = family.checklist.find((candidate) => playerKey(candidate.playerName) === playerKey(queryPlayer))
-    if (card && titleMatchesPlayer(title, card.playerName)) return card
+    if (card && titleMatchesPlayerName(title, card.playerName)) return card
   }
 
   const cardNoMatch = family.checklist.find((candidate) => titleMatchesCardNo(title, candidate.cardNo))
-  if (cardNoMatch && (!queryPlayer || titleMatchesPlayer(title, cardNoMatch.playerName))) return cardNoMatch
+  if (cardNoMatch && (!queryPlayer || titleMatchesPlayerName(title, cardNoMatch.playerName))) return cardNoMatch
 
-  return family.checklist.find((candidate) => titleMatchesPlayer(title, candidate.playerName)) ?? null
+  return family.checklist.find((candidate) => titleMatchesPlayerName(title, candidate.playerName)) ?? null
 }
 
 function variationForKey(key: CaseHitVariationKey, caseHitKey: CaseHitInsertKey = 'crystallized') {

@@ -118,6 +118,10 @@ import {
   salesLogTrend,
   weightedSoldModelPrice,
 } from './lib/display'
+import {
+  titleCanUseBowmanSuperfractorAutoProxy,
+  titleLooksLikeSuperfractor,
+} from './lib/cardTitleGuards'
 import { listingGradingLabel, liveCompCheckForOpportunity, liveCompVerdict, normalizeLiveCompText } from './lib/liveComps'
 import {
   createListingRejection,
@@ -3444,44 +3448,13 @@ function rawListingSearchText(listing: ProspectPulseListing) {
   return `${listing.title ?? ''} ${listing.variation ?? ''} ${listing.product_type ?? ''} ${listing.release ?? ''}`.toLowerCase()
 }
 
-function rawListingSerialDenominator(listing: ProspectPulseListing) {
-  const parsed = Number(String(listing.serial_denominator ?? '').replace(/[^0-9.]/g, ''))
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
-}
-
 function rawListingLooksLikeSuperfractor(listing: ProspectPulseListing) {
-  const text = `${listing.title ?? ''} ${listing.variation ?? ''} ${listing.base_color ?? ''}`.toLowerCase()
-  const hasSuperfractorText = /\bsuperfractor\b|\bsuper\s+fractor\b/.test(text)
-  const hasSerialOne = rawListingSerialDenominator(listing) === 1 || /\b1\s*\/\s*1\b|\b1-of-1\b|\bone\s+of\s+one\b/.test(text)
-  const hasLooseSuperOneOfOne = hasSerialOne && /\bsuper\b/.test(text)
-  return Boolean(
-    (hasSuperfractorText || hasLooseSuperOneOfOne) &&
-      !/\bprinting\s+plate\b|\bplate\b|\bbunt\b|\bdigital\b|\bnft\b|\breprint\b|\bcustom\b/.test(text),
-  )
-}
-
-function rawListingLooksLikeAutograph(listing: ProspectPulseListing) {
-  const text = rawListingSearchText(listing)
-  if (/\b(non[-\s]?auto|no\s+auto|unsigned|facsimile|reprint)\b/.test(text)) return false
-  return /\b(auto|autos|autograph|autographed|autographs|signature|redemption)\b/.test(text)
+  const text = `${listing.title ?? ''} ${listing.variation ?? ''} ${listing.base_color ?? ''} ${listing.product_type ?? ''} ${listing.release ?? ''}`
+  return titleLooksLikeSuperfractor(text, { requireBowman: false })
 }
 
 function rawListingCanUseSuperfractorProxy(listing: ProspectPulseListing) {
-  const text = rawListingSearchText(listing)
-  if (!/\bbowman\b/.test(text)) return false
-  if (!rawListingLooksLikeAutograph(listing)) return false
-  if (
-    /\b(top\s*100|scouts?\s+top\s*100|afl|all[-\s]?star|platinum|transcendent|sterling|bowman'?s?\s+best|meteor|summer\s*camp|ascensions?|draft\s+night|power\s*chords?|die[-\s]?cut)\b/.test(
-      text,
-    )
-  ) {
-    return false
-  }
-  return (
-    /\b(1st|first)\b/.test(text) ||
-    /\bchrome\s+prospect\b/.test(text) ||
-    /\b(?:bcp|bcpa|cpa|cda|bdpa|bma|bca)[-\s]?[a-z0-9]+\b/.test(text)
-  )
+  return titleCanUseBowmanSuperfractorAutoProxy(rawListingSearchText(listing))
 }
 
 function superfractorQuoteForRow(row: PricingRow) {

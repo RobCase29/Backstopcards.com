@@ -1,5 +1,9 @@
 import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
-import { titleEligibleForBowmanChromeAutoModel } from './cardTitleGuards'
+import {
+  titleEligibleForBowmanChromeAutoModel,
+  titleMatchesPlayerName,
+  titleSerialDenominator,
+} from './cardTitleGuards'
 import { estimateBasePrice, releaseVariationCurve, variationKey } from './matrix'
 
 type EbaySoldQueryMeta = {
@@ -189,18 +193,6 @@ function normalizedWords(value: string) {
   return normalizeText(value).split(' ').filter(Boolean)
 }
 
-function titleMatchesPlayer(title: string, playerName: string) {
-  const titleWords = new Set(normalizedWords(title))
-  const playerWords = normalizedWords(playerName).filter((word) => word.length > 1)
-  if (playerWords.length < 2) return playerWords.every((word) => titleWords.has(word))
-  return playerWords.every((word) => titleWords.has(word))
-}
-
-function serialDenominatorFromTitle(title: string) {
-  const match = title.match(/(?:\/|#\/|numbered\s+to\s+)(\d{1,3})\b/i)
-  return match ? Number(match[1]) : null
-}
-
 function soldAtFromItem(item: RawEbaySoldItem) {
   const value = firstString(
     [item.itemSoldDate, item.lastSoldDate, item.dateSold, item.transactionDate, item.itemEndDate, item.itemCreationDate],
@@ -296,7 +288,7 @@ function classifyVariation(title: string, variations: VariationCandidate[]) {
 }
 
 function isLikelyBaseTitle(title: string) {
-  return !BASE_PARALLEL_TERMS.test(title) && !serialDenominatorFromTitle(title)
+  return !BASE_PARALLEL_TERMS.test(title) && !titleSerialDenominator(title)
 }
 
 function ageDays(soldAt: number, asOf: number) {
@@ -366,7 +358,7 @@ export function mapEbaySoldItemToComp(
   const meta = item._bowmanTraderQuery
   const playerName = firstString([meta?.playerName], '')
   const title = firstString([item.title], '')
-  if (!playerName || !title || !titleMatchesPlayer(title, playerName)) return null
+  if (!playerName || !title || !titleMatchesPlayerName(title, playerName)) return null
   if (!/\bbowman\b/i.test(title) || !/\bchrome\b/i.test(title) || !/\b(auto|autograph|autographs|autographed)\b/i.test(title)) return null
   if (model.category !== 'draft' && /\bdraft\b/i.test(title)) return null
   if (options.requireFirstBowman !== false && !/\b(1st|first)\b/i.test(title)) return null
@@ -395,7 +387,7 @@ export function mapEbaySoldItemToComp(
     kind: variation ? 'variation' : 'base',
     variationKey: variation?.key ?? 'base',
     variationLabel: variation?.label ?? 'Base Auto',
-    serialDenominator: serialDenominatorFromTitle(title),
+    serialDenominator: titleSerialDenominator(title),
     listingUrl: firstString([item.itemAffiliateWebUrl, item.itemWebUrl], ''),
     saleType: soldSaleType(item),
   }
