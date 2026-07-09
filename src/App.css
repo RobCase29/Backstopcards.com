@@ -11774,7 +11774,7 @@ button.sales-bucket-tile {
 
 .valuation-app .workflow-command {
   display: grid;
-  grid-template-columns: minmax(280px, 0.32fr) minmax(760px, 1fr);
+  grid-template-columns: minmax(300px, 0.34fr) minmax(860px, 1fr);
   gap: 12px;
 }
 
@@ -11784,14 +11784,16 @@ button.sales-bucket-tile {
 
 .valuation-app .workflow-mode-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
   gap: 8px;
+  min-width: 0;
 }
 
 .valuation-app .workflow-mode-card {
   grid-template-columns: 42px minmax(0, 1fr) auto;
   min-height: 88px;
   padding: 12px;
+  min-width: 0;
 }
 
 .valuation-app .workflow-mode-card:focus-visible,
@@ -11802,11 +11804,41 @@ button.sales-bucket-tile {
   box-shadow: var(--focus-ring);
 }
 
-.valuation-app .workflow-card-copy strong,
-.valuation-app .workflow-card-copy small {
+.valuation-app .workflow-card-copy {
+  min-width: 0;
+}
+
+.valuation-app .workflow-card-copy strong {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.valuation-app .workflow-card-copy small {
+  max-width: 100%;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+}
+
+.valuation-app .workflow-value {
+  min-width: max-content;
+}
+
+.valuation-app .price-page-calculator .quick-price-title h2.quick-price-missing {
+  max-width: 100%;
+  color: var(--accent);
+  font-size: clamp(2.15rem, 3vw, 3.5rem);
+  line-height: 0.95;
+  overflow-wrap: anywhere;
+}
+
+.valuation-app .price-page-calculator .empty-state.compact {
+  min-width: 0;
+  padding: 16px;
 }
 
 .valuation-app .lookup-intent-bar {
@@ -11911,6 +11943,23 @@ button.sales-bucket-tile {
     grid-template-columns: 1fr;
   }
 
+  .valuation-app .workflow-mode-grid {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .valuation-app .workflow-mode-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .workflow-mode-card {
+    flex: 0 0 240px;
+    scroll-snap-align: start;
+  }
+
   .valuation-app .lookup-board-market-grid .live-market-map.compact {
     position: static;
   }
@@ -11926,7 +11975,7 @@ button.sales-bucket-tile {
   }
 
   .valuation-app .workflow-mode-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
   }
 
   .valuation-app .toolbar.valuation-toolbar {
@@ -12019,6 +12068,11 @@ button.sales-bucket-tile {
 
   .valuation-app .workflow-card-copy small {
     font-size: 0.62rem;
+    -webkit-line-clamp: 1;
+  }
+
+  .valuation-app .price-page-calculator .quick-price-title h2.quick-price-missing {
+    font-size: clamp(1.85rem, 12vw, 2.5rem);
   }
 
   .valuation-app .lookup-workflow {
@@ -15085,5 +15139,122 @@ button.sales-bucket-tile {
   .valuation-app .team-command-lanes,
   .valuation-app .team-hunt-strip > div {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Last-mile layout guard: keep shared workflow and calculator modules readable across every page. */
+.valuation-app .workflow-command {
+  grid-template-columns: minmax(300px, 0.34fr) minmax(860px, 1fr);
+}
+
+.valuation-app .workflow-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  min-width: 0;
+}
+
+.valuation-app .workflow-mode-card {
+  min-width: 0;
+}
+
+.valuation-app .workflow-card-copy {
+  min-width: 0;
+}
+
+.valuation-app .workflow-card-copy strong,
+.valuation-app .workflow-card-copy small {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.valuation-app .workflow-card-copy strong {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.valuation-app .workflow-card-copy small {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+}
+
+.valuation-app .workflow-value {
+  min-width: max-content;
+}
+
+.valuation-app .price-page-calculator.quick-price-card--missing-model {
+  grid-template-columns: minmax(260px, 0.38fr) minmax(420px, 1fr);
+  align-items: stretch;
+}
+
+.valuation-app .price-page-calculator.quick-price-card--missing-model .quick-player-picker {
+  grid-column: 2;
+}
+
+.valuation-app .price-page-calculator.quick-price-card--missing-model .empty-state.compact {
+  grid-column: 1;
+  min-height: 0;
+  min-width: 0;
+  padding: 16px;
+}
+
+.valuation-app .price-page-calculator .quick-price-title h2.quick-price-missing {
+  max-width: 100%;
+  color: var(--accent);
+  font-size: clamp(2.15rem, 3vw, 3.5rem);
+  line-height: 0.95;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1460px) {
+  .valuation-app .workflow-command {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .workflow-mode-grid {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .valuation-app .workflow-mode-grid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .workflow-mode-card {
+    flex: 0 0 240px;
+    scroll-snap-align: start;
+  }
+}
+
+@media (max-width: 1180px) {
+  .valuation-app .price-page-calculator.quick-price-card--missing-model {
+    grid-template-columns: minmax(220px, 0.42fr) minmax(360px, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .valuation-app .workflow-mode-card {
+    flex-basis: min(78vw, 250px);
+  }
+
+  .valuation-app .workflow-card-copy small {
+    font-size: 0.62rem;
+    -webkit-line-clamp: 1;
+  }
+
+  .valuation-app .price-page-calculator.quick-price-card--missing-model,
+  .valuation-app .price-page-calculator.quick-price-card--missing-model .quick-player-picker,
+  .valuation-app .price-page-calculator.quick-price-card--missing-model .empty-state.compact {
+    grid-column: 1;
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .price-page-calculator .quick-price-title h2.quick-price-missing {
+    font-size: clamp(1.85rem, 12vw, 2.5rem);
   }
 }

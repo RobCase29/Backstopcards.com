@@ -4663,12 +4663,12 @@ function QuickPriceModule({
 
   if (!rowHasModel(activeRow)) {
     return (
-      <section className={`detail-card quick-price-card ${className ?? ''}`.trim()}>
+      <section className={`detail-card quick-price-card quick-price-card--missing-model ${className ?? ''}`.trim()}>
         <div className="detail-title quick-price-title">
           <Calculator size={18} />
           <div>
             <span>Card Price Calculator</span>
-            <h2>Needs comps</h2>
+            <h2 className="quick-price-missing">Needs comps</h2>
             <small>{activeRow.playerName}</small>
           </div>
           <span className="quick-verdict neutral">No model</span>
