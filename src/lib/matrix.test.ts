@@ -175,7 +175,7 @@ describe('pricing matrix', () => {
     expect(estimate.methodLabel).toContain('auction/BIN channel blend')
   })
 
-  it('shrinks stale thin sales toward the ProspectPulse fallback', () => {
+  it('shrinks stale thin sales toward the cached summary anchor', () => {
     const estimate = estimateBasePrice(
       {
         playerName: 'Stale Prospect',
@@ -196,7 +196,7 @@ describe('pricing matrix', () => {
     expect(estimate.confidence).toBeLessThan(0.62)
   })
 
-  it('falls back to ProspectPulse base when raw sale history is missing', () => {
+  it('preserves aggregate comp evidence when detailed sale rows are omitted from a snapshot', () => {
     const estimate = estimateBasePrice(
       {
         playerName: 'Fallback Prospect',
@@ -210,8 +210,11 @@ describe('pricing matrix', () => {
     expect(estimate).toMatchObject({
       price: 88,
       source: 'twma-fallback',
-      rawSales: 0,
+      rawSales: 6,
+      methodLabel: 'cached comp summary',
     })
+    expect(estimate.effectiveSales).toBeGreaterThan(2)
+    expect(estimate.confidence).toBeGreaterThan(0.5)
   })
 
   it('backs into base auto value from player variation sales when base auto is missing', () => {

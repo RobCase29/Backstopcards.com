@@ -178,7 +178,7 @@ import { summarizeProximityMultiplier } from './lib/proximityMultiples'
 import type { ChecklistModel, GradingCompany, NormalizedListing, Opportunity, MarketplaceListing, ScoreSettings } from './types'
 
 type CategoryFilter = 'all' | ChecklistModel['category']
-type BaseSourceFilter = 'all' | BasePriceSource
+type BaseSourceFilter = 'decision-ready' | 'all' | 'research' | BasePriceSource
 type StsFilter = 'all' | 'ranked' | 'prospects' | 'mlb' | 'unmatched'
 type TeamFilter = 'all' | string
 type SortMode =
@@ -345,6 +345,17 @@ const SOURCE_LABELS: Record<BasePriceSource, string> = {
   'twma-fallback': 'Baseline',
   unpriced: 'Needs comps',
 }
+
+const BASE_FILTER_LABELS: Array<{ value: BaseSourceFilter; label: string }> = [
+  { value: 'decision-ready', label: 'Decision-ready' },
+  { value: 'all', label: 'All model quality' },
+  { value: 'research', label: 'Needs review' },
+  { value: 'weighted-sales', label: 'Recent weighted' },
+  { value: 'blended-sales', label: 'Blended sales' },
+  { value: 'variation-implied', label: 'Variation implied' },
+  { value: 'twma-fallback', label: 'Comp summary' },
+  { value: 'unpriced', label: 'Needs comps' },
+]
 
 const SORT_LABELS: Record<SortMode, string> = {
   'base-desc': 'Model Base',
@@ -1017,6 +1028,8 @@ function modelTrustSignal(row: PricingRow) {
         ? 'Comp backed'
         : row.basePriceSource === 'variation-implied'
           ? 'Implied base'
+          : row.basePriceSource === 'twma-fallback' && row.rawBaseSales >= 5
+            ? 'Comp summary'
           : 'Thin base'
   const sourceLabel =
     source === 'sold-comp'
@@ -1025,15 +1038,23 @@ function modelTrustSignal(row: PricingRow) {
         ? 'recent sales'
         : row.basePriceSource === 'blended-sales'
           ? 'blended sales'
-          : row.basePriceSource === 'variation-implied'
+      : row.basePriceSource === 'variation-implied'
             ? 'variation anchors'
-            : 'baseline'
+            : row.basePriceSource === 'twma-fallback' && row.rawBaseSales >= 5
+              ? 'cached summary'
+              : 'baseline'
   const salesLabel =
     row.rawBaseSales > 0
       ? `${row.rawBaseSales.toLocaleString()} comp${row.rawBaseSales === 1 ? '' : 's'}`
       : row.baseEffectiveSales > 0
         ? `${row.baseEffectiveSales.toFixed(1)} effective`
         : 'no direct comps'
+  const freshnessLabel =
+    numericTimestamp(row.latestBaseSaleAt) !== null
+      ? ageLabel(row.latestBaseSaleAt)
+      : row.basePriceSource === 'twma-fallback' && row.rawBaseSales >= 5
+        ? 'aggregate snapshot'
+        : 'no dated comps'
   const rankLabel = primaryRankLabel(row) ?? (row.stsRank !== null ? `Rank #${row.stsRank.toLocaleString()}` : 'no rank')
   const action =
     valueScore >= 45 && (tone === 'strong' || tone === 'solid')
@@ -1049,8 +1070,20 @@ function modelTrustSignal(row: PricingRow) {
     tone,
     label,
     action,
-    detail: `${sourceLabel} / ${salesLabel} / ${ageLabel(row.latestBaseSaleAt)} / ${rankLabel}`,
+    detail: `${sourceLabel} / ${salesLabel} / ${freshnessLabel} / ${rankLabel}`,
   }
+}
+
+function rowMatchesBaseFilter(row: PricingRow, filter: BaseSourceFilter) {
+  if (filter === 'all') return true
+  const trust = modelTrustSignal(row)
+  if (filter === 'decision-ready') {
+    if (!rowHasModel(row)) return false
+    if (trust.tone === 'strong' || trust.tone === 'solid') return true
+    return trust.tone === 'watch' && row.rawBaseSales >= 5 && row.baseConfidence >= 0.48
+  }
+  if (filter === 'research') return trust.tone === 'thin' || (trust.tone === 'watch' && row.rawBaseSales < 5)
+  return row.basePriceSource === filter
 }
 
 function freshnessTone(value?: string | null, freshHours = 24, staleHours = 168): FreshnessTone {
@@ -2593,58 +2626,23 @@ function WorkflowCommand({
           </span>
           <span className="workflow-value">New</span>
         </button>
-      </div>
-    </section>
-  )
-}
 
-type OpportunityMissionKind = 'board' | 'prospects' | 'player' | 'price'
-
-type OpportunityMission = {
-  key: string
-  eyebrow: string
-  title: string
-  detail: string
-  metric: string
-  kind: OpportunityMissionKind
-  disabled?: boolean
-  onClick: () => void
-}
-
-function OpportunityMissionIcon({ kind }: { kind: OpportunityMissionKind }) {
-  if (kind === 'prospects') return <BookOpenCheck size={18} />
-  if (kind === 'player') return <Radio size={18} />
-  if (kind === 'price') return <Calculator size={18} />
-  return <Activity size={18} />
-}
-
-function OpportunityMissionStrip({ missions }: { missions: OpportunityMission[] }) {
-  return (
-    <section className="opportunity-missions" aria-label="Today's best next actions">
-      <div className="opportunity-missions-copy">
-        <span>Next best actions</span>
-        <strong>Start with a board, a player, or a quick price.</strong>
-      </div>
-      <div className="opportunity-mission-grid">
-        {missions.map((mission) => (
-          <button
-            className={`opportunity-mission ${mission.kind}`}
-            type="button"
-            onClick={mission.onClick}
-            disabled={mission.disabled}
-            key={mission.key}
-          >
-            <span className="mission-icon">
-              <OpportunityMissionIcon kind={mission.kind} />
-            </span>
-            <span className="mission-copy">
-              <span>{mission.eyebrow}</span>
-              <strong>{mission.title}</strong>
-              <small>{mission.detail}</small>
-            </span>
-            <em>{mission.metric}</em>
-          </button>
-        ))}
+        <button
+          className={`workflow-mode-card ${mode === 'case-hits' ? 'active' : ''}`}
+          type="button"
+          onClick={() => onModeChange('case-hits')}
+          aria-pressed={mode === 'case-hits'}
+        >
+          <span className="workflow-icon">
+            <Gem size={19} />
+          </span>
+          <span className="workflow-card-copy">
+            <span>Rare</span>
+            <strong>Case Hits</strong>
+            <small>Print runs and live value</small>
+          </span>
+          <span className="workflow-value">Beta</span>
+        </button>
       </div>
     </section>
   )
@@ -2909,7 +2907,14 @@ function Leaderboard({
               className={`leaderboard-row ${selectedId === row.id ? 'selected' : ''}`}
               key={row.id}
               onClick={() => onSelect(row.id)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                onSelect(row.id)
+              }}
+              tabIndex={0}
               aria-selected={selectedId === row.id}
+              aria-label={`Select ${row.playerName}`}
             >
               <span className="rank-chip">{displayRank}</span>
               <span className="player-chip">
@@ -4659,7 +4664,10 @@ function QuickPriceModule({
   }
 
   const activeRow = row
-  const canPickPlayer = Boolean(pickerRows?.length && onPickRow)
+  const calculatorPickerRows = pickerRows
+    ? [activeRow, ...pickerRows.filter((candidate) => candidate.id !== activeRow.id && rowHasModel(candidate))]
+    : [activeRow]
+  const canPickPlayer = Boolean(calculatorPickerRows.length > 1 && onPickRow)
 
   if (!rowHasModel(activeRow)) {
     return (
@@ -4668,7 +4676,7 @@ function QuickPriceModule({
           <Calculator size={18} />
           <div>
             <span>Card Price Calculator</span>
-            <h2 className="quick-price-missing">Needs comps</h2>
+            <h2 className="quick-price-missing">Pricing pending</h2>
             <small>{activeRow.playerName}</small>
           </div>
           <span className="quick-verdict neutral">No model</span>
@@ -4678,7 +4686,7 @@ function QuickPriceModule({
           <label className="quick-player-picker">
             <span>Player</span>
             <select value={activeRow.id} onChange={(event) => onPickRow?.(event.target.value)} aria-label="Calculator player">
-              {pickerRows?.map((candidate) => (
+              {calculatorPickerRows.map((candidate) => (
                 <option value={candidate.id} key={`quick-picker:${candidate.id}`}>
                   {candidate.playerName} / {candidate.release}
                 </option>
@@ -4689,8 +4697,8 @@ function QuickPriceModule({
 
         <div className="empty-state compact">
           <Database size={22} />
-          <strong>No trusted base-auto model yet.</strong>
-          <span>Run or refresh sold comps before using this player for price math.</span>
+          <strong>No verified base-auto comps yet.</strong>
+          <span>Choose a covered player above, or return once recent sold data has been added to this lane.</span>
         </div>
       </section>
     )
@@ -8305,7 +8313,7 @@ function App() {
   const [releaseFilter, setReleaseFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all')
   const [teamFilter, setTeamFilter] = useState<TeamFilter>('all')
-  const [baseSourceFilter, setBaseSourceFilter] = useState<BaseSourceFilter>('all')
+  const [baseSourceFilter, setBaseSourceFilter] = useState<BaseSourceFilter>('decision-ready')
   const [stsFilter, setStsFilter] = useState<StsFilter>('all')
   const [sortMode, setSortMode] = useState<SortMode>('dynasty-value')
   const [selectedRowId, setSelectedRowId] = useState<string | undefined>()
@@ -9093,7 +9101,7 @@ function App() {
       if (releaseFilter !== 'all' && row.release !== releaseFilter) return false
       if (categoryFilter !== 'all' && row.category !== categoryFilter) return false
       if (!rowMatchesTeam(row, teamFilter)) return false
-      if (baseSourceFilter !== 'all' && row.basePriceSource !== baseSourceFilter) return false
+      if (!rowMatchesBaseFilter(row, baseSourceFilter)) return false
       return true
     })
     const filteredRows = rowsBeforeRank.filter((row) => rowMatchesStsFilter(row, stsFilter))
@@ -9111,7 +9119,7 @@ function App() {
     releaseFilter !== 'all' ||
     categoryFilter !== 'all' ||
     teamFilter !== 'all' ||
-    baseSourceFilter !== 'all' ||
+    baseSourceFilter !== 'decision-ready' ||
     stsFilter !== 'all'
   const leaderboardRenderLimit = hasLeaderboardNarrowing ? FILTERED_LEADERBOARD_RENDER_LIMIT : LEADERBOARD_RENDER_LIMIT
   const renderedRows = useMemo(() => visibleRows.slice(0, leaderboardRenderLimit), [leaderboardRenderLimit, visibleRows])
@@ -10369,22 +10377,7 @@ function App() {
     }
   }
 
-  const missionLeadRow =
-    (effectiveSelectedRow && rowHasModel(effectiveSelectedRow) ? effectiveSelectedRow : null) ??
-    renderedRowsForDisplay.find((row) => scoreDynastyValueOpportunity(row) > 0) ??
-    renderedRowsForDisplay.find(rowHasModel) ??
-    null
   const visibleBoardScanCount = Math.min(BOARD_DEAL_SCAN_LIMIT, playerNamesForPricingRows(renderedRowsForDisplay).length)
-  const missionTargetCount = selectedTeamIsMarlins
-    ? marlinsChecklistPlayerNames.length
-    : selectedTeamOption
-      ? teamScanRows.length
-      : visibleBoardScanCount
-  const topProspectCount = matrix.rows.filter((row) => {
-    const rank = primaryRankOrInfinity(row)
-    return rowHasModel(row) && Number.isFinite(rank) && rank <= 100
-  }).length
-  const missionDisabled = binLoading || auctionLoading
   const primaryBoardScanDisabled =
     (selectedTeamIsMarlins
       ? marlinsChecklistPlayerNames.length === 0
@@ -10403,57 +10396,6 @@ function App() {
     : selectedTeamOption
       ? scanSelectedTeamDeals
       : scanVisibleBoardDeals
-  const opportunityMissions: OpportunityMission[] = [
-    {
-      key: 'scan-board',
-      eyebrow: selectedTeamIsMarlins ? 'Full checklist sweep' : selectedTeamOption ? 'Team sweep' : 'Best value sweep',
-      title: selectedTeamIsMarlins ? 'Miami Marlins' : selectedTeamOption ? selectedTeamOption.label : 'Current board',
-      detail: selectedTeamIsMarlins
-        ? 'Checks every loaded Marlins checklist player, not just priced target rows.'
-        : selectedTeamOption
-          ? `Checks live listings for the strongest ${selectedTeamOption.label} targets.`
-          : 'Checks live listings for the highest value players on screen.',
-      metric: `${missionTargetCount.toLocaleString()} targets`,
-      kind: 'board',
-      disabled: missionTargetCount === 0 || missionDisabled,
-      onClick: runPrimaryBoardScan,
-    },
-    {
-      key: 'scan-prospects',
-      eyebrow: 'Rank-first sweep',
-      title: 'Top 100 prospects',
-      detail: 'Runs a prospect-ranking scan across loaded Bowman sets.',
-      metric: `${topProspectCount.toLocaleString()} matched`,
-      kind: 'prospects',
-      disabled: topProspectCount === 0 || missionDisabled,
-      onClick: scanTop100Prospects,
-    },
-    {
-      key: 'scan-lead',
-      eyebrow: 'Player focus',
-      title: missionLeadRow?.playerName ?? 'Choose a player',
-      detail: missionLeadRow
-        ? `${formatBasePrice(missionLeadRow)} base auto / ${primaryRankLabel(missionLeadRow) ?? 'rank pending'}`
-        : 'Select a modeled player to scan their live market.',
-      metric: 'Scan player',
-      kind: 'player',
-      disabled: !missionLeadRow || missionDisabled,
-      onClick: () => {
-        if (missionLeadRow) scanBinsForLookupRow(missionLeadRow)
-      },
-    },
-    {
-      key: 'price-card',
-      eyebrow: 'Quick quote',
-      title: missionLeadRow ? `Price ${missionLeadRow.playerName}` : 'Price a card',
-      detail: 'Open the card calculator with variation, grade, and all-in price.',
-      metric: 'Calculator',
-      kind: 'price',
-      disabled: !missionLeadRow,
-      onClick: () => setWorkMode('price'),
-    },
-  ]
-
   return (
     <main className="app-shell valuation-app">
       <section className="workbench-topbar">
@@ -10477,15 +10419,6 @@ function App() {
 
         <div className="top-actions">
           <button
-            className={`ghost-button app-route-button ${appRoute === 'desk' ? 'active' : ''}`}
-            type="button"
-            onClick={() => navigateAppRoute('desk')}
-            aria-pressed={appRoute === 'desk'}
-          >
-            <Search size={16} />
-            Daily Board
-          </button>
-          <button
             className={`ghost-button app-route-button ${appRoute === 'marlins' ? 'active' : ''}`}
             type="button"
             onClick={() => navigateAppRoute('marlins')}
@@ -10494,7 +10427,7 @@ function App() {
             <Store size={16} />
             Marlins Deals
           </button>
-          <button className="primary-button" type="button" onClick={() => void refreshChecklistUniverse()} disabled={checklistLoading || catalogLoading}>
+          <button className="primary-button refresh-model-button" type="button" onClick={() => void refreshChecklistUniverse()} disabled={checklistLoading || catalogLoading}>
             <RefreshCw size={16} className={checklistLoading ? 'spin' : undefined} />
             {catalogLoading
               ? 'Discovering'
@@ -10504,17 +10437,9 @@ function App() {
                   ? 'Refreshing'
                   : 'Refresh'}
           </button>
-          <button className="ghost-button" type="button" onClick={() => downloadMatrixCsv(visibleRows)}>
+          <button className="ghost-button export-button" type="button" onClick={() => downloadMatrixCsv(visibleRows)}>
             <Download size={16} />
             Export
-          </button>
-          <button className="ghost-button" type="button" onClick={() => setWorkMode((mode) => (mode === 'wax' ? 'lookup' : 'wax'))}>
-            <Package size={16} />
-            {workMode === 'wax' ? 'Main Desk' : 'Sealed Wax'}
-          </button>
-          <button className="ghost-button" type="button" onClick={() => setWorkMode((mode) => (mode === 'case-hits' ? 'lookup' : 'case-hits'))}>
-            <Gem size={16} />
-            {workMode === 'case-hits' ? 'Main Desk' : 'Case Hits'}
           </button>
         </div>
       </section>
@@ -10650,38 +10575,6 @@ function App() {
               </div>
             </div>
 
-            <div className="mobile-start-guide" aria-label="Quick start">
-              <span>
-                <Search size={14} />
-                Player, team, or set
-              </span>
-              <span>
-                <Sigma size={14} />
-                Value gap = rank price vs base
-              </span>
-              <span>
-                <ShieldCheck size={14} />
-                Trust shows model strength
-              </span>
-            </div>
-
-            <div className="board-trust-strip" aria-label="Daily board signals">
-              <span>
-                <strong>Value gap</strong>
-                Rank-implied base vs current base auto
-              </span>
-              <span>
-                <strong>Model trust</strong>
-                Comp depth, freshness, and source quality
-              </span>
-              <span>
-                <strong>Scan deals</strong>
-                Active BINs and auctions vs modeled price
-              </span>
-            </div>
-
-            <OpportunityMissionStrip missions={opportunityMissions} />
-
             <div className="toolbar valuation-toolbar">
               <label className="filter-select">
                 <span>Set</span>
@@ -10717,12 +10610,11 @@ function App() {
                 </select>
               </label>
               <label className="filter-select base-source-filter">
-                <span>Base</span>
+                <span>Model</span>
                 <select value={baseSourceFilter} onChange={(event) => setBaseSourceFilter(event.target.value as BaseSourceFilter)}>
-                  <option value="all">All sources</option>
-                  {Object.entries(SOURCE_LABELS).map(([source, label]) => (
-                    <option value={source} key={source}>
-                      {label}
+                  {BASE_FILTER_LABELS.map((option) => (
+                    <option value={option.value} key={option.value}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
@@ -10782,9 +10674,11 @@ function App() {
                 selectedId={selectedRow?.id}
                 onSelect={setSelectedRowId}
                 onScanPlayer={scanBinsForLookupRow}
-                emptyTitle={trimmedQuery ? 'No modeled card match.' : undefined}
+                emptyTitle={checklistLoading ? 'Loading player models...' : trimmedQuery ? 'No modeled card match.' : undefined}
                 emptyText={
-                  trimmedQuery
+                  checklistLoading
+                    ? 'Building the value board from cached checklists and sold comp evidence.'
+                    : trimmedQuery
                     ? rankingOnlyMatch
                       ? 'Ranking data exists for this player, but no loaded Bowman card lane has a model yet.'
                       : 'No loaded checklist row matches this search and the current filters.'

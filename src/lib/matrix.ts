@@ -365,6 +365,10 @@ function channelEstimate(sales: BaseSalePoint[], asOf: number): RobustEstimate |
 export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): BasePriceEstimate {
   const fallbackPrice = isFinitePositive(player.baseAvgPrice) ? player.baseAvgPrice : 0
   const sales = extractBaseSales(player, asOf)
+  // Static snapshots intentionally keep only a small sample of full sale rows, but
+  // retain the canonical aggregate count. Preserve that evidence so a well-covered
+  // cached comp lane is not presented as if it had zero sales.
+  const summarySales = Math.max(sales.length, Math.max(0, player.baseSalesCount || 0))
   const sales30 = sales.filter((sale) => ageDays(sale.soldAt, asOf) <= 30)
   const sales90 = sales.filter((sale) => ageDays(sale.soldAt, asOf) <= 90)
   const sales180 = sales.filter((sale) => ageDays(sale.soldAt, asOf) <= 180)
@@ -423,18 +427,18 @@ export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): B
   return {
     price: Number(fallbackPrice.toFixed(2)),
     source: 'twma-fallback',
-    confidence: Math.min(0.68, 0.42 + Math.min(player.baseSalesCount || 0, 14) / 55),
-    rawSales: sales.length,
+    confidence: Math.min(0.72, 0.42 + Math.min(summarySales, 18) / 55),
+    rawSales: summarySales,
     sales30: sales30.length,
     sales90: sales90.length,
     auctionSales,
     binSales,
     unknownSales,
-    effectiveSales: Number(effectiveSales.toFixed(2)),
+    effectiveSales: Number(Math.max(effectiveSales, Math.min(summarySales, 18) * 0.42).toFixed(2)),
     volatility: Number(volatility.toFixed(3)),
     latestSaleAt,
     fallbackPrice,
-    methodLabel: sales.length > 0 ? 'thin sales fallback' : player.baseSalesCount > 0 ? 'cached comp summary' : 'baseline average',
+    methodLabel: sales.length > 0 ? 'thin sales fallback' : summarySales > 0 ? 'cached comp summary' : 'baseline average',
   }
 }
 
