@@ -433,7 +433,7 @@ async function importRawFile(db, inputFile, importedAt) {
 
 function reclassifyRawCache(db) {
   const rows = db.prepare(`
-    SELECT player_name AS playerName, raw_json AS rawJson
+    SELECT item_id AS itemId, player_name AS playerName, raw_json AS rawJson
     FROM market_movers_sales_raw
     ORDER BY player_name, sold_at
   `).all()
@@ -444,7 +444,7 @@ function reclassifyRawCache(db) {
     const playerName = String(row.playerName ?? '')
     const raw = parseJson(String(row.rawJson ?? ''), null)
     if (!playerName || !raw) continue
-    const sale = normalizeMarketMoversSale(raw, playerName, {})
+    const sale = normalizeMarketMoversSale({ ...raw, itemId: String(row.itemId ?? raw.itemId ?? '') }, playerName, {})
     upsertNormalizedSale(normalizedStmt, sale)
     players.add(playerName)
     reclassified += 1
