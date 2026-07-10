@@ -26,6 +26,7 @@ import {
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
+import './BackstopV2.css'
 import {
   fetchChecklistCatalog,
   fetchChecklistModel,
