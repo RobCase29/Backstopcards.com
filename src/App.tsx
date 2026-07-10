@@ -1496,7 +1496,6 @@ function playerNamesForPricingRows(rows: PricingRow[]) {
   const seen = new Set<string>()
   const names: string[] = []
   for (const row of rows) {
-    if (!rowHasModel(row)) continue
     const key = scanNameKey(row.playerName)
     if (!key || seen.has(key)) continue
     seen.add(key)
