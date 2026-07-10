@@ -167,8 +167,13 @@ function numberValue(value: unknown, fallback = 0) {
   return numberOrNull(value) ?? fallback
 }
 
-function stringValue(value: unknown) {
+export function normalizeHostedTimestamp(value: unknown) {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : ''
   return compact(value)
+}
+
+function stringValue(value: unknown) {
+  return normalizeHostedTimestamp(value)
 }
 
 function releaseYearFromText(value: unknown) {

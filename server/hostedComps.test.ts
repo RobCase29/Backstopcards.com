@@ -4,6 +4,7 @@ import {
   chooseBowmanBaseAutoCard,
   dailyExportDateCandidates,
   evaluateBowmanBaseAutoCandidate,
+  normalizeHostedTimestamp,
   summarizeHostedCompSales,
   visitCsvRows,
 } from './hostedComps'
@@ -80,6 +81,10 @@ describe('hosted comp card matching', () => {
 })
 
 describe('hosted comp modeling', () => {
+  it('keeps database timestamp objects ISO-safe when recomputing lanes', () => {
+    expect(normalizeHostedTimestamp(new Date('2026-07-08T00:06:00.000Z'))).toBe('2026-07-08T00:06:00.000Z')
+  })
+
   it('tries recent completed UTC dates when the latest export is not published yet', () => {
     expect(dailyExportDateCandidates(new Date('2026-07-09T23:30:00.000Z'))).toEqual([
       '2026-07-08',
