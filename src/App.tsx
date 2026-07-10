@@ -8902,7 +8902,9 @@ function App() {
     boardSalesCacheRequestRef.current?.abort()
     const controller = new AbortController()
     boardSalesCacheRequestRef.current = controller
-    for (const playerName of pendingNames) boardSalesCacheAttemptedRef.current.add(salesCacheRecordKey(playerName))
+    const attemptedKeys = boardSalesCacheAttemptedRef.current
+    const completedKeys = new Set<string>()
+    for (const playerName of pendingNames) attemptedKeys.add(salesCacheRecordKey(playerName))
 
     const batches: string[][] = []
     for (let index = 0; index < pendingNames.length; index += 60) batches.push(pendingNames.slice(index, index + 60))
@@ -8923,9 +8925,10 @@ function App() {
         )
         if (controller.signal.aborted) return
         settled.forEach((result, resultIndex) => {
-          if (result.status !== 'rejected') return
           for (const playerName of batchGroup[resultIndex] ?? []) {
-            boardSalesCacheAttemptedRef.current.delete(salesCacheRecordKey(playerName))
+            const key = salesCacheRecordKey(playerName)
+            if (result.status === 'fulfilled') completedKeys.add(key)
+            else attemptedKeys.delete(key)
           }
         })
         const models = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value.players ?? [] : []))
@@ -8941,6 +8944,10 @@ function App() {
     })
     return () => {
       controller.abort()
+      for (const playerName of pendingNames) {
+        const key = salesCacheRecordKey(playerName)
+        if (!completedKeys.has(key)) attemptedKeys.delete(key)
+      }
       if (boardSalesCacheRequestRef.current === controller) boardSalesCacheRequestRef.current = null
     }
   }, [compDatasetVersion, matrix.rows])
