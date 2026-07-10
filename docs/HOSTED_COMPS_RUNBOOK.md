@@ -20,7 +20,7 @@ Official/Wax Pack Hero player universe
 
 ## Freshness contract
 
-- Daily export: ingested once per UTC date and recorded in `backstop_comp_meta`.
+- Daily export: ingested once per UTC date and recorded in `backstop_comp_meta`; the importer tries the three most recent completed UTC dates because provider publication can lag.
 - Known comp lanes: eligible for direct refresh after 20 hours.
 - Batch FMV: eligible after 20 hours.
 - No-match players: retried after 7 days unless a user explicitly prioritizes them.

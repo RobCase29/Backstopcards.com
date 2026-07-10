@@ -187,10 +187,12 @@ function laneKeyFor(playerName: string, releaseYear: number) {
   return `${normalizedName(playerName)}|${releaseYear}|bowman-chrome|auto|base-auto|raw`
 }
 
-function previousUtcDate(now: Date) {
-  const date = new Date(now)
-  date.setUTCDate(date.getUTCDate() - 1)
-  return date.toISOString().slice(0, 10)
+export function dailyExportDateCandidates(now: Date, count = 3) {
+  return Array.from({ length: Math.max(1, count) }, (_, index) => {
+    const date = new Date(now)
+    date.setUTCDate(date.getUTCDate() - index - 1)
+    return date.toISOString().slice(0, 10)
+  })
 }
 
 export function visitCsvRows(text: string, visitor: (row: Record<string, string>) => void) {
@@ -1550,19 +1552,23 @@ export async function runHostedCompRefresh(options: HostedCompRefreshOptions) {
     VALUES (${runId}, 'running', ${now.toISOString()})
   `
   if (options.fetchDailyExport && Date.now() - startedAt < timeBudgetMs * 0.35) {
-    dailyExportDate = previousUtcDate(now)
-    try {
-      if (!(await hostedDailyExportAlreadyIngested(options.sql, dailyExportDate))) {
-        const exportText = await options.fetchDailyExport(dailyExportDate)
+    for (const candidateDate of dailyExportDateCandidates(now)) {
+      if (Date.now() - startedAt >= timeBudgetMs * 0.35) break
+      dailyExportDate = candidateDate
+      try {
+        if (await hostedDailyExportAlreadyIngested(options.sql, candidateDate)) break
         apiCalls += 1
-        const exportResult = await ingestHostedDailyExport(options.sql, exportText, dailyExportDate, now)
+        const exportText = await options.fetchDailyExport(candidateDate)
+        const exportResult = await ingestHostedDailyExport(options.sql, exportText, candidateDate, now)
         dailyExportRows = exportResult.parsedRows
         dailyExportMatchedPlayers = exportResult.matchedPlayers
         dailyExportMatchedSales = exportResult.matchedSales
         compSalesUpserted += exportResult.matchedSales
+        dailyExportError = ''
+        break
+      } catch (error) {
+        dailyExportError = error instanceof Error ? error.message : 'Daily export ingest failed'
       }
-    } catch (error) {
-      dailyExportError = error instanceof Error ? error.message : 'Daily export ingest failed'
     }
   }
   const tasks = maxPlayers ? await claimHostedTasks(options.sql, runId, maxPlayers) : []
@@ -1694,6 +1700,7 @@ export async function runHostedCompRefresh(options: HostedCompRefreshOptions) {
   } catch (error) {
     runError = error instanceof Error ? error.message : 'Hosted comp refresh failed'
   } finally {
+    const persistedError = runError || (dailyExportError && completedPlayers === 0 && compSalesUpserted === 0 ? dailyExportError : '')
     const unprocessed = tasks.length - completedPlayers
     if (unprocessed > 0) {
       await options.sql`
@@ -1717,7 +1724,7 @@ export async function runHostedCompRefresh(options: HostedCompRefreshOptions) {
         daily_export_rows = ${dailyExportRows},
         daily_export_matched_sales = ${dailyExportMatchedSales},
         api_calls = ${apiCalls},
-        error = ${(runError || dailyExportError).slice(0, 1_000)}
+        error = ${persistedError.slice(0, 1_000)}
       WHERE run_id = ${runId}
     `
   }

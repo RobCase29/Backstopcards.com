@@ -2686,6 +2686,8 @@ function ObservabilityBoard({
   onRefreshComps,
   rankingsRefreshing,
   compsRefreshing,
+  fallbackChecklistReleases,
+  fallbackChecklistPlayers,
 }: {
   snapshot: ObservabilitySnapshot | null
   loading: boolean
@@ -2695,6 +2697,8 @@ function ObservabilityBoard({
   onRefreshComps: () => void
   rankingsRefreshing: boolean
   compsRefreshing: boolean
+  fallbackChecklistReleases: number
+  fallbackChecklistPlayers: number
 }) {
   const [now, setNow] = useState(0)
   useEffect(() => {
@@ -2727,7 +2731,8 @@ function ObservabilityBoard({
   const salesTone = sales?.available ? freshnessTone(salesUpdatedAt, 24, 48) : ('offline' as FreshnessTone)
   const liveTone = live?.freshSnapshots ? freshnessTone(live.latestObservedAt, 24, 48) : ('empty' as FreshnessTone)
   const rankingTone = ranking?.rows ? freshnessTone(ranking.latestUpdated, 24, 48) : ('empty' as FreshnessTone)
-  const checklistTone: FreshnessTone = !checklist?.available ? 'offline' : 'fresh'
+  const checklistAvailable = Boolean(checklist?.available || fallbackChecklistReleases > 0)
+  const checklistTone: FreshnessTone = checklistAvailable ? 'fresh' : 'offline'
   const cardHedgeRemainingDay = cardHedge?.usage?.remainingDay ?? 0
   const cardHedgeTone: FreshnessTone = !cardHedge?.configured
     ? 'offline'
@@ -2777,11 +2782,17 @@ function ObservabilityBoard({
       key: 'checklist',
       label: 'Checklist',
       value: statusLabel[checklistTone],
-      metric: `${(checklist?.universe?.total ?? checklist?.cards?.total ?? 0).toLocaleString()} cards`,
-      sub: `${confirmedFirstPlayers.toLocaleString()} confirmed 1sts / ${checklistQueuePending.toLocaleString()} pending review`,
+      metric: checklist?.available
+        ? `${(checklist.universe?.total ?? checklist.cards?.total ?? 0).toLocaleString()} cards`
+        : `${fallbackChecklistReleases.toLocaleString()} releases`,
+      sub: checklist?.available
+        ? `${confirmedFirstPlayers.toLocaleString()} confirmed 1sts / ${checklistQueuePending.toLocaleString()} pending review`
+        : `${fallbackChecklistPlayers.toLocaleString()} modeled players / bundled snapshot`,
       tone: checklistTone,
       critical: false,
-      values: [checklist?.cards?.total ?? 0, checklist?.universe?.total ?? 0, checklistQueueDone, checklistQueuePending],
+      values: checklist?.available
+        ? [checklist.cards?.total ?? 0, checklist.universe?.total ?? 0, checklistQueueDone, checklistQueuePending]
+        : [fallbackChecklistReleases, fallbackChecklistPlayers],
     },
     {
       key: 'rankings',
@@ -11023,6 +11034,8 @@ function App() {
               onRefreshComps={() => void handleRefreshComps()}
               rankingsRefreshing={rankingsRefreshing}
               compsRefreshing={compsRefreshing}
+              fallbackChecklistReleases={releaseOptions.length}
+              fallbackChecklistPlayers={matrix.totalPricedPlayers}
             />
             <section className="model-support-dock health-source-stack" aria-label="Data source stack">
               <div className="model-support-grid">
@@ -11104,6 +11117,8 @@ function App() {
             onRefreshComps={() => void handleRefreshComps()}
             rankingsRefreshing={rankingsRefreshing}
             compsRefreshing={compsRefreshing}
+            fallbackChecklistReleases={releaseOptions.length}
+            fallbackChecklistPlayers={matrix.totalPricedPlayers}
           />
         </details>
       ) : null}

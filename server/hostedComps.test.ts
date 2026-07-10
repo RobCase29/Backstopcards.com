@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   blendHostedCompPrice,
   chooseBowmanBaseAutoCard,
+  dailyExportDateCandidates,
   evaluateBowmanBaseAutoCandidate,
   summarizeHostedCompSales,
   visitCsvRows,
@@ -79,6 +80,14 @@ describe('hosted comp card matching', () => {
 })
 
 describe('hosted comp modeling', () => {
+  it('tries recent completed UTC dates when the latest export is not published yet', () => {
+    expect(dailyExportDateCandidates(new Date('2026-07-09T23:30:00.000Z'))).toEqual([
+      '2026-07-08',
+      '2026-07-07',
+      '2026-07-06',
+    ])
+  })
+
   it('parses quoted daily-export rows without splitting commas or embedded line breaks', () => {
     const rows: Record<string, string>[] = []
     const count = visitCsvRows(
