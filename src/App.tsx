@@ -780,6 +780,18 @@ function salesCacheModelsToRecord(models: SalesCachePlayerModel[]) {
   )
 }
 
+function salesCacheDatasetVersion(status: SalesCacheStatus | null | undefined) {
+  if (!status?.available) return ''
+  return [
+    status.generatedAt ?? '',
+    status.canonical?.updatedAt ?? '',
+    status.hosted?.latestRun?.completedAt ?? '',
+    status.playerCount ?? 0,
+    status.bucketCount ?? 0,
+    status.modeledSales ?? 0,
+  ].join('|')
+}
+
 function positiveNumber(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
@@ -8475,6 +8487,7 @@ function App() {
   const activeSalesCacheRequestRef = useRef<AbortController | null>(null)
   const boardSalesCacheRequestRef = useRef<AbortController | null>(null)
   const boardSalesCacheAttemptedRef = useRef(new Set<string>())
+  const hostedCompVersionRef = useRef('')
   const dealResultsRef = useRef<HTMLDivElement | null>(null)
 
   const revealDealResults = useCallback(() => {
@@ -8625,6 +8638,57 @@ function App() {
       )
     } finally {
       if (!signal?.aborted) setObservabilityLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+    let request: AbortController | null = null
+
+    const checkForHostedCompUpdates = async () => {
+      if (disposed || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return
+      request?.abort()
+      request = new AbortController()
+      try {
+        const status = await fetchSalesCacheStatus(request.signal)
+        if (disposed) return
+        const nextVersion = salesCacheDatasetVersion(status)
+        const previousVersion = hostedCompVersionRef.current
+        hostedCompVersionRef.current = nextVersion
+        setObservability((current) =>
+          current
+            ? {
+                ...current,
+                checkedAt: new Date().toISOString(),
+                salesCache: status,
+              }
+            : current,
+        )
+        if (previousVersion && nextVersion && previousVersion !== nextVersion) {
+          boardSalesCacheRequestRef.current?.abort()
+          boardSalesCacheAttemptedRef.current.clear()
+          setActiveSalesCacheModels({})
+          setSalesCacheModel(null)
+          setCompDatasetVersion((version) => version + 1)
+        }
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.warn('Hosted comp status check failed', error)
+        }
+      }
+    }
+
+    void checkForHostedCompUpdates()
+    const interval = window.setInterval(checkForHostedCompUpdates, 45_000)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void checkForHostedCompUpdates()
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      disposed = true
+      request?.abort()
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [])
 
@@ -8841,14 +8905,29 @@ function App() {
     for (const playerName of pendingNames) boardSalesCacheAttemptedRef.current.add(salesCacheRecordKey(playerName))
 
     const batches: string[][] = []
-    for (let index = 0; index < pendingNames.length; index += 150) batches.push(pendingNames.slice(index, index + 150))
+    for (let index = 0; index < pendingNames.length; index += 60) batches.push(pendingNames.slice(index, index + 60))
+    const loadBatch = async (batch: string[]) => {
+      try {
+        return await fetchSalesCachePlayers(batch, controller.signal)
+      } catch (firstError) {
+        if (controller.signal.aborted) throw firstError
+        return fetchSalesCachePlayers(batch, controller.signal)
+      }
+    }
     const hydrate = async () => {
       for (let index = 0; index < batches.length; index += 3) {
         if (controller.signal.aborted) return
+        const batchGroup = batches.slice(index, index + 3)
         const settled = await Promise.allSettled(
-          batches.slice(index, index + 3).map((batch) => fetchSalesCachePlayers(batch, controller.signal)),
+          batchGroup.map((batch) => loadBatch(batch)),
         )
         if (controller.signal.aborted) return
+        settled.forEach((result, resultIndex) => {
+          if (result.status !== 'rejected') return
+          for (const playerName of batchGroup[resultIndex] ?? []) {
+            boardSalesCacheAttemptedRef.current.delete(salesCacheRecordKey(playerName))
+          }
+        })
         const models = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value.players ?? [] : []))
         if (models.length) {
           const record = salesCacheModelsToRecord(models)

@@ -208,6 +208,7 @@ export async function fetchSalesCacheStatus(signal?: AbortSignal) {
   const response = await fetch('/api/sales-cache/status', {
     method: 'GET',
     headers: { Accept: 'application/json' },
+    cache: 'no-store',
     signal,
   })
   return parseSalesCacheResponse<SalesCacheStatus>(response)
@@ -218,6 +219,7 @@ export async function fetchSalesCachePlayer(playerName: string, signal?: AbortSi
   const response = await fetch(`/api/sales-cache/player?${params.toString()}`, {
     method: 'GET',
     headers: { Accept: 'application/json' },
+    cache: 'no-store',
     signal,
   })
   return parseSalesCacheResponse<SalesCachePlayerModel>(response)
@@ -233,6 +235,7 @@ export async function fetchSalesCachePlayers(playerNames: string[], signal?: Abo
   const response = await fetch(`/api/sales-cache/players?${params.toString()}`, {
     method: 'GET',
     headers: { Accept: 'application/json' },
+    cache: 'no-store',
     signal,
   })
   return parseSalesCacheResponse<SalesCachePlayersResponse>(response)
