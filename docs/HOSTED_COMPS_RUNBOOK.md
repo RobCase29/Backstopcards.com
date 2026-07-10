@@ -20,12 +20,14 @@ Official/Wax Pack Hero player universe
 
 ## Freshness contract
 
-- Daily export: ingested once per UTC date and recorded in `backstop_comp_meta`; the importer tries the three most recent completed UTC dates because provider publication can lag.
+- Daily export: ingested once per UTC date and recorded in `backstop_comp_meta`; the importer walks up to 45 recent completed UTC dates, skipping dates already loaded and tolerating provider publication lag.
 - Known comp lanes: eligible for direct refresh after 20 hours.
 - Batch FMV: eligible after 20 hours.
 - No-match players: retried after 7 days unless a user explicitly prioritizes them.
 - Transient errors: retried after 6 hours.
 - On-demand refresh: sets the requested player/year to the top queue priority and runs within the current API budget.
+- Historical backfill: each broad refresh walks backward through up to 45 recent Elite daily exports, records an idempotent marker per date, then uses exact player search/comps calls for names not discovered in bulk data.
+- Release fairness: queue claims are interleaved across release years so current products cannot starve older checklists.
 
 ## Safety rules
 
@@ -42,6 +44,7 @@ Official/Wax Pack Hero player universe
 - `POST /api/card-hedge/refresh` is same-origin and can run a broad refresh or accept `{ "playerName", "releaseYear" }` for targeted recovery.
 - `GET /api/sales-cache/status` exposes queue counts, fresh lane counts, the latest sync run, and API health.
 - `npm run comps:hosted-bootstrap` regenerates the deployable queue/model bootstrap from the local canonical database.
+- `npm run comps:hosted-backfill -- --batches=6` safely accelerates a large backlog from an authenticated workstation. It reads the ignored `.vercel-access-code.txt`, waits between batches for the configured provider limit, and prints aggregate telemetry only.
 
 ## Failure recovery
 
