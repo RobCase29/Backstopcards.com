@@ -5209,7 +5209,7 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
               const endpoint = `/v1/download/daily-price-export/${date}`
               const upstream = await fetch(`${CARD_HEDGE_API_BASE}${endpoint}`, {
                 headers: {
-                  Accept: 'text/csv',
+                  Accept: 'text/csv, application/json',
                   'X-API-Key': env.CARD_HEDGE_API_KEY ?? '',
                   'User-Agent': 'Backstop Card Finder hosted daily export',
                 },
