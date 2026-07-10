@@ -1284,8 +1284,13 @@ async function upsertHostedSales(sql: HostedCompSql, sales: HostedSaleRecord[]) 
 }
 
 async function hostedDailyExportAlreadyIngested(sql: HostedCompSql, date: string) {
-  const [row] = await sql`SELECT value FROM backstop_comp_meta WHERE key = 'daily_export_date'`
-  return stringValue(row?.value) === date
+  const markerKey = `daily_export:${date}`
+  const rows = await sql`
+    SELECT key, value
+    FROM backstop_comp_meta
+    WHERE key IN ('daily_export_date', ${markerKey})
+  `
+  return rows.some((row) => stringValue(row.key) === markerKey || stringValue(row.value) === date)
 }
 
 async function ingestHostedDailyExport(sql: HostedCompSql, text: string, date: string, now: Date) {
@@ -1482,7 +1487,9 @@ async function ingestHostedDailyExport(sql: HostedCompSql, text: string, date: s
   }
   await sql`
     INSERT INTO backstop_comp_meta (key, value, updated_at)
-    VALUES ('daily_export_date', ${date}, NOW())
+    VALUES
+      ('daily_export_date', ${date}, NOW()),
+      (${`daily_export:${date}`}, ${date}, NOW())
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
   `
 
@@ -1604,11 +1611,11 @@ export async function runHostedCompRefresh(options: HostedCompRefreshOptions) {
     VALUES (${runId}, 'running', ${now.toISOString()})
   `
   if (options.fetchDailyExport && Date.now() - startedAt < timeBudgetMs * 0.35) {
-    for (const candidateDate of dailyExportDateCandidates(now)) {
+    for (const candidateDate of dailyExportDateCandidates(now, 45)) {
       if (Date.now() - startedAt >= timeBudgetMs * 0.35) break
       dailyExportDate = candidateDate
       try {
-        if (await hostedDailyExportAlreadyIngested(options.sql, candidateDate)) break
+        if (await hostedDailyExportAlreadyIngested(options.sql, candidateDate)) continue
         apiCalls += 1
         const exportText = await options.fetchDailyExport(candidateDate)
         const exportResult = await ingestHostedDailyExport(options.sql, exportText, candidateDate, now)
