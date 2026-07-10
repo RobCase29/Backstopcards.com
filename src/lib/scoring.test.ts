@@ -81,7 +81,7 @@ describe('normalizeListing', () => {
     expect(normalized.isTargetAuto).toBe(true)
   })
 
-  it('normalizes Gold Ink exchange auctions into the Gold Image /15 lane', () => {
+  it('normalizes Gold Ink exchange auctions into the Gold Ink /15 lane', () => {
     const normalized = normalizeListing(
       listing({
         title: '2026 Bowman Chrome Prospect Gold Ink Dillon Lewis 1st ROOKIE AUTO /15 EXCH',
@@ -92,7 +92,7 @@ describe('normalizeListing', () => {
       }),
     )
 
-    expect(normalized.variationLabel).toBe('Gold Image Variation /15')
+    expect(normalized.variationLabel).toBe('Gold Ink /15')
     expect(normalized.serialDenominator).toBe(15)
     expect(normalized.isTargetAuto).toBe(true)
   })
@@ -165,7 +165,7 @@ describe('normalizeListing', () => {
       }),
     )
 
-    expect(normalized.variationLabel).toBe('Base')
+    expect(normalized.variationLabel).toBe('Base Auto')
     expect(normalized.serialDenominator).toBeNull()
   })
 
@@ -584,7 +584,7 @@ describe('rankOpportunities', () => {
     expect(opportunities).toEqual([])
   })
 
-  it('does not value PackFractor text as Red X-Fractor from substring noise', () => {
+  it('maps PackFractor text to the official /89 lane instead of Red X-Fractor substring noise', () => {
     const packfractorModel: ChecklistModel = {
       ...model,
       multipliers: [
@@ -629,7 +629,8 @@ describe('rankOpportunities', () => {
       packfractorModel,
     )
 
-    expect(opportunities).toEqual([])
+    expect(opportunities).toHaveLength(1)
+    expect(opportunities[0]?.matchedVariation).toBe('Packfractor /89')
   })
 
   it('matches a confirmed PackFractor serial to the PackFractor model', () => {

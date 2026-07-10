@@ -62,7 +62,7 @@ export function variationSearchAliases(variationTerm: string) {
   const term = variationTerm.trim()
   const normalized = normalizedTitleKey(term)
   const aliases = new Set<string>([term])
-  if (/\bimage\b/.test(normalized) && /\bgold\b/.test(normalized)) aliases.add('gold ink')
+  if (/\bgold\s+(?:image|ink)\b/.test(normalized)) aliases.add('gold ink')
   if (/\bimage\b/.test(normalized) && /\bblack\b/.test(normalized)) aliases.add('black ink')
   if (/\bimage\b/.test(normalized) && /\bred\b/.test(normalized)) aliases.add('red ink')
   if (/\bmini\s+diamond\b/.test(normalized)) aliases.add('mini diamond')
@@ -78,7 +78,7 @@ export function titleMatchesVariationTerm(title: string, variationTerm?: string)
 
 export function variationQueryTerm(variationTerm = '') {
   const normalized = normalizedTitleKey(variationTerm)
-  if (/\bimage\b/.test(normalized) && /\bgold\b/.test(normalized)) return 'gold ink'
+  if (/\bgold\s+(?:image|ink)\b/.test(normalized)) return 'gold ink'
   if (/\bimage\b/.test(normalized) && /\bblack\b/.test(normalized)) return 'black ink'
   if (/\bimage\b/.test(normalized) && /\bred\b/.test(normalized)) return 'red ink'
   return variationTerm
@@ -89,7 +89,7 @@ export function titleLooksLikeGoldInkAuto(title: string) {
 }
 
 export function goldInkVariationLabel(title: string) {
-  return `Gold Image Variation /${titleSerialDenominator(title) ?? 15}`
+  return `Gold Ink /${titleSerialDenominator(title) ?? 15}`
 }
 
 const BASE_AUTO_EXCLUSION_PATTERN =

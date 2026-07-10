@@ -28,7 +28,7 @@ describe('Market Movers sales model title scrub', () => {
     expect(powerChords.insertName).toBe('power chords')
   })
 
-  it('treats gold ink as a defined chrome auto image-variation lane', () => {
+  it('treats gold ink as its official chrome auto lane', () => {
     const goldInk = normalizeMarketMoversSale(
       {
         itemId: 'gold-ink',
@@ -41,7 +41,7 @@ describe('Market Movers sales model title scrub', () => {
 
     expect(goldInk.cardClass).toBe('auto')
     expect(goldInk.productFamily).toBe('Bowman Chrome')
-    expect(goldInk.variationLabel).toBe('Gold Image Variation /15')
+    expect(goldInk.variationLabel).toBe('Gold Ink /15')
   })
 
   it('keeps snack-pack autographs in chrome auto /5 lanes', () => {

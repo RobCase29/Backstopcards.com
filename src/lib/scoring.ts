@@ -15,6 +15,7 @@ import { estimateBasePrice } from './matrix'
 import { salesCacheValuationForListing } from './liveComps'
 import { titleLooksHandSignedAuto } from './handSigned'
 import type { SalesCachePlayerModel } from './salesCache'
+import { canonicalizeBowman2026AutoVariation } from '../../shared/bowman2026Taxonomy.js'
 
 export const DEFAULT_SETTINGS: ScoreSettings = {
   minDiscountPct: 0,
@@ -39,7 +40,7 @@ const TEAM_COLOR_WORD_CONTEXT_PATTERN = /\b(?:red\s+sox|white\s+sox|reds?|blue\s
 
 const TITLE_PARALLEL_CUES: Array<{ label: string; denominator: number; pattern: RegExp }> = [
   { label: 'Superfractor', denominator: 1, pattern: /\bsuperfractor\b|\bsuper\s*(?:auto|refractor)\b/i },
-  { label: 'Gold Image Variation', denominator: 15, pattern: /\bgold\s+ink\b/i },
+  { label: 'Gold Ink', denominator: 15, pattern: /\bgold\s+ink\b/i },
   { label: 'Red', denominator: 5, pattern: /\bred\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+red\b/i },
   { label: 'Orange', denominator: 25, pattern: /\borange\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+orange\b/i },
   { label: 'Gold', denominator: 50, pattern: /\bgold\s+(?:refractor|auto|parallel|shimmer|lava|wave)\b|\b(?:refractor|auto|parallel|shimmer|lava|wave)\s+gold\b/i },
@@ -376,7 +377,7 @@ function detectUniverse(listing: MarketplaceListing, serialDenominator?: number 
   const isHandSigned = isHandSignedAutoListing(listing)
   const nonAuto = /\b(non[-\s]?auto|no\s+auto|unsigned|facsimile|reprint)\b/.test(text)
   const isAutograph =
-    !nonAuto && /\b(auto|autos|autograph|autographed|autographs|signed|signature)\b/.test(text)
+    !nonAuto && /\b(auto|autos|autograph|autographed|autographs|signed|signature|redemption)\b/.test(text)
   const hasChecklistFirstEvidence = Boolean(listing.checklist_match && listing.checklist_first_bowman)
   const hasFirstMarker = hasChecklistFirstEvidence || /\b(1st|first)\b/.test(text)
   const isFirstEditionOnly = /\bfirst\s+edition\b/.test(text) && !/\b(1st|first)\s+bowman\b/.test(text)
@@ -445,10 +446,17 @@ export function normalizeListing(listing: MarketplaceListing): NormalizedListing
   const releaseYear = inferReleaseYear(listing)
   const createdAt = listing.created_at ?? listing.listed_at ?? null
   const endTime = listing.end_time ?? null
-  const serialDenominator = inferSerialDenominator(listing)
-  const universe = detectUniverse(listing, serialDenominator)
   const playerName = firstString([listing.player_name, prospect?.name], 'Unknown player')
   const title = firstString([listing.title, playerName], 'Untitled listing')
+  const inferredSerialDenominator = inferSerialDenominator(listing)
+  const initialUniverse = detectUniverse(listing, inferredSerialDenominator)
+  const taxonomy =
+    releaseYear === 2026 && initialUniverse.isAutograph && !initialUniverse.isHandSigned
+      ? canonicalizeBowman2026AutoVariation(title, { playerName, assumeAuto: true })
+      : null
+  const serialDenominator = taxonomy?.definition?.serialDenominator ?? inferredSerialDenominator
+  const universe = detectUniverse(listing, serialDenominator)
+  const resolvedVariationLabel = taxonomy?.definition?.label ?? variationLabel(listing, serialDenominator)
   const gradeDetails = inferGradeDetails(listing)
 
   return {
@@ -477,7 +485,7 @@ export function normalizeListing(listing: MarketplaceListing): NormalizedListing
     bidCount: numberValue(listing.bid_count, 0),
     releaseYear,
     releaseLabel: releaseLabel(listing, releaseYear),
-    variationLabel: variationLabel(listing, serialDenominator),
+    variationLabel: resolvedVariationLabel,
     serialDenominator,
     isGraded: gradeDetails.isGraded,
     grader: listing.grader,
@@ -486,6 +494,9 @@ export function normalizeListing(listing: MarketplaceListing): NormalizedListing
     gradeNumber: gradeDetails.gradeNumber,
     isEligibleGraded: gradeDetails.isEligibleGraded,
     ...universe,
+    taxonomyStatus: taxonomy?.status ?? null,
+    taxonomyConfidence: taxonomy?.confidence ?? null,
+    taxonomyReason: taxonomy?.reasons.join('; ') ?? null,
     listingAgeHours: hoursBetween(createdAt),
     hoursToClose: hoursUntil(endTime),
   }
@@ -770,6 +781,30 @@ function estimateValuation(
   salesCacheModel?: SalesCachePlayerModel | null,
   matchedPlayer?: ChecklistPlayer | null,
 ) {
+  if (
+    listing.releaseYear === 2026 &&
+    listing.isAutograph &&
+    listing.taxonomyStatus &&
+    listing.taxonomyStatus !== 'matched' &&
+    listing.taxonomyStatus !== 'out-of-scope'
+  ) {
+    return {
+      fairValue: 0,
+      modelPrice: null,
+      baseTwmaPrice: null,
+      variationPrice: null,
+      compPrice: null,
+      modelConfidence: 0,
+      matchedVariation: null,
+      valuationSource: 'listing-comps' as ValuationSource,
+      compBucketLabel: null,
+      compSaleCount: null,
+      compLast3Avg: null,
+      compLast5Avg: null,
+      compTrailingModel: null,
+      compAskVsLast5Pct: null,
+    }
+  }
   const player = matchedPlayer ?? findChecklistPlayer(listing, model)
   const baseEstimate = player ? estimateBasePrice(player) : null
   const modeledBasePrice = baseEstimate?.price ?? player?.baseAvgPrice ?? 0

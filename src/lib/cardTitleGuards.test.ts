@@ -24,6 +24,7 @@ describe('card title guards', () => {
 
   it('uses shared variation aliases for marketplace wording', () => {
     expect(variationQueryTerm('Gold Image Variation /15')).toBe('gold ink')
+    expect(variationQueryTerm('Gold Ink /15')).toBe('gold ink')
     expect(titleMatchesVariationTerm('2026 Bowman Chrome Eli Willits 1st Bowman Gold Ink Auto /15', 'Gold Image Variation /15')).toBe(
       true,
     )

@@ -151,7 +151,7 @@ describe('fetchEbayBinListings', () => {
       vi.fn(async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body)) as { queries: Array<{ q: string; playerName: string; variationTerm?: string }> }
         expect(body.queries[0]?.q).toBe('Eli Willits gold ink 2026 bowman chrome 1st auto')
-        expect(body.queries[0]?.variationTerm).toBe('Gold Image Variation /15')
+        expect(body.queries[0]?.variationTerm).toBe('Gold Ink /15')
         return new Response(
           JSON.stringify({
             items: [
@@ -181,11 +181,11 @@ describe('fetchEbayBinListings', () => {
       model,
       playerLimit: 1,
       searchMode: 'variation',
-      searchTerm: 'Gold Image Variation /15',
+      searchTerm: 'Gold Ink /15',
     })
 
     expect(result.listings.map((listing) => listing.item_id)).toEqual(['gold-ink'])
-    expect(result.listings[0]?.variation).toBe('Gold Image Variation /15')
+    expect(result.listings[0]?.variation).toBe('Gold Ink /15')
     expect(result.listings[0]?.serial_denominator).toBe(15)
   })
 
@@ -860,11 +860,11 @@ describe('fetchEbayAuctionListings', () => {
     expect(result.stats.rejectedPlayerMismatches).toBe(1)
   })
 
-  it('adds targeted Gold Ink auction queries when the release has a Gold Image /15 lane', async () => {
+  it('adds targeted Gold Ink auction queries when the release has a Gold Ink /15 lane', async () => {
     const soonEnd = new Date(Date.now() + 2 * 60 * 60 * 1_000).toISOString()
     const goldInkModel: ChecklistModel = {
       ...model,
-      multipliers: [{ variation: 'Gold Image Variation /15', avgMultiplier: 12, totalSales: 20 }],
+      multipliers: [{ variation: 'Gold Ink /15', avgMultiplier: 12, totalSales: 20 }],
       players: [
         {
           playerName: 'Dillon Lewis',
@@ -884,7 +884,7 @@ describe('fetchEbayAuctionListings', () => {
         expect(body.queries).toHaveLength(2)
         expect(body.queries[0]?.q).toBe('Dillon Lewis 2026 bowman chrome 1st auto')
         expect(body.queries[1]?.q).toBe('Dillon Lewis gold ink 2026 bowman chrome 1st auto')
-        expect(body.queries[1]?.variationTerm).toBe('Gold Image Variation /15')
+        expect(body.queries[1]?.variationTerm).toBe('Gold Ink /15')
         expect(body.buyingOption).toBe('AUCTION')
 
         return new Response(
@@ -920,7 +920,7 @@ describe('fetchEbayAuctionListings', () => {
 
     expect(result.listings).toHaveLength(1)
     expect(result.listings[0]?.item_id).toBe('gold-ink-auction')
-    expect(result.listings[0]?.variation).toBe('Gold Image Variation /15')
+    expect(result.listings[0]?.variation).toBe('Gold Ink /15')
     expect(result.listings[0]?.serial_denominator).toBe(15)
     expect(result.listings[0]?.buying_format).toBe('Auction')
   })

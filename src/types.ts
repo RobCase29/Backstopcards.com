@@ -222,6 +222,9 @@ export interface NormalizedListing {
   isLowSerialNonAuto: boolean
   isHandSigned: boolean
   universeScore: number
+  taxonomyStatus?: 'matched' | 'ambiguous' | 'conflict' | 'out-of-scope' | 'unknown' | null
+  taxonomyConfidence?: number | null
+  taxonomyReason?: string | null
   listingAgeHours?: number | null
   hoursToClose?: number | null
 }

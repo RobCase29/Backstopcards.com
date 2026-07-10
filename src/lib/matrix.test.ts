@@ -60,6 +60,13 @@ describe('pricing matrix', () => {
     })
   })
 
+  it('keeps the release-agnostic base key stable and never duplicates the base lane', () => {
+    const { variations } = releaseVariationCurve(draftModel)
+
+    expect(variationKey('Base Auto')).toBe('base')
+    expect(variations.filter((variation) => variationKey(variation.variation) === 'base')).toHaveLength(1)
+  })
+
   it('solves every player x release variation cell and ranks by base auto value', () => {
     const matrix = buildPricingMatrix([bowmanModel])
 

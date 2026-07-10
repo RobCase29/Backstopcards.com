@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Gem,
   KeyRound,
+  MoreHorizontal,
   Package,
   Radio,
   RefreshCw,
@@ -22,6 +23,7 @@ import {
   Undo2,
   Wifi,
   WifiOff,
+  X,
 } from 'lucide-react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -2530,6 +2532,9 @@ function WorkflowCommand({
   listingCount: number
   modelReady: boolean
 }) {
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null)
+  const moreCloseButtonRef = useRef<HTMLButtonElement | null>(null)
   const navigationItems = [
     {
       mode: 'lookup' as const,
@@ -2586,6 +2591,38 @@ function WorkflowCommand({
       icon: <Activity size={19} />,
     },
   ]
+  const primaryMobileItems = navigationItems.filter((item) =>
+    ['lookup', 'deals', 'price'].includes(item.mode),
+  )
+  const secondaryMobileItems = navigationItems.filter((item) =>
+    ['case-hits', 'wax', 'health'].includes(item.mode),
+  )
+  const secondaryModeActive = secondaryMobileItems.some((item) => item.mode === mode)
+
+  useEffect(() => {
+    if (!moreOpen) return
+    const focusFrame = window.requestAnimationFrame(() => moreCloseButtonRef.current?.focus())
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setMoreOpen(false)
+      window.requestAnimationFrame(() => moreButtonRef.current?.focus())
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      window.cancelAnimationFrame(focusFrame)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [moreOpen])
+
+  const closeMoreMenu = () => {
+    setMoreOpen(false)
+    window.requestAnimationFrame(() => moreButtonRef.current?.focus())
+  }
+
+  const selectMode = (nextMode: WorkMode) => {
+    setMoreOpen(false)
+    onModeChange(nextMode)
+  }
 
   return (
     <section className="workflow-command" aria-label="Primary navigation">
@@ -2614,12 +2651,12 @@ function WorkflowCommand({
         </div>
       </div>
 
-      <div className="workflow-mode-grid">
+      <div className="workflow-mode-grid workflow-desktop-nav">
         {navigationItems.map((item) => (
           <button
             className={`workflow-mode-card ${item.tier} ${mode === item.mode ? 'active' : ''}`}
             type="button"
-            onClick={() => onModeChange(item.mode)}
+            onClick={() => selectMode(item.mode)}
             aria-pressed={mode === item.mode}
             key={item.mode}
           >
@@ -2633,6 +2670,82 @@ function WorkflowCommand({
           </button>
         ))}
       </div>
+
+      <nav className="workflow-mobile-nav" aria-label="Mobile navigation">
+        {primaryMobileItems.map((item) => (
+          <button
+            className={`workflow-mobile-tab ${mode === item.mode ? 'active' : ''}`}
+            type="button"
+            onClick={() => selectMode(item.mode)}
+            aria-current={mode === item.mode ? 'page' : undefined}
+            key={`mobile:${item.mode}`}
+          >
+            <span>{item.icon}</span>
+            <strong>{item.mode === 'lookup' ? 'Board' : item.mode === 'deals' ? 'Deals' : 'Price'}</strong>
+          </button>
+        ))}
+        <button
+          ref={moreButtonRef}
+          className={`workflow-mobile-tab ${secondaryModeActive || moreOpen ? 'active' : ''}`}
+          type="button"
+          onClick={() => setMoreOpen((current) => !current)}
+          aria-expanded={moreOpen}
+          aria-controls="mobile-more-menu"
+        >
+          <span><MoreHorizontal size={20} /></span>
+          <strong>More</strong>
+        </button>
+      </nav>
+
+      {moreOpen ? (
+        <div className="workflow-mobile-more-layer">
+          <button
+            className="workflow-mobile-more-backdrop"
+            type="button"
+            aria-label="Close more tools"
+            onClick={closeMoreMenu}
+          />
+          <section
+            className="workflow-mobile-more-sheet"
+            id="mobile-more-menu"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mobile-more-title"
+          >
+            <div className="workflow-mobile-more-head">
+              <div>
+                <span>Backstop tools</span>
+                <strong id="mobile-more-title">More</strong>
+              </div>
+              <button ref={moreCloseButtonRef} type="button" onClick={closeMoreMenu} aria-label="Close more tools">
+                <X size={19} />
+              </button>
+            </div>
+            <div className="workflow-mobile-more-grid">
+              {secondaryMobileItems.map((item) => (
+                <button
+                  className={mode === item.mode ? 'active' : ''}
+                  type="button"
+                  onClick={() => selectMode(item.mode)}
+                  key={`mobile-more:${item.mode}`}
+                >
+                  <span className="workflow-mobile-more-icon">{item.icon}</span>
+                  <span>
+                    <strong>{item.title}</strong>
+                    <small>{item.description}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="workflow-mobile-more-status">
+              <span className={modelReady ? 'ready' : ''} />
+              {modelReady
+                ? `${pricedRows.toLocaleString()} priced players ready`
+                : 'Market model is still loading'}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -2986,10 +3099,12 @@ function Leaderboard({
                 )}
               </span>
               <span className="money-chip">
+                <span className="mobile-cell-label">Base auto</span>
                 <strong>{formatBasePrice(row)}</strong>
                 <small>{formatBaseMethod(row.baseMethod)}</small>
               </span>
               <span className="value-signal-cell">
+                <span className="mobile-cell-label">Value</span>
                 <strong>{valueScore > 0 ? `${valueScore.toFixed(0)} value` : '--'}</strong>
                 <small>{valueDetails.length > 0 ? valueDetails.join(' / ') : 'ranking unavailable'}</small>
               </span>
@@ -10671,7 +10786,14 @@ function App() {
         </div>
 
         <div className="top-actions">
-          <button className="primary-button refresh-model-button" type="button" onClick={() => void refreshChecklistUniverse()} disabled={checklistLoading || catalogLoading}>
+          <button
+            className="primary-button refresh-model-button"
+            type="button"
+            onClick={() => void refreshChecklistUniverse()}
+            disabled={checklistLoading || catalogLoading}
+            aria-label="Refresh market data"
+            title="Refresh market data"
+          >
             <RefreshCw size={16} className={checklistLoading ? 'spin' : undefined} />
             {catalogLoading
               ? 'Discovering'
@@ -10681,7 +10803,13 @@ function App() {
                   ? 'Refreshing'
                   : 'Refresh'}
           </button>
-          <button className="ghost-button export-button" type="button" onClick={() => downloadMatrixCsv(visibleRows)}>
+          <button
+            className="ghost-button export-button"
+            type="button"
+            onClick={() => downloadMatrixCsv(visibleRows)}
+            aria-label="Export valuations"
+            title="Export valuations"
+          >
             <Download size={16} />
             Export
           </button>

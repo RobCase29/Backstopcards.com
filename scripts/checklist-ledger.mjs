@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
+import { BOWMAN_2026_CHROME_AUTO_VARIATIONS } from '../shared/bowman2026Taxonomy.js'
 
 const DEFAULT_SHEETS = ['Base', 'Prospects', 'Autographs', 'Inserts']
 const FIRST_EVIDENCE_SOURCE = 'market-title-first-signal'
@@ -552,39 +553,20 @@ function template(sections, variationLabel, options = {}) {
 
 export function bowman2026VariationTemplates() {
   const flagshipAutos = ['Chrome Prospect Autographs']
-  const chromeAutoParallels = [
-    template(flagshipAutos, 'Base Auto', { isBaseTemplate: true, printRun: 1880, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Refractor /499', { serialDenominator: 499, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Purple /250', { serialDenominator: 250, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Blue /150', { serialDenominator: 150, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Aqua /125', { serialDenominator: 125, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Mini Diamond /100', { serialDenominator: 100, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Green /99', { serialDenominator: 99, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Packfractor /89', { serialDenominator: 89, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Yellow /75', { serialDenominator: 75, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Gold /50', { serialDenominator: 50, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Gold Shimmer /50', { serialDenominator: 50, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Logofractor /35', { serialDenominator: 35, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Orange /25', { serialDenominator: 25, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Orange Shimmer /25', { serialDenominator: 25, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Gold Image Variation /15', { serialDenominator: 15, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'B&W Shimmer /11', { serialDenominator: 11, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Black /10', { serialDenominator: 10, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Black X-Fractor /10', { serialDenominator: 10, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Gumball Snack Pack /5', { serialDenominator: 5, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Sunflower Snack Pack /5', { serialDenominator: 5, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Peanuts Snack Pack /5', { serialDenominator: 5, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Popcorn Snack Pack /5', { serialDenominator: 5, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Red /5', { serialDenominator: 5, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Red Lava /5', { serialDenominator: 5, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Superfractor /1', { serialDenominator: 1, chaseTier: 'flagship-auto' }),
-    template(flagshipAutos, 'Printing Plate /1', { serialDenominator: 1, chaseTier: 'flagship-auto' }),
-  ]
+  const chromeAutoParallels = BOWMAN_2026_CHROME_AUTO_VARIATIONS.map((definition) =>
+    template(flagshipAutos, definition.label, {
+      isBaseTemplate: definition.id === 'base-auto',
+      serialDenominator: definition.serialDenominator,
+      printRun: definition.printRun,
+      scarcityRank: definition.scarcityOrder,
+      chaseTier: 'flagship-auto',
+    }),
+  )
 
   return [
     ...chromeAutoParallels,
-    template(['Chrome Prospect Gold Ink Autographs'], 'Gold Ink Auto /15', { serialDenominator: 15, cardClass: 'auto', chaseTier: 'flagship-auto' }),
-    template(['Chrome Prospect Packfractor Autographs'], 'Packfractor Auto /89', { serialDenominator: 89, cardClass: 'auto', chaseTier: 'flagship-auto' }),
+    template(['Chrome Prospect Gold Ink Autographs'], 'Gold Ink /15', { serialDenominator: 15, cardClass: 'auto', chaseTier: 'flagship-auto' }),
+    template(['Chrome Prospect Packfractor Autographs'], 'Packfractor /89', { serialDenominator: 89, cardClass: 'auto', chaseTier: 'flagship-auto' }),
     template(['Chrome Rookie Autographs'], 'Base Rookie Auto', { isBaseTemplate: true, printRun: 500, cardClass: 'auto', chaseTier: 'auto' }),
     template(['Base Prospect Retail Autographs'], 'Base Paper Auto', { isBaseTemplate: true, printRun: 700, cardClass: 'paper-auto', productFamily: 'Bowman Paper', chaseTier: 'auto' }),
     template(['Base Rookie and Veteran Retail Autographs'], 'Base Paper Auto', { isBaseTemplate: true, printRun: 200, cardClass: 'paper-auto', productFamily: 'Bowman Paper', chaseTier: 'auto' }),

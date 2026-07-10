@@ -1284,6 +1284,12 @@
 }
 
 /* Mobile is a distinct product surface, not scaled desktop. */
+.valuation-app .workflow-mobile-nav,
+.valuation-app .workflow-mobile-more-layer,
+.valuation-app .mobile-cell-label {
+  display: none;
+}
+
 @media (max-width: 720px) {
   .valuation-app {
     --app-pad: 7px;
@@ -1771,6 +1777,935 @@
 
   .valuation-app .operations-drawer > summary small {
     display: none;
+  }
+}
+
+/* Mobile v3: one-handed navigation, progressive disclosure, and decision-first cards. */
+@media (max-width: 820px) {
+  .valuation-app {
+    --mobile-edge: 10px;
+    --mobile-nav-height: 72px;
+    --radius: 16px;
+    --radius-sm: 12px;
+    padding: 0 var(--mobile-edge) calc(var(--mobile-nav-height) + 18px + env(safe-area-inset-bottom));
+    overflow-x: clip;
+  }
+
+  .valuation-app button,
+  .valuation-app select,
+  .valuation-app input,
+  .valuation-app summary {
+    touch-action: manipulation;
+  }
+
+  .valuation-app input,
+  .valuation-app select {
+    font-size: 16px;
+  }
+
+  .valuation-app .workbench-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 55;
+    width: calc(100% + var(--mobile-edge) * 2);
+    min-height: 58px;
+    margin: 0 calc(var(--mobile-edge) * -1);
+    padding: calc(7px + env(safe-area-inset-top)) var(--mobile-edge) 7px;
+    border-bottom: 1px solid rgba(152, 224, 208, 0.15);
+    background: rgba(5, 27, 26, 0.9);
+    box-shadow: 0 10px 30px rgba(2, 17, 16, 0.16);
+    backdrop-filter: blur(24px) saturate(150%);
+  }
+
+  .valuation-app .brand-lockup {
+    gap: 9px;
+  }
+
+  .valuation-app .brand-logo {
+    width: 36px;
+    height: 36px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 10px;
+  }
+
+  .valuation-app .brand-block h1 {
+    max-width: 210px;
+    overflow: hidden;
+    font-size: 1rem;
+    line-height: 1.1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .top-actions .refresh-model-button {
+    width: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    border-radius: 12px;
+  }
+
+  .valuation-app .top-actions .export-button,
+  .valuation-app .valuation-status {
+    display: none;
+  }
+
+  .valuation-app .workflow-command {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 80;
+    width: 100%;
+    display: block;
+    padding: 5px 8px calc(5px + env(safe-area-inset-bottom));
+    overflow: visible;
+    border: 0;
+    border-top: 1px solid rgba(152, 224, 208, 0.18);
+    border-radius: 0;
+    background: rgba(3, 20, 19, 0.94);
+    box-shadow: 0 -16px 44px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(26px) saturate(155%);
+  }
+
+  .valuation-app .workflow-command-copy,
+  .valuation-app .workflow-desktop-nav {
+    display: none;
+  }
+
+  .valuation-app .workflow-mobile-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 3px;
+  }
+
+  .valuation-app .workflow-mobile-tab {
+    min-width: 0;
+    min-height: 56px;
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 3px;
+    padding: 4px 2px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.58);
+    box-shadow: none;
+  }
+
+  .valuation-app .workflow-mobile-tab > span {
+    width: 28px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+  }
+
+  .valuation-app .workflow-mobile-tab svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 2;
+  }
+
+  .valuation-app .workflow-mobile-tab strong {
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 0.64rem;
+    font-weight: 760;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .workflow-mobile-tab.active {
+    background: rgba(152, 224, 208, 0.12);
+    color: #ffffff;
+  }
+
+  .valuation-app .workflow-mobile-tab.active > span {
+    color: var(--lime);
+  }
+
+  .valuation-app .workflow-mobile-more-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 79;
+    display: block;
+  }
+
+  .valuation-app .workflow-mobile-more-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    background: rgba(2, 13, 13, 0.58);
+    box-shadow: none;
+    backdrop-filter: blur(6px);
+  }
+
+  .valuation-app .workflow-mobile-more-sheet {
+    position: absolute;
+    inset: auto 8px calc(var(--mobile-nav-height) + env(safe-area-inset-bottom)) 8px;
+    display: grid;
+    gap: 12px;
+    padding: 16px;
+    border: 1px solid rgba(152, 224, 208, 0.2);
+    border-radius: 22px;
+    background: rgba(7, 30, 29, 0.98);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.44);
+    animation: backstop-sheet-in 180ms ease-out both;
+  }
+
+  .valuation-app .workflow-mobile-more-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .valuation-app .workflow-mobile-more-head > div {
+    display: grid;
+    gap: 2px;
+  }
+
+  .valuation-app .workflow-mobile-more-head span {
+    color: var(--mint);
+    font-size: 0.62rem;
+    font-weight: 850;
+    text-transform: uppercase;
+  }
+
+  .valuation-app .workflow-mobile-more-head strong {
+    color: #fffdf7;
+    font-size: 1.4rem;
+  }
+
+  .valuation-app .workflow-mobile-more-head button {
+    width: 40px;
+    min-height: 40px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+  }
+
+  .valuation-app .workflow-mobile-more-grid {
+    display: grid;
+    gap: 7px;
+  }
+
+  .valuation-app .workflow-mobile-more-grid > button {
+    min-height: 68px;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    align-items: center;
+    gap: 11px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.045);
+    color: #ffffff;
+    box-shadow: none;
+    text-align: left;
+  }
+
+  .valuation-app .workflow-mobile-more-grid > button.active {
+    border-color: rgba(152, 224, 208, 0.38);
+    background: rgba(152, 224, 208, 0.11);
+  }
+
+  .valuation-app .workflow-mobile-more-icon {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(152, 224, 208, 0.2);
+    border-radius: 12px;
+    background: rgba(152, 224, 208, 0.08);
+    color: var(--mint);
+  }
+
+  .valuation-app .workflow-mobile-more-grid > button > span:last-child {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .valuation-app .workflow-mobile-more-grid strong {
+    font-size: 0.92rem;
+  }
+
+  .valuation-app .workflow-mobile-more-grid small {
+    overflow: hidden;
+    color: rgba(255, 255, 255, 0.52);
+    font-size: 0.68rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .workflow-mobile-more-status {
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+    color: rgba(255, 255, 255, 0.54);
+    font-size: 0.68rem;
+    font-weight: 720;
+  }
+
+  .valuation-app .workflow-mobile-more-status > span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--amber);
+  }
+
+  .valuation-app .workflow-mobile-more-status > span.ready {
+    background: var(--mint);
+    box-shadow: 0 0 0 4px rgba(152, 224, 208, 0.1);
+  }
+
+  .valuation-app .lookup-workflow,
+  .valuation-app .price-workflow,
+  .valuation-app .deal-workflow,
+  .valuation-app .case-hit-workflow,
+  .valuation-app .sealed-wax-workflow,
+  .valuation-app .health-workflow {
+    padding-top: 8px;
+  }
+
+  .valuation-app .lookup-intent-bar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 12px;
+    border-radius: var(--radius);
+  }
+
+  .valuation-app .lookup-intent-copy {
+    grid-row: auto;
+    gap: 2px;
+  }
+
+  .valuation-app .lookup-intent-copy > span {
+    color: var(--accent);
+    font-size: 0.6rem;
+  }
+
+  .valuation-app .lookup-intent-copy > strong {
+    font-size: 1.16rem;
+    line-height: 1.12;
+  }
+
+  .valuation-app .lookup-intent-copy > small {
+    max-height: 2.4em;
+    font-size: 0.69rem;
+    line-height: 1.2;
+    -webkit-line-clamp: 2;
+  }
+
+  .valuation-app .lookup-primary-search,
+  .valuation-app .price-workflow-search {
+    min-height: 52px;
+    border-radius: 13px;
+    background: #ffffff;
+    box-shadow: inset 0 0 0 1px rgba(8, 42, 40, 0.08);
+  }
+
+  .valuation-app .lookup-primary-search input,
+  .valuation-app .price-workflow-search input {
+    min-height: 44px;
+  }
+
+  .valuation-app .lookup-action-stack {
+    display: block;
+  }
+
+  .valuation-app .lookup-intent-meta,
+  .valuation-app .lookup-action-stack .calculator-toggle-button,
+  .valuation-app .lookup-action-stack .board-radar-button {
+    display: none;
+  }
+
+  .valuation-app .lookup-action-stack .board-scan-button {
+    width: 100%;
+    min-height: 48px;
+    border-radius: 13px;
+    font-size: 0.78rem;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar {
+    position: sticky;
+    top: calc(58px + env(safe-area-inset-top));
+    z-index: 35;
+    width: calc(100% + var(--mobile-edge) * 2);
+    display: flex;
+    grid-template-columns: none;
+    gap: 7px;
+    margin-inline: calc(var(--mobile-edge) * -1);
+    padding: 8px var(--mobile-edge);
+    overflow-x: auto;
+    border: 0;
+    border-bottom: 1px solid rgba(8, 42, 40, 0.08);
+    border-radius: 0;
+    background: rgba(244, 242, 234, 0.94);
+    box-shadow: 0 8px 20px rgba(11, 32, 30, 0.08);
+    scrollbar-width: none;
+    backdrop-filter: blur(20px) saturate(150%);
+  }
+
+  .valuation-app .toolbar.valuation-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .filter-select {
+    flex: 0 0 148px;
+    min-height: 46px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.92);
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .team-filter {
+    flex-basis: 174px;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .board-advanced-filters {
+    flex: 0 0 132px;
+    grid-column: auto;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .board-advanced-filters > summary {
+    min-height: 46px;
+    border: 1px solid var(--line-v2);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.92);
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .board-advanced-filters[open] {
+    flex-basis: min(82vw, 310px);
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .board-advanced-filter-grid {
+    position: static;
+    width: 100%;
+    grid-template-columns: 1fr;
+    margin-top: 6px;
+    padding: 6px;
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .board-advanced-filter-grid .filter-select {
+    width: 100%;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .row-counts {
+    display: none;
+  }
+
+  .valuation-app .search-filter-note,
+  .valuation-app .ranking-only-match {
+    margin-top: 8px;
+    border-radius: var(--radius-sm);
+  }
+
+  .valuation-app .lookup-board-market-grid,
+  .valuation-app .lookup-board-market-grid.has-market,
+  .valuation-app .lookup-board-market-grid.board-only {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-top: 8px;
+  }
+
+  .valuation-app .leaderboard-shell {
+    border-radius: var(--radius);
+    box-shadow: 0 12px 32px rgba(11, 32, 30, 0.09);
+  }
+
+  .valuation-app .leaderboard-head,
+  .valuation-app .lookup-board-market-grid .leaderboard-head {
+    display: none;
+  }
+
+  .valuation-app .leaderboard-row,
+  .valuation-app .lookup-board-market-grid .leaderboard-row {
+    grid-template-columns: 38px minmax(0, 1fr) 78px;
+    grid-template-rows: auto auto;
+    gap: 6px 9px;
+    min-height: 104px;
+    padding: 12px 11px;
+    outline: 0;
+  }
+
+  .valuation-app .leaderboard-row:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--accent), inset 4px 0 var(--accent);
+  }
+
+  .valuation-app .rank-chip {
+    grid-row: 1 / 3;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    align-self: center;
+    border-radius: 11px;
+  }
+
+  .valuation-app .player-chip,
+  .valuation-app .lookup-board-market-grid .leaderboard-row .player-chip {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    align-self: center;
+    gap: 4px;
+  }
+
+  .valuation-app .leaderboard-player-button,
+  .valuation-app .lookup-board-market-grid .leaderboard-player-button {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px;
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .valuation-app .leaderboard-player-button strong {
+    font-size: 0.96rem;
+    line-height: 1.15;
+  }
+
+  .valuation-app .leaderboard-player-button > span {
+    min-height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 7px;
+    font-size: 0.54rem;
+    white-space: nowrap;
+  }
+
+  .valuation-app .player-chip > small,
+  .valuation-app .sts-inline {
+    width: 100%;
+    overflow: hidden;
+    font-size: 0.61rem;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .sts-inline > span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .money-chip,
+  .valuation-app .lookup-board-market-grid .leaderboard-row .money-chip,
+  .valuation-app .value-signal-cell,
+  .valuation-app .lookup-board-market-grid .leaderboard-row .value-signal-cell {
+    width: auto;
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    justify-items: end;
+    align-content: center;
+    gap: 1px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    text-align: right;
+  }
+
+  .valuation-app .money-chip {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .valuation-app .value-signal-cell {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .valuation-app .mobile-cell-label {
+    display: block;
+    color: #7a8684;
+    font-size: 0.5rem;
+    font-weight: 850;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .valuation-app .money-chip strong {
+    font-size: 1rem;
+  }
+
+  .valuation-app .value-signal-cell strong {
+    color: var(--accent);
+    font-size: 0.8rem;
+  }
+
+  .valuation-app .money-chip small,
+  .valuation-app .value-signal-cell small,
+  .valuation-app .model-trust-cell {
+    display: none;
+  }
+
+  .valuation-app .board-empty {
+    min-height: 300px;
+    padding-bottom: 44px;
+  }
+
+  .valuation-app .price-workflow-shell {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .valuation-app .price-workflow-intro {
+    gap: 7px;
+    padding: 12px;
+    border-radius: var(--radius);
+  }
+
+  .valuation-app .price-workflow-intro > .workflow-kicker,
+  .valuation-app .price-workflow-intro > small,
+  .valuation-app .price-workflow-actions {
+    display: none;
+  }
+
+  .valuation-app .price-workflow-intro > strong {
+    font-size: 1.12rem;
+  }
+
+  .valuation-app .price-page-calculator {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 14px 12px;
+    border-radius: var(--radius);
+  }
+
+  .valuation-app .price-page-calculator .quick-price-title,
+  .valuation-app .price-page-calculator .quick-player-picker,
+  .valuation-app .price-page-calculator .quick-price-controls,
+  .valuation-app .price-page-calculator .quick-price-grid,
+  .valuation-app .price-page-calculator .quick-source-strip,
+  .valuation-app .price-page-calculator .quick-edge-strip,
+  .valuation-app .price-page-calculator .quick-scan-button {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .valuation-app .price-page-calculator .quick-price-title {
+    min-height: 74px;
+    align-items: center;
+  }
+
+  .valuation-app .price-page-calculator .quick-price-title h2 {
+    font-size: 2.65rem;
+    line-height: 0.95;
+  }
+
+  .valuation-app .price-page-calculator .quick-price-title small {
+    max-width: 210px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .price-page-calculator .quick-player-picker,
+  .valuation-app .price-page-calculator .quick-price-controls > label,
+  .valuation-app .price-page-calculator .quick-price-grid > div {
+    min-width: 0;
+    border-radius: 12px;
+  }
+
+  .valuation-app .price-page-calculator select,
+  .valuation-app .price-page-calculator input {
+    min-height: 40px;
+  }
+
+  .valuation-app .price-page-calculator .quick-player-picker,
+  .valuation-app .price-page-calculator .quick-price-controls > :first-child,
+  .valuation-app .price-page-calculator .quick-scan-button {
+    grid-column: 1 / -1;
+  }
+
+  .valuation-app .price-page-calculator .quick-price-controls,
+  .valuation-app .price-page-calculator .quick-price-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .valuation-app .price-page-calculator .quick-scan-button {
+    min-height: 52px;
+    font-size: 0.8rem;
+  }
+
+  .valuation-app .bin-radar {
+    border-radius: var(--radius);
+  }
+
+  .valuation-app .bin-radar-header {
+    padding: 14px 12px 9px;
+  }
+
+  .valuation-app .bin-radar-header > div:first-child {
+    min-width: 0;
+  }
+
+  .valuation-app .bin-radar-header h2 {
+    font-size: 1.22rem;
+  }
+
+  .valuation-app .bin-radar-header p {
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 0.69rem;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .bin-radar-pills {
+    width: 100%;
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+  }
+
+  .valuation-app .bin-radar-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .bin-radar-pills > span {
+    flex: 0 0 auto;
+  }
+
+  .valuation-app .bin-preset-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+    margin: 12px 12px 6px;
+  }
+
+  .valuation-app .bin-preset-head > div,
+  .valuation-app .bin-preset-head strong,
+  .valuation-app .bin-preset-head small {
+    min-width: 0;
+    position: static;
+    display: block;
+  }
+
+  .valuation-app .bin-preset-head > div > span {
+    color: var(--mint);
+    font-size: 0.59rem;
+    font-weight: 850;
+    text-transform: uppercase;
+  }
+
+  .valuation-app .bin-preset-head strong {
+    font-size: 0.9rem;
+    line-height: 1.2;
+  }
+
+  .valuation-app .bin-preset-head small {
+    margin-top: 2px;
+    font-size: 0.67rem;
+    line-height: 1.35;
+  }
+
+  .valuation-app .bin-preset-strip {
+    gap: 8px;
+    margin: 7px 12px 12px;
+    padding: 0 0 5px;
+    scroll-padding-left: 0;
+    scroll-snap-type: x mandatory;
+  }
+
+  .valuation-app .preset-scan-card,
+  .valuation-app .preset-scan-card.primary-preset {
+    flex: 0 0 min(78vw, 285px);
+    min-height: 76px;
+    padding: 12px;
+    border-radius: 13px;
+    scroll-snap-align: start;
+  }
+
+  .valuation-app .preset-scan-card strong {
+    font-size: 0.88rem;
+  }
+
+  .valuation-app .bin-advanced-controls {
+    margin-inline: 12px;
+    border-radius: 13px;
+  }
+
+  .valuation-app .bin-advanced-controls > summary {
+    min-height: 48px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: center;
+    gap: 3px;
+    padding-inline: 12px;
+    color: rgba(255, 255, 255, 0.78);
+    background: rgba(255, 255, 255, 0.045);
+  }
+
+  .valuation-app .bin-advanced-controls > summary strong,
+  .valuation-app .bin-advanced-controls > summary span {
+    color: inherit;
+  }
+
+  .valuation-app .bin-advanced-controls > summary > span {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 820;
+  }
+
+  .valuation-app .bin-advanced-controls > summary > small {
+    display: block;
+    padding-left: 23px;
+    color: rgba(255, 255, 255, 0.48);
+    font-size: 0.63rem;
+    line-height: 1.25;
+  }
+
+  .valuation-app .bin-advanced-controls[open] > summary {
+    color: #ffffff;
+    background: rgba(152, 224, 208, 0.09);
+  }
+
+  .valuation-app .bin-control-board {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .valuation-app .bin-opportunity-list {
+    margin: 0 12px 12px;
+  }
+
+  .valuation-app .live-market-map,
+  .valuation-app .lookup-board-market-grid .live-market-map.compact {
+    border-radius: var(--radius);
+  }
+
+  .valuation-app .live-market-map-head {
+    gap: 8px;
+  }
+
+  .valuation-app .live-market-map-head h2,
+  .valuation-app .lookup-board-market-grid .live-market-map.compact .live-market-map-head h2 {
+    font-size: 1.32rem;
+    line-height: 1.05;
+  }
+
+  .valuation-app .live-market-map-head small {
+    font-size: 0.68rem;
+    line-height: 1.35;
+  }
+
+  .valuation-app .live-mobile-opportunity-list {
+    gap: 7px;
+  }
+
+  .valuation-app .live-mobile-opportunity-row {
+    min-height: 86px;
+    grid-template-columns: 34px minmax(0, 1fr) 68px;
+    gap: 8px;
+    padding: 10px 9px;
+    border-radius: 13px;
+    box-shadow: none;
+  }
+
+  .valuation-app .live-mobile-copy strong {
+    font-size: 0.9rem;
+  }
+
+  .valuation-app .live-mobile-copy small {
+    display: -webkit-box;
+    max-height: 2.5em;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .valuation-app .live-mobile-metrics {
+    display: none;
+  }
+
+  .valuation-app .case-hit-page-head,
+  .valuation-app .sealed-wax-desk,
+  .valuation-app .health-workflow-shell,
+  .valuation-app .case-hit-lens-board,
+  .valuation-app .case-hit-model-board,
+  .valuation-app .wax-command-center,
+  .valuation-app .wax-value-console,
+  .valuation-app .wax-panel,
+  .valuation-app .wax-results-panel,
+  .valuation-app .observability-board {
+    border-radius: var(--radius);
+  }
+
+  .valuation-app .wax-command-center {
+    padding: 14px 12px;
+  }
+
+  .valuation-app .wax-command-center h2 {
+    font-size: 1.62rem;
+    line-height: 1.04;
+  }
+
+  .valuation-app .wax-command-center p {
+    font-size: 0.73rem;
+    line-height: 1.42;
+  }
+
+  .valuation-app .wax-command-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .valuation-app .wax-command-metrics > span {
+    min-width: 0;
+    padding: 10px 8px;
+  }
+
+  .valuation-app .wax-command-metrics strong {
+    font-size: 0.94rem;
+  }
+
+  .valuation-app .wax-command-metrics small,
+  .valuation-app .wax-command-metrics em {
+    overflow: hidden;
+    font-size: 0.52rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .operations-drawer {
+    margin-top: 10px;
+    border-radius: var(--radius);
+  }
+
+  .valuation-app :is(button, a, summary, input, select):focus-visible {
+    outline: 3px solid rgba(201, 242, 95, 0.72);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes backstop-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 

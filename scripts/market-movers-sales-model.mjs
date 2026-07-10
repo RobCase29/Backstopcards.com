@@ -1,4 +1,5 @@
 import { detectOfficial2026BowmanFamily } from './bowman-2026-official.mjs'
+import { canonicalizeBowman2026AutoVariation } from '../shared/bowman2026Taxonomy.js'
 
 const ONE_DAY_MS = 86_400_000
 const LOGO_FOIL_PATTERN = /\blogo\s+foil(?:\s+pattern)?\b|\bbowman\s+logo\s+pattern\b|\bNL\/AL\s+logo\s+foil\b/i
@@ -220,7 +221,7 @@ function detectVariation(title, flags) {
   if (flags.isAftermarketAuto) return 'Hand Signed Auto'
   if (LOGO_FOIL_PATTERN.test(title)) return 'Logo Foil Pattern'
   if (ETCHED_IN_GLASS_PATTERN.test(title)) return 'Etched In Glass'
-  if (/\bgold\s+ink\b/i.test(title)) return `Gold Image Variation${serialDenominator ? ` /${serialDenominator}` : ''}`
+  if (/\bgold\s+ink\b/i.test(title)) return `Gold Ink${serialDenominator ? ` /${serialDenominator}` : ''}`
   if (flags.isSnackPackAuto) return `${snackPackVariant(title)} Snack Pack /${serialDenominator ?? 5}`
 
   if (flags.insertName) {
@@ -372,10 +373,27 @@ export function normalizeMarketMoversSale(row, playerName, options = {}) {
     isSnackPackAuto,
   }
   const grade = gradeFromTitle(title)
-  const productFamily = officialFamily?.productFamily ?? detectProductFamily(title, isPaper, isAuto)
-  const variationLabel = detectVariation(title, flags)
-  const serialDenominator = serialDenominatorFromTitle(title) ?? inferredKnownDenominator(title, flags)
-  const reason = exclusionReason(flags)
+  const parsedProductFamily = officialFamily?.productFamily ?? detectProductFamily(title, isPaper, isAuto)
+  const parsedVariationLabel = detectVariation(title, flags)
+  const parsedSerialDenominator = serialDenominatorFromTitle(title) ?? inferredKnownDenominator(title, flags)
+  const flagshipCandidate = Boolean(
+    releaseYear === 2026 &&
+      isAuto &&
+      !isPaper &&
+      !insertName &&
+      !flags.isAftermarketAuto &&
+      !/\b(?:rookie\s+auto|rookie\s+autograph|CRA[-\s]?[A-Z0-9]+)\b/i.test(title),
+  )
+  const taxonomy = flagshipCandidate
+    ? canonicalizeBowman2026AutoVariation(title, { playerName, assumeAuto: true })
+    : null
+  const taxonomyReject = taxonomy && !taxonomy.modelEligible && taxonomy.status !== 'out-of-scope'
+    ? `2026 taxonomy ${taxonomy.status}: ${taxonomy.reasons.join('; ')}`
+    : null
+  const productFamily = taxonomy?.modelEligible ? 'Bowman Chrome' : parsedProductFamily
+  const variationLabel = taxonomy?.definition?.label ?? parsedVariationLabel
+  const serialDenominator = taxonomy?.definition?.serialDenominator ?? parsedSerialDenominator
+  const reason = exclusionReason(flags) ?? taxonomyReject
   const normalized = {
     itemId: String(row.itemId ?? ''),
     playerName,
@@ -410,6 +428,8 @@ export function normalizeMarketMoversSale(row, playerName, options = {}) {
     isLot: flags.isLot,
     modelEligible: !reason,
     exclusionReason: reason,
+    taxonomyStatus: taxonomy?.status ?? null,
+    taxonomyConfidence: taxonomy?.confidence ?? null,
   }
   return {
     ...normalized,
