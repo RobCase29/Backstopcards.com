@@ -22,6 +22,7 @@
     "checklist:firsts:waxpackhero": "node scripts/import-waxpackhero-first-bowman.mjs --seed-queue",
     "checklist:firsts:projection": "node scripts/first-bowman-base-auto-projection.mjs",
     "checklist:static-snapshot": "node scripts/export-static-checklist-snapshot.mjs",
+    "comps:hosted-bootstrap": "node scripts/export-hosted-comp-bootstrap.mjs",
     "comps:batch:market-movers": "node scripts/market-movers-comp-queue.mjs",
     "comps:queue:sync": "node scripts/market-movers-comp-queue.mjs --sync-complete",
     "comps:coverage": "node scripts/card-hedge-coverage-sync.mjs",

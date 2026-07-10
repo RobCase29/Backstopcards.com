@@ -1,7 +1,3 @@
-import consensusHittersCsv from '../data/sts_formulated_consensus_hitters.csv?raw'
-import consensusPitchersCsv from '../data/sts_formulated_consensus_pitchers.csv?raw'
-import oopsyPeakMlbCsv from '../data/sts_oopsy_peak_mlb.csv?raw'
-
 export type StsRankingSource = 'formulated-consensus' | 'legacy-leaderboard' | 'oopsy-peak-mlb'
 export type StsPopulation = 'hitter' | 'pitcher' | 'legacy' | 'mlb'
 
@@ -374,7 +370,7 @@ type LeaderboardState = {
 }
 
 let cachedLeaderboard: LeaderboardState | null = null
-let activeCsvInputs = [consensusHittersCsv, consensusPitchersCsv, oopsyPeakMlbCsv]
+let activeCsvInputs: string[] = []
 
 export function hydrateStsLeaderboard(csvInputs: string[]) {
   const validInputs = csvInputs.filter((input) => input.trim())

@@ -85,7 +85,7 @@ import {
   scoreStsMomentum,
 } from './lib/stsRankings'
 import { compareTeamLabels, normalizeTeamCode, teamDisplayName } from './lib/teams'
-import { fetchCardHedgeStatus, type CardHedgeStatus } from './lib/cardHedge'
+import { fetchCardHedgeStatus, refreshHostedCardHedgeComps, type CardHedgeStatus } from './lib/cardHedge'
 import { fetchRankingsData, fetchRankingsStatus, refreshRankings, type RankingsData, type RankingsStatus } from './lib/rankings'
 import {
   CASE_HIT_FAMILIES,
@@ -895,12 +895,15 @@ function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlay
   return {
     ...row,
     baseTwmaPrice: soldBase,
+    basePriceSource: 'weighted-sales' as const,
+    baseConfidence: Math.min(0.98, 0.52 + Math.log1p(baseAutoBucket.saleCount ?? 0) * 0.12),
     baseSales: baseAutoBucket.saleCount ?? row.baseSales,
     rawBaseSales: baseAutoBucket.saleCount ?? row.rawBaseSales,
     baseSales30: baseAutoBucket.sales30 ?? row.baseSales30,
     baseSales90: baseAutoBucket.sales90 ?? row.baseSales90,
     baseAuctionSales: baseAutoBucket.auctionCount ?? row.baseAuctionSales,
     baseBinSales: baseAutoBucket.binCount ?? row.baseBinSales,
+    baseEffectiveSales: baseAutoBucket.saleCount ?? row.baseEffectiveSales,
     latestBaseSaleAt: baseAutoBucket.latestSoldAt ?? row.latestBaseSaleAt,
     baseMethod: 'Sold comp base',
     topVariationPrice: ladder.reduce((best, quote) => Math.max(best, quote.price), soldBase),
@@ -2680,14 +2683,18 @@ function ObservabilityBoard({
   error,
   onRefresh,
   onRefreshRankings,
+  onRefreshComps,
   rankingsRefreshing,
+  compsRefreshing,
 }: {
   snapshot: ObservabilitySnapshot | null
   loading: boolean
   error: string | null
   onRefresh: () => void
   onRefreshRankings: () => void
+  onRefreshComps: () => void
   rankingsRefreshing: boolean
+  compsRefreshing: boolean
 }) {
   const [now, setNow] = useState(0)
   useEffect(() => {
@@ -2701,14 +2708,26 @@ function ObservabilityBoard({
   const checklist = snapshot?.checklist
   const cardHedge = snapshot?.cardHedge
   const ranking = snapshot?.ranking
-  const queuePending = checklist?.queue?.find((row) => row.status === 'queued')?.players ?? 0
-  const queueDone = checklist?.queue?.find((row) => row.status === 'done')?.players ?? 0
+  const checklistQueuePending = checklist?.queue?.find((row) => row.status === 'queued')?.players ?? 0
+  const checklistQueueDone = checklist?.queue?.find((row) => row.status === 'done')?.players ?? 0
+  const hostedQueue = sales?.hosted?.queue ?? []
+  const compQueuePending = hostedQueue
+    .filter((row) => row.status !== 'done')
+    .reduce((sum, row) => sum + row.players, 0)
+  const compQueueDone = hostedQueue.find((row) => row.status === 'done')?.players ?? sales?.playerCount ?? 0
+  const compCoverageTarget = sales?.hosted?.queueSeeds ?? compQueueDone + compQueuePending
+  const compRunError = sales?.hosted?.latestRun?.error?.trim() ?? ''
   const confirmedFirstPlayers = checklist?.firstStatuses?.find((row) => row.status === 'confirmed_1st')?.players ?? 0
-  const salesUpdatedAt = latestIso([sales?.canonical?.updatedAt, sales?.generatedAt, sales?.raw?.latestImportedAt])
+  const salesUpdatedAt = latestIso([
+    sales?.canonical?.updatedAt,
+    sales?.generatedAt,
+    sales?.raw?.latestImportedAt,
+    sales?.hosted?.latestRun?.completedAt,
+  ])
   const salesTone = sales?.available ? freshnessTone(salesUpdatedAt, 24, 48) : ('offline' as FreshnessTone)
   const liveTone = live?.freshSnapshots ? freshnessTone(live.latestObservedAt, 24, 48) : ('empty' as FreshnessTone)
   const rankingTone = ranking?.rows ? freshnessTone(ranking.latestUpdated, 24, 48) : ('empty' as FreshnessTone)
-  const checklistTone: FreshnessTone = !checklist?.available ? 'offline' : queuePending > 0 ? 'watch' : 'fresh'
+  const checklistTone: FreshnessTone = !checklist?.available ? 'offline' : 'fresh'
   const cardHedgeRemainingDay = cardHedge?.usage?.remainingDay ?? 0
   const cardHedgeTone: FreshnessTone = !cardHedge?.configured
     ? 'offline'
@@ -2729,8 +2748,12 @@ function ObservabilityBoard({
       key: 'sales',
       label: 'Sold Model',
       value: statusLabel[salesTone],
-      metric: `${(sales?.canonical?.summarizedSales ?? sales?.modeledSales ?? 0).toLocaleString()} comps`,
-      sub: `${(sales?.canonical?.cards ?? sales?.bucketCount ?? 0).toLocaleString()} lanes / ${ageLabel(salesUpdatedAt, now)}`,
+      metric: compCoverageTarget
+        ? `${(sales?.playerCount ?? 0).toLocaleString()} / ${compCoverageTarget.toLocaleString()} players`
+        : `${(sales?.canonical?.summarizedSales ?? sales?.modeledSales ?? 0).toLocaleString()} comps`,
+      sub: sales?.hosted
+        ? `${sales.hosted.freshCompLanes.toLocaleString()} fresh comp lanes / ${compQueuePending.toLocaleString()} queued`
+        : `${(sales?.canonical?.cards ?? sales?.bucketCount ?? 0).toLocaleString()} lanes / ${ageLabel(salesUpdatedAt, now)}`,
       tone: salesTone,
       critical: true,
       values: [
@@ -2755,10 +2778,10 @@ function ObservabilityBoard({
       label: 'Checklist',
       value: statusLabel[checklistTone],
       metric: `${(checklist?.universe?.total ?? checklist?.cards?.total ?? 0).toLocaleString()} cards`,
-      sub: `${confirmedFirstPlayers.toLocaleString()} confirmed 1sts / ${queuePending.toLocaleString()} queued`,
+      sub: `${confirmedFirstPlayers.toLocaleString()} confirmed 1sts / ${checklistQueuePending.toLocaleString()} pending review`,
       tone: checklistTone,
-      critical: queuePending > 0,
-      values: [checklist?.cards?.total ?? 0, checklist?.universe?.total ?? 0, queueDone, queuePending],
+      critical: false,
+      values: [checklist?.cards?.total ?? 0, checklist?.universe?.total ?? 0, checklistQueueDone, checklistQueuePending],
     },
     {
       key: 'rankings',
@@ -2791,7 +2814,8 @@ function ObservabilityBoard({
     rankingTone !== 'fresh' ? `Rankings ${ageLabel(ranking?.latestUpdated, now)}: refresh` : '',
     salesTone !== 'fresh' ? `Sold model ${ageLabel(salesUpdatedAt, now)}` : '',
     !live?.freshSnapshots ? 'Run market scan' : liveTone !== 'fresh' ? `Market scan ${ageLabel(live.latestObservedAt, now)}` : '',
-    queuePending > 0 ? `${queuePending.toLocaleString()} queued comps` : '',
+    compQueuePending > 0 ? `${compQueuePending.toLocaleString()} players awaiting fresh comps` : '',
+    compRunError ? `Comp sync needs attention: ${cleanModelLanguage(compRunError).slice(0, 120)}` : '',
     sales?.cleanup?.bucketOverrides ? `${sales.cleanup.bucketOverrides.toLocaleString()} bucket fixes` : '',
     sales?.cleanup?.flaggedRows ? `${sales.cleanup.flaggedRows.toLocaleString()} flagged sales` : '',
   ].filter(Boolean)
@@ -2817,6 +2841,10 @@ function ObservabilityBoard({
           {snapshot ? <small>Checked {ageLabel(snapshot.checkedAt, now)} / 24h target for comps, market, and rankings</small> : null}
         </div>
         <div className="observability-actions">
+          <button className="ghost-button" type="button" onClick={onRefreshComps} disabled={compsRefreshing || !cardHedge?.configured}>
+            <RefreshCw size={15} className={compsRefreshing ? 'spin' : undefined} />
+            Refresh comps
+          </button>
           <button className="ghost-button" type="button" onClick={onRefreshRankings} disabled={rankingsRefreshing || !ranking?.refreshable}>
             <RefreshCw size={15} className={rankingsRefreshing ? 'spin' : undefined} />
             Refresh rankings
@@ -2858,6 +2886,8 @@ function Leaderboard({
   selectedId,
   onSelect,
   onScanPlayer,
+  onRefreshPlayer,
+  refreshingPlayerId,
   emptyTitle = 'No priced players loaded.',
   emptyText = 'Connect market data to load player base prices.',
 }: {
@@ -2866,6 +2896,8 @@ function Leaderboard({
   selectedId?: string
   onSelect: (rowId: string) => void
   onScanPlayer: (row: PricingRow) => void
+  onRefreshPlayer?: (row: PricingRow) => void
+  refreshingPlayerId?: string | null
   emptyTitle?: string
   emptyText?: string
 }) {
@@ -2892,6 +2924,7 @@ function Leaderboard({
         {rows.map((row, index) => {
           const displayRank = rankById?.get(row.id) ?? index + 1
           const hasModel = rowHasModel(row)
+          const refreshingModel = refreshingPlayerId === row.id
           const valueScore = scoreDynastyValueOpportunity(row)
           const impliedBase = impliedDynastyBasePrice(row)
           const valueGapPct = impliedBase > 0 && row.baseTwmaPrice > 0 ? impliedBase / row.baseTwmaPrice - 1 : null
@@ -2921,19 +2954,23 @@ function Leaderboard({
                 <button
                   className={`leaderboard-player-button ${hasModel ? '' : 'needs-model'}`}
                   type="button"
-                  disabled={!hasModel}
+                  disabled={refreshingModel || (!hasModel && !onRefreshPlayer)}
                   onClick={(event) => {
                     event.stopPropagation()
-                    if (!hasModel) return
                     onSelect(row.id)
-                    onScanPlayer(row)
+                    if (hasModel) onScanPlayer(row)
+                    else onRefreshPlayer?.(row)
                   }}
-                  aria-label={hasModel ? `Scan live listings for ${row.playerName}` : `${row.playerName} needs sold comps before deal scanning`}
+                  aria-label={
+                    hasModel
+                      ? `Scan live listings for ${row.playerName}`
+                      : `Build a sold comp model for ${row.playerName}`
+                  }
                 >
                   <strong>{row.playerName}</strong>
                   <span>
-                    <Radio size={12} />
-                    {hasModel ? 'Scan deals' : 'Needs comps'}
+                    {refreshingModel ? <RefreshCw size={12} className="spin" /> : hasModel ? <Radio size={12} /> : <Database size={12} />}
+                    {refreshingModel ? 'Building model' : hasModel ? 'Scan deals' : 'Build comps'}
                   </span>
                 </button>
                 <small>
@@ -4632,12 +4669,16 @@ function QuickPriceModule({
   onScanPlayer,
   pickerRows,
   onPickRow,
+  onRefreshPlayer,
+  refreshState,
   className,
 }: {
   row?: PricingRow
   onScanPlayer: (row: PricingRow) => void
   pickerRows?: PricingRow[]
   onPickRow?: (rowId: string) => void
+  onRefreshPlayer?: (row: PricingRow) => void
+  refreshState?: { rowId: string; status: 'loading' | 'success' | 'missing' | 'error'; message: string } | null
   className?: string
 }) {
   const [cardInput, setCardInput] = useState<{
@@ -4670,6 +4711,8 @@ function QuickPriceModule({
   const canPickPlayer = Boolean(calculatorPickerRows.length > 1 && onPickRow)
 
   if (!rowHasModel(activeRow)) {
+    const activeRefreshState = refreshState?.rowId === activeRow.id ? refreshState : null
+    const refreshing = activeRefreshState?.status === 'loading'
     return (
       <section className={`detail-card quick-price-card quick-price-card--missing-model ${className ?? ''}`.trim()}>
         <div className="detail-title quick-price-title">
@@ -4698,7 +4741,18 @@ function QuickPriceModule({
         <div className="empty-state compact">
           <Database size={22} />
           <strong>No verified base-auto comps yet.</strong>
-          <span>Choose a covered player above, or return once recent sold data has been added to this lane.</span>
+          <span>Build this player now from structured sold data, or choose a covered player above.</span>
+          {onRefreshPlayer ? (
+            <button className="primary-button" type="button" disabled={refreshing} onClick={() => onRefreshPlayer(activeRow)}>
+              <RefreshCw size={16} className={refreshing ? 'spin' : undefined} />
+              {refreshing ? 'Finding sold comps...' : 'Build comp model'}
+            </button>
+          ) : null}
+          {activeRefreshState && activeRefreshState.status !== 'loading' ? (
+            <small className={`comp-refresh-feedback ${activeRefreshState.status}`} role={activeRefreshState.status === 'error' ? 'alert' : 'status'}>
+              {activeRefreshState.message}
+            </small>
+          ) : null}
         </div>
       </section>
     )
@@ -8388,6 +8442,13 @@ function App() {
   const [marlinsSuperfractorLoading, setMarlinsSuperfractorLoading] = useState(false)
   const [marlinsSuperfractorError, setMarlinsSuperfractorError] = useState<string | null>(null)
   const [rankingsRefreshing, setRankingsRefreshing] = useState(false)
+  const [compsRefreshing, setCompsRefreshing] = useState(false)
+  const [compRefreshState, setCompRefreshState] = useState<{
+    rowId: string
+    status: 'loading' | 'success' | 'missing' | 'error'
+    message: string
+  } | null>(null)
+  const [compDatasetVersion, setCompDatasetVersion] = useState(0)
   const [rankingsDatasetVersion, setRankingsDatasetVersion] = useState(0)
   const checklistRequestRef = useRef<AbortController | null>(null)
   const coverageRequestRef = useRef<AbortController | null>(null)
@@ -8401,6 +8462,8 @@ function App() {
   const waxRequestRef = useRef<AbortController | null>(null)
   const salesCacheRequestRef = useRef<AbortController | null>(null)
   const activeSalesCacheRequestRef = useRef<AbortController | null>(null)
+  const boardSalesCacheRequestRef = useRef<AbortController | null>(null)
+  const boardSalesCacheAttemptedRef = useRef(new Set<string>())
   const dealResultsRef = useRef<HTMLDivElement | null>(null)
 
   const revealDealResults = useCallback(() => {
@@ -8577,6 +8640,57 @@ function App() {
     }
   }, [applyRankingsData, refreshObservability])
 
+  const handleRefreshComps = useCallback(async () => {
+    setCompsRefreshing(true)
+    setObservabilityError(null)
+    try {
+      const result = await refreshHostedCardHedgeComps()
+      if (!result.ok) throw new Error(result.error || 'Comp refresh did not complete')
+      boardSalesCacheAttemptedRef.current.clear()
+      setActiveSalesCacheModels({})
+      setSalesCacheModel(null)
+      setCompDatasetVersion((version) => version + 1)
+      await refreshObservability()
+    } catch (error) {
+      setObservabilityError(cleanModelLanguage(error instanceof Error ? error.message : 'Comp refresh failed'))
+    } finally {
+      setCompsRefreshing(false)
+    }
+  }, [refreshObservability])
+
+  const handleRefreshPlayerComp = useCallback(
+    async (row: PricingRow) => {
+      setCompRefreshState({ rowId: row.id, status: 'loading', message: `Finding recent sold comps for ${row.playerName}...` })
+      setObservabilityError(null)
+      try {
+        const result = await refreshHostedCardHedgeComps({ playerName: row.playerName, releaseYear: row.releaseYear })
+        if (!result.ok) throw new Error(result.error || 'Comp refresh did not complete')
+
+        const refreshed = await fetchSalesCachePlayer(row.playerName)
+        const matchingBase = soldBaseBucketForRow(row, refreshed)
+        if (refreshed.available) {
+          setActiveSalesCacheModels((current) => ({ ...current, [salesCacheRecordKey(refreshed.playerName)]: refreshed }))
+          if (selectedRowId === row.id) setSalesCacheModel(refreshed)
+        }
+        boardSalesCacheAttemptedRef.current.delete(salesCacheRecordKey(row.playerName))
+        setCompDatasetVersion((version) => version + 1)
+        setCompRefreshState({
+          rowId: row.id,
+          status: matchingBase ? 'success' : 'missing',
+          message: matchingBase
+            ? `${matchingBase.saleCount.toLocaleString()} sold comps modeled at ${money(matchingBase.modelPrice)}.`
+            : 'No trustworthy flagship base-auto match was found yet. The player remains in the retry queue.',
+        })
+        await refreshObservability()
+      } catch (error) {
+        const message = cleanModelLanguage(error instanceof Error ? error.message : 'Comp refresh failed')
+        setCompRefreshState({ rowId: row.id, status: 'error', message })
+        setObservabilityError(message)
+      }
+    },
+    [refreshObservability, selectedRowId],
+  )
+
   useEffect(() => {
     let active = true
     const catalogController = new AbortController()
@@ -8642,8 +8756,16 @@ function App() {
             : current,
         )
       })
-      .catch(() => {
-        // Bundled ranking data remains active if the live ranking bundle is unavailable.
+      .catch(async () => {
+        if (!active || rankingsController.signal.aborted) return
+        try {
+          const { STS_FALLBACK_CSV_INPUTS } = await import('./lib/stsFallback')
+          if (hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)) {
+            setRankingsDatasetVersion((version) => version + 1)
+          }
+        } catch {
+          // The value board remains usable without ranking enrichment.
+        }
       })
     const modelTimer = window.setTimeout(() => {
       void (async () => {
@@ -8679,6 +8801,7 @@ function App() {
       auctionRequestRef.current?.abort()
       caseHitRequestRef.current?.abort()
       salesCacheRequestRef.current?.abort()
+      boardSalesCacheRequestRef.current?.abort()
     }
   }, [])
 
@@ -8686,6 +8809,51 @@ function App() {
     void rankingsDatasetVersion
     return buildPricingMatrix(checklistModels)
   }, [checklistModels, rankingsDatasetVersion])
+  const hostedAdjustedRows = useMemo(
+    () =>
+      matrix.rows.map(
+        (row) => soldCacheAdjustedRow(row, activeSalesCacheModels[salesCacheRecordKey(row.playerName)] ?? null) ?? row,
+      ),
+    [activeSalesCacheModels, matrix.rows],
+  )
+  useEffect(() => {
+    void compDatasetVersion
+    const pendingNames = playerNamesForPricingRows(matrix.rows).filter((playerName) => {
+      const key = salesCacheRecordKey(playerName)
+      return key && !boardSalesCacheAttemptedRef.current.has(key)
+    })
+    if (!pendingNames.length) return
+
+    boardSalesCacheRequestRef.current?.abort()
+    const controller = new AbortController()
+    boardSalesCacheRequestRef.current = controller
+    for (const playerName of pendingNames) boardSalesCacheAttemptedRef.current.add(salesCacheRecordKey(playerName))
+
+    const batches: string[][] = []
+    for (let index = 0; index < pendingNames.length; index += 150) batches.push(pendingNames.slice(index, index + 150))
+    const hydrate = async () => {
+      for (let index = 0; index < batches.length; index += 3) {
+        if (controller.signal.aborted) return
+        const settled = await Promise.allSettled(
+          batches.slice(index, index + 3).map((batch) => fetchSalesCachePlayers(batch, controller.signal)),
+        )
+        if (controller.signal.aborted) return
+        const models = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value.players ?? [] : []))
+        if (models.length) {
+          const record = salesCacheModelsToRecord(models)
+          setActiveSalesCacheModels((current) => ({ ...current, ...record }))
+        }
+      }
+    }
+
+    void hydrate().finally(() => {
+      if (boardSalesCacheRequestRef.current === controller) boardSalesCacheRequestRef.current = null
+    })
+    return () => {
+      controller.abort()
+      if (boardSalesCacheRequestRef.current === controller) boardSalesCacheRequestRef.current = null
+    }
+  }, [compDatasetVersion, matrix.rows])
   const teamOptions = useMemo(() => buildTeamOptions(matrix.rows), [matrix.rows])
   const selectedTeamOption = useMemo(() => {
     if (teamFilter === 'all') return null
@@ -9096,22 +9264,24 @@ function App() {
 
   const trimmedQuery = query.trim()
   const filteredBoard = useMemo(() => {
-    const searchedRows = filterPricingRows(matrix.rows, query)
+    const searchedRows = filterPricingRows(hostedAdjustedRows, query)
     const rowsBeforeRank = searchedRows.filter((row) => {
       if (releaseFilter !== 'all' && row.release !== releaseFilter) return false
       if (categoryFilter !== 'all' && row.category !== categoryFilter) return false
       if (!rowMatchesTeam(row, teamFilter)) return false
-      if (!rowMatchesBaseFilter(row, baseSourceFilter)) return false
+      if (!trimmedQuery && !rowMatchesBaseFilter(row, baseSourceFilter)) return false
       return true
     })
-    const filteredRows = rowsBeforeRank.filter((row) => rowMatchesStsFilter(row, stsFilter))
+    const filteredRows = trimmedQuery ? rowsBeforeRank : rowsBeforeRank.filter((row) => rowMatchesStsFilter(row, stsFilter))
     const rankRelaxedForSearch =
-      trimmedQuery.length > 0 && stsFilter !== 'all' && filteredRows.length === 0 && rowsBeforeRank.length > 0
+      trimmedQuery.length > 0 &&
+      (stsFilter !== 'all' || baseSourceFilter !== 'all') &&
+      filteredRows.some((row) => !rowMatchesStsFilter(row, stsFilter) || !rowMatchesBaseFilter(row, baseSourceFilter))
     return {
-      rows: sortRows(rankRelaxedForSearch ? rowsBeforeRank : filteredRows, sortMode),
+      rows: sortRows(filteredRows, sortMode),
       rankRelaxedForSearch,
     }
-  }, [baseSourceFilter, categoryFilter, matrix.rows, query, releaseFilter, sortMode, stsFilter, teamFilter, trimmedQuery.length])
+  }, [baseSourceFilter, categoryFilter, hostedAdjustedRows, query, releaseFilter, sortMode, stsFilter, teamFilter, trimmedQuery])
   const visibleRows = filteredBoard.rows
   const rankRelaxedForSearch = filteredBoard.rankRelaxedForSearch
   const hasLeaderboardNarrowing =
@@ -9173,7 +9343,7 @@ function App() {
       controller.abort()
       if (salesCacheRequestRef.current === controller) salesCacheRequestRef.current = null
     }
-  }, [selectedRow?.playerName])
+  }, [compDatasetVersion, selectedRow?.playerName])
 
   const activeSalesCacheModel =
     selectedRow && salesCacheModel && salesCacheRecordKey(salesCacheModel.playerName) === salesCacheRecordKey(selectedRow.playerName)
@@ -10657,9 +10827,9 @@ function App() {
               <div className="search-filter-note">
                 <Search size={16} />
                 <div>
-                  <strong>Showing direct search matches outside the Rank filter.</strong>
+                  <strong>Showing direct matches outside model and rank filters.</strong>
                   <span>
-                    The board is still set to {STS_FILTER_LABELS[stsFilter]}, but search found priced card rows that would otherwise be hidden.
+                    Direct player search keeps set, family, and team context while revealing matching card rows that still need comps.
                   </span>
                 </div>
               </div>
@@ -10674,6 +10844,8 @@ function App() {
                 selectedId={selectedRow?.id}
                 onSelect={setSelectedRowId}
                 onScanPlayer={scanBinsForLookupRow}
+                onRefreshPlayer={(row) => void handleRefreshPlayerComp(row)}
+                refreshingPlayerId={compRefreshState?.status === 'loading' ? compRefreshState.rowId : null}
                 emptyTitle={checklistLoading ? 'Loading player models...' : trimmedQuery ? 'No modeled card match.' : undefined}
                 emptyText={
                   checklistLoading
@@ -10766,6 +10938,8 @@ function App() {
               onScanPlayer={scanBinsForLookupRow}
               pickerRows={quickPickerRows}
               onPickRow={setSelectedRowId}
+              onRefreshPlayer={(row) => void handleRefreshPlayerComp(row)}
+              refreshState={compRefreshState}
               className="price-page-calculator"
             />
           </div>
@@ -10839,16 +11013,6 @@ function App() {
               <small>
                 Freshness, source coverage, cache status, and API budget live here so the main buying workflow can stay focused.
               </small>
-              <div className="health-action-row">
-                <button className="primary-button" type="button" onClick={() => void handleRefreshRankings()} disabled={rankingsRefreshing}>
-                  <RefreshCw size={15} className={rankingsRefreshing ? 'spin' : undefined} />
-                  Refresh rankings
-                </button>
-                <button className="ghost-button" type="button" onClick={() => void refreshObservability()} disabled={observabilityLoading}>
-                  <RefreshCw size={15} className={observabilityLoading ? 'spin' : undefined} />
-                  Refresh status
-                </button>
-              </div>
             </div>
             <ObservabilityBoard
               snapshot={observability}
@@ -10856,7 +11020,9 @@ function App() {
               error={observabilityError}
               onRefresh={() => void refreshObservability()}
               onRefreshRankings={() => void handleRefreshRankings()}
+              onRefreshComps={() => void handleRefreshComps()}
               rankingsRefreshing={rankingsRefreshing}
+              compsRefreshing={compsRefreshing}
             />
             <section className="model-support-dock health-source-stack" aria-label="Data source stack">
               <div className="model-support-grid">
@@ -10935,7 +11101,9 @@ function App() {
             error={observabilityError}
             onRefresh={() => void refreshObservability()}
             onRefreshRankings={() => void handleRefreshRankings()}
+            onRefreshComps={() => void handleRefreshComps()}
             rankingsRefreshing={rankingsRefreshing}
+            compsRefreshing={compsRefreshing}
           />
         </details>
       ) : null}

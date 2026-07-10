@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import {
   findStsRanking,
+  hydrateStsLeaderboard,
   normalizeStsPlayerName,
   parseStsCsv,
   primaryStsRankLabel,
@@ -9,6 +10,11 @@ import {
   scoreStsRanking,
   scoreStsRiserValue,
 } from './stsRankings'
+import { STS_FALLBACK_CSV_INPUTS } from './stsFallback'
+
+beforeAll(() => {
+  hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)
+})
 
 describe('consensus rankings', () => {
   it('still parses quoted legacy rows without splitting records', () => {

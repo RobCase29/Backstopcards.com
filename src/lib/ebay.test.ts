@@ -1,6 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ChecklistModel } from '../types'
 import { fetchEbayAuctionListings, fetchEbayBinListings, isEbayRateLimitError } from './ebay'
+import { STS_FALLBACK_CSV_INPUTS } from './stsFallback'
+import { hydrateStsLeaderboard } from './stsRankings'
+
+beforeAll(() => {
+  hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)
+})
 
 const model: ChecklistModel = {
   category: 'bowman',

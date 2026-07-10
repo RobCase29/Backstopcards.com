@@ -4,6 +4,14 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { basename, dirname, resolve } from 'node:path'
+import {
+  hostedCompPlayerPayload,
+  hostedCompPlayersPayload,
+  hostedCompStatusPayload,
+  queueHostedCompPlayer,
+  runHostedCompRefresh,
+  type HostedCompSql,
+} from './hostedComps.js'
 
 const DEFAULT_SUPABASE_URL = 'https://rhlontbdiezpefgbbkql.supabase.co'
 const DEFAULT_SUPABASE_ANON_KEY =
@@ -5091,15 +5099,151 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
     }
 
     if (route === 'refresh') {
+      let targetedRefresh: { playerName: string; releaseYear: number } | null = null
       if (request.method === 'GET') {
         const secret = env.CRON_SECRET?.trim() || process.env.CRON_SECRET?.trim() || ''
         const authHeader = request.headers.get('authorization')
-        if (secret && authHeader !== `Bearer ${secret}`) return jsonResponse(401, { error: 'Unauthorized Card Hedge refresh' })
+        if (!secret || authHeader !== `Bearer ${secret}`) return jsonResponse(401, { error: 'Unauthorized Card Hedge refresh' })
       } else if (request.method === 'POST') {
         const unsafePost = rejectUnsafePost(request)
         if (unsafePost) return unsafePost
+        const payload = await readJsonBody<{ playerName?: unknown; releaseYear?: unknown }>(request)
+        const playerName = String(payload.playerName ?? '').replace(/\s+/g, ' ').trim()
+        const releaseYear = Number(payload.releaseYear ?? 0)
+        if (playerName || releaseYear) {
+          if (!playerName || !Number.isInteger(releaseYear)) {
+            return jsonResponse(400, { error: 'Targeted comp refresh requires playerName and releaseYear' })
+          }
+          targetedRefresh = { playerName, releaseYear }
+        }
       } else {
         return new Response(null, { status: 404 })
+      }
+
+      const neonSql = await getNeonSql(env)
+      if (neonSql) {
+        if (targetedRefresh) {
+          await queueHostedCompPlayer(neonSql as HostedCompSql, targetedRefresh.playerName, targetedRefresh.releaseYear)
+        }
+        const usagePayload = db
+          ? cardHedgeUsagePayload(db, env)
+          : redis
+            ? await cardHedgeRedisUsagePayload(redis, env)
+            : cardHedgeUsageFallback(env)
+        const availableMinute = Math.max(0, usagePayload.usage.remainingMinute)
+        const availableDay = Math.max(0, usagePayload.usage.remainingDay)
+        const configuredMaxCalls = Math.max(1, Number(env.CARD_HEDGE_REFRESH_MAX_CALLS ?? 0) || Math.floor(usagePayload.limits.perMinute * 0.8))
+        const callBudget = Math.max(0, Math.min(configuredMaxCalls, availableMinute, availableDay))
+        if (callBudget < 2) {
+          if (targetedRefresh) {
+            return jsonResponse(202, {
+              ok: true,
+              mode: 'hosted-comp-queued',
+              target: targetedRefresh,
+              runId: '',
+              durationMs: 0,
+              claimedPlayers: 0,
+              completedPlayers: 0,
+              matchedPlayers: 0,
+              missingPlayers: 0,
+              failedPlayers: 0,
+              compSalesUpserted: 0,
+              fmvCardsRefreshed: 0,
+              apiCalls: 0,
+              message: 'Comp refresh queued until API capacity is available.',
+              usageBackend,
+              limits: usagePayload.limits,
+              usage: usagePayload.usage,
+            })
+          }
+          return jsonResponse(429, {
+            error: 'Card Hedge refresh budget is temporarily exhausted.',
+            usageBackend,
+            limits: usagePayload.limits,
+            usage: usagePayload.usage,
+          })
+        }
+
+        const desiredPlayers = targetedRefresh
+          ? 1
+          : Math.max(0, Math.min(250, Number(env.CARD_HEDGE_REFRESH_MAX_PLAYERS ?? 180) || 180))
+        const reservedExportCalls = !targetedRefresh && eliteAccessExpected ? 1 : 0
+        const reservedFmvCalls = targetedRefresh
+          ? 0
+          : Math.max(1, Math.min(20, Math.floor((callBudget - reservedExportCalls) * 0.2)))
+        const taskCallBudget = Math.max(0, callBudget - reservedExportCalls - reservedFmvCalls)
+        const maxPlayers = Math.max(0, Math.min(desiredPlayers, taskCallBudget))
+        const maxFmvCards = Math.max(0, Math.min(2_000, reservedFmvCalls * 100))
+        const minimumDelayMs = Math.ceil(60_000 / Math.max(1, usagePayload.limits.perMinute))
+        let nextCallAt = 0
+
+        const requestCardHedge = async (endpoint: string, payload: Record<string, unknown>) => {
+          const delay = Math.max(0, nextCallAt - Date.now())
+          if (delay) await wait(delay)
+          nextCallAt = Date.now() + minimumDelayMs
+          const upstream = await fetch(`${CARD_HEDGE_API_BASE}${endpoint}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+              'X-API-Key': env.CARD_HEDGE_API_KEY ?? '',
+              'User-Agent': 'Backstop Card Finder hosted comp refresh',
+            },
+            body: JSON.stringify(payload),
+          })
+          const text = await upstream.text()
+          await recordCall(route, endpoint, upstream.status)
+          const parsed = parseJsonText(text, null)
+          if (!upstream.ok) {
+            const message =
+              parsed && typeof parsed === 'object' && 'error' in parsed
+                ? String((parsed as { error?: unknown }).error ?? '')
+                : text.slice(0, 500)
+            throw new ProxyRequestError(upstream.status, message || `Card Hedge ${endpoint} failed`)
+          }
+          return parsed
+        }
+
+        const fetchDailyExport = !targetedRefresh && eliteAccessExpected
+          ? async (date: string) => {
+              const endpoint = `/v1/download/daily-price-export/${date}`
+              const upstream = await fetch(`${CARD_HEDGE_API_BASE}${endpoint}`, {
+                headers: {
+                  Accept: 'text/csv',
+                  'X-API-Key': env.CARD_HEDGE_API_KEY ?? '',
+                  'User-Agent': 'Backstop Card Finder hosted daily export',
+                },
+              })
+              const text = await upstream.text()
+              await recordCall(route, endpoint, upstream.status)
+              if (!upstream.ok) throw new ProxyRequestError(upstream.status, text.slice(0, 500) || 'Card Hedge daily export failed')
+              return text
+            }
+          : undefined
+
+        const result = await runHostedCompRefresh({
+          sql: neonSql as HostedCompSql,
+          requestCardHedge,
+          fetchDailyExport,
+          maxPlayers,
+          maxTaskApiCalls: taskCallBudget,
+          maxFmvCards,
+          timeBudgetMs: targetedRefresh
+            ? Math.max(15_000, Number(env.CARD_HEDGE_TARGET_REFRESH_TIME_BUDGET_MS ?? 35_000) || 35_000)
+            : Math.max(30_000, Number(env.CARD_HEDGE_REFRESH_TIME_BUDGET_MS ?? 52_000) || 52_000),
+        })
+        const status = await hostedCompStatusPayload(neonSql as HostedCompSql)
+        return jsonResponse(result.ok ? 200 : 502, {
+          ...result,
+          mode: 'hosted-comp-refresh',
+          usageBackend,
+          callBudget,
+          maxPlayers,
+          maxFmvCards,
+          reservedExportCalls,
+          target: targetedRefresh,
+          hosted: status.hosted,
+        })
       }
 
       const endpoint = cardHedgeEndpoint('price-updates')
@@ -5128,7 +5272,7 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
 
       return jsonResponse(upstream.status, {
         ok: upstream.ok,
-        mode: 'price-updates',
+        mode: 'price-updates-fallback',
         usageBackend,
         since,
         nextCheckpoint,
@@ -6601,6 +6745,35 @@ export async function handleSalesCacheRoute(route: string, request: Request, env
     if (writeRoute) {
       const unsafePost = rejectUnsafePost(request)
       if (unsafePost) return unsafePost
+    }
+
+    if (!writeRoute) {
+      const neonSql = await getNeonSql(env)
+      if (neonSql) {
+        try {
+          if (route === 'status') {
+            return jsonResponse(200, await hostedCompStatusPayload(neonSql as HostedCompSql))
+          }
+          if (route === 'players') {
+            const params = new URL(request.url).searchParams
+            const requestedPlayers = [...params.getAll('player'), ...(params.get('players') ?? '').split(/[|,]/)]
+              .map((player) => player.trim())
+              .filter(Boolean)
+            if (!requestedPlayers.length) return jsonResponse(400, { error: 'At least one player is required' })
+            return jsonResponse(200, await hostedCompPlayersPayload(neonSql as HostedCompSql, requestedPlayers))
+          }
+          if (route === 'player') {
+            const player = new URL(request.url).searchParams.get('player')?.trim() ?? ''
+            if (!player) return jsonResponse(400, { error: 'Player is required' })
+            return jsonResponse(200, await hostedCompPlayerPayload(neonSql as HostedCompSql, player))
+          }
+        } catch (error) {
+          console.warn('[sales-cache] hosted comp read failed; trying local cache', {
+            route,
+            error: routeErrorMessage(error, 'Hosted comp read failed'),
+          })
+        }
+      }
     }
 
     const opened = await openSalesCacheDb(env)

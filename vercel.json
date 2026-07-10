@@ -6,7 +6,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/**/*.ts": {
-      "maxDuration": 60
+      "maxDuration": 120
     }
   },
   "crons": [
@@ -16,7 +16,7 @@
     },
     {
       "path": "/api/card-hedge/refresh",
-      "schedule": "20 9 * * *"
+      "schedule": "20 10 * * *"
     }
   ],
   "rewrites": [

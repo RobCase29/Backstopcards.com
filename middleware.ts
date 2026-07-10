@@ -13,6 +13,7 @@ declare const process: {
 
 const PUBLIC_PATHS = new Set(['/access.html', '/backstop-logo.jpeg', '/favicon.svg'])
 const PUBLIC_PREFIXES = ['/api/access-login', '/api/access-logout', '/api/access']
+const CRON_PATHS = new Set(['/api/rankings/refresh', '/api/card-hedge/refresh'])
 
 export const config = {
   matcher: ['/((?!_vercel/insights|_vercel/speed-insights).*)'],
@@ -40,6 +41,14 @@ function redirectToLogin(request: Request) {
 
 export default async function middleware(request: Request) {
   const url = new URL(request.url)
+  const cronSecret = (process.env.CRON_SECRET ?? '').trim()
+  const validCronRequest =
+    request.method === 'GET' &&
+    CRON_PATHS.has(url.pathname) &&
+    Boolean(cronSecret) &&
+    request.headers.get('authorization') === `Bearer ${cronSecret}`
+
+  if (validCronRequest) return
 
   if (!accessGateReady(process.env)) {
     if (isPublicPath(url.pathname)) return

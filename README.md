@@ -28,13 +28,13 @@ The scale path should stay intentionally simple:
 ```text
 Official checklists + Wax Pack Hero 1st lists
   -> checklist universe and card lanes
-  -> Card Hedge sold comps + local canonical comp cache
+  -> Card Hedge sold comps + hosted canonical comp cache
   -> base-auto anchors and variation fair values
   -> live marketplace scans (eBay + Fanatics Collect BINs; eBay auctions)
   -> opportunity board, live chart, reject/cleanup loop
 ```
 
-Card Hedge and the canonical comp cache are the pricing core. Live marketplace providers should only answer "what is active right now?" and raw query pages/snapshots are cached before scoring so multiple users do not repeat the same external calls. eBay Browse powers active BINs and auctions; Fanatics Collect uses its public search-key flow for active fixed-price listings without storing account credentials. The legacy checklist feed is no longer part of normal startup when local checklist data exists.
+Card Hedge and the canonical comp cache are the pricing core. Production models live in Neon and refresh independently of deployments; the local SQLite database is an offline research and taxonomy workbench. Live marketplace providers only answer "what is active right now?" and raw query pages/snapshots are cached before scoring so multiple users do not repeat the same external calls. eBay Browse powers active BINs and auctions; Fanatics Collect uses its public search-key flow for active fixed-price listings without storing account credentials. The legacy checklist feed is no longer part of normal startup when local checklist data exists.
 
 Subscription read: keep Card Hedge and eBay active. Market Movers is now a validation/taxonomy backup unless Card Hedge coverage proves weaker than expected. Fanatics Collect does not require stored login credentials for the current public fixed-price search path. The legacy checklist feed can be cancelled after local checklists and multipliers cover the releases you care about.
 
@@ -43,7 +43,9 @@ Subscription read: keep Card Hedge and eBay active. Market Movers is now a valid
 The production scale layer uses two small managed stores:
 
 - **Upstash Redis**: shared 24-hour cache for marketplace query pages and daily ranking refreshes. This protects eBay/Fanatics request budgets when multiple users scan the same player, set, or variation.
-- **Neon Postgres**: shared live-market snapshot store. Fresh BIN/auction scans survive Vercel function restarts and can hydrate the opportunity chart after reloads, but they expire automatically so stale active listings do not pollute sold-comp models.
+- **Neon Postgres**: durable sold comps, modeled player lanes, refresh queues and run telemetry, plus expiring live-market snapshots. Active listings and immutable sold evidence remain separate by design.
+
+Production comp freshness is a two-speed pipeline: the Card Hedge Elite daily export bulk-loads eligible Bowman base-auto sales once per UTC day, while targeted Card Hedge search/comps calls repair identity gaps and user-requested players immediately. Known Card Hedge card IDs skip repeat searches. See [`docs/HOSTED_COMPS_RUNBOOK.md`](docs/HOSTED_COMPS_RUNBOOK.md) for the freshness contract, safety rules, and recovery flow.
 
 Local development still falls back to the ignored SQLite files in `local-data/`. Production should set these Vercel environment variables:
 
@@ -51,6 +53,7 @@ Local development still falls back to the ignored SQLite files in `local-data/`.
 DATABASE_URL=your_neon_connection_string
 UPSTASH_REDIS_REST_URL=your_upstash_rest_url
 UPSTASH_REDIS_REST_TOKEN=your_upstash_rest_token
+CRON_SECRET=your_long_random_cron_secret
 ```
 
 If Vercel provisions the Redis integration with KV-compatible names, `KV_REST_API_URL` and `KV_REST_API_TOKEN` are accepted as aliases. Keep all of these server-side only.
@@ -107,6 +110,7 @@ EBAY_CLIENT_SECRET=your_ebay_client_secret
 EBAY_ENV=production
 EBAY_MARKETPLACE_ID=EBAY_US
 CARD_HEDGE_API_KEY=your_card_hedge_api_key
+CRON_SECRET=your_long_random_cron_secret
 DATABASE_URL=your_neon_connection_string
 UPSTASH_REDIS_REST_URL=your_upstash_rest_url
 UPSTASH_REDIS_REST_TOKEN=your_upstash_rest_token
@@ -265,13 +269,15 @@ CARD_HEDGE_RATE_LIMIT_PER_MINUTE=80
 CARD_HEDGE_DAILY_LIMIT=200000
 ```
 
-The local proxy exposes only app-safe routes under `/api/card-hedge/*`, tracks local usage in SQLite, and never returns the API key to the browser. Elite accounts can cache the daily price export locally:
+The server proxy exposes only app-safe routes under `/api/card-hedge/*`, tracks provider usage, and never returns the API key to the browser. Production ingests the Elite daily price export into Neon and uses direct search/comps calls only for targeted recovery. The bundled queue and lane seeds keep first deploys readable before the first hosted sync.
+
+For local research, Elite accounts can also cache the daily price export locally:
 
 ```bash
 npm run card-hedge:daily-export -- --date=2026-06-24
 ```
 
-Exports stream into `local-data/card-hedge/daily/` with a sidecar metadata file. This should become the bulk backbone for scale: daily export first, `/price-updates` for deltas, `/comps` and `/card-search` for targeted player/variation debugging, then `npm run canonical:rebuild` to fold clean comps into the stable card model.
+Exports stream into `local-data/card-hedge/daily/` with a sidecar metadata file. The hosted equivalent runs once per UTC day: export first, strict checklist/player/taxonomy filtering, item-level Neon upserts, affected-lane recomputation, then targeted `/comps` and `/card-search` repair for remaining gaps.
 
 For targeted player work, use Card Hedge search plus comps. This writes native Card Hedge source tables and still mirrors the same comp rows into the older sales/model cache for compatibility:
 
@@ -372,7 +378,7 @@ Eli Willits,285,455,Blue /150,2026 Bowman Chrome,https://example.com,0,
 
 ## Scoring
 
-The board is sorted by modeled base auto value by default and includes database-style search, set/category/source/consensus filters, and sort controls. Consensus-powered sorts include overall rank, prospect rank, dynasty score, value score, and BIN target score. Export writes the full long-form valuation ladder to CSV, including base source, confidence, 30/90-day sale counts, consensus ranks, and BIN target score.
+The board opens on the most underpriced decision-ready players: rank-implied base value is compared with the current sold-comp base, then tempered by model quality and ranking coverage. Search, team, set, model-quality, and rank filters can narrow that board without changing the underlying price evidence. Consensus-powered sorts include overall rank, prospect/MLB rank, dynasty score, value score, momentum, and BIN target score. Export writes the long-form valuation ladder with price source, sale depth, ranking context, and deal-target fields.
 
 The live BIN radar ranks fetched listings by raw dollar spread, but it is now downstream of the model. Unsupported players, wrong-set matches, and adjacent product families are excluded instead of being modeled from broad search noise.
 

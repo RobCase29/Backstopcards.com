@@ -148,6 +148,27 @@ export type CardHedgeFmvBatchResponse = {
   total_successful: number
 }
 
+export type CardHedgeHostedRefreshResponse = {
+  ok: boolean
+  mode: string
+  runId: string
+  durationMs: number
+  claimedPlayers: number
+  completedPlayers: number
+  matchedPlayers: number
+  missingPlayers: number
+  failedPlayers: number
+  compSalesUpserted: number
+  fmvCardsRefreshed: number
+  dailyExportDate?: string
+  dailyExportRows?: number
+  dailyExportMatchedPlayers?: number
+  dailyExportMatchedSales?: number
+  dailyExportError?: string
+  apiCalls: number
+  error?: string
+}
+
 async function parseCardHedgeResponse<T>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => null)) as ({ error?: string } & T) | null
   if (!response.ok) throw new Error(payload?.error ?? `Card Hedge request failed (${response.status})`)
@@ -175,6 +196,13 @@ export async function fetchCardHedgeStatus(signal?: AbortSignal) {
     signal,
   })
   return parseCardHedgeResponse<CardHedgeStatus>(response)
+}
+
+export function refreshHostedCardHedgeComps(
+  target?: { playerName: string; releaseYear: number },
+  signal?: AbortSignal,
+) {
+  return postCardHedge<CardHedgeHostedRefreshResponse>('refresh', target ?? {}, signal)
 }
 
 export function searchCardHedgeCards(

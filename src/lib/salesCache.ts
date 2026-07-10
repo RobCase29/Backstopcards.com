@@ -81,6 +81,7 @@ export type SalesCacheSale = {
   erroneous: boolean
   erroneousNote: string
   flagUpdatedAt: string
+  saleUrl?: string
 }
 
 export type SalesCachePlayerModel = {
@@ -141,6 +142,31 @@ export type SalesCacheStatus = {
     flaggedRows: number
     bucketOverrides: number
     latestOverrideAt: string
+  }
+  hosted?: {
+    queueSeeds: number
+    laneSeeds: number
+    freshFmvLanes: number
+    freshCompLanes: number
+    queue: Array<{ status: string; players: number }>
+    latestRun: {
+      runId?: string
+      status?: string
+      startedAt?: string
+      completedAt?: string
+      claimedPlayers?: number
+      completedPlayers?: number
+      matchedPlayers?: number
+      missingPlayers?: number
+      failedPlayers?: number
+      compSalesUpserted?: number
+      fmvCardsRefreshed?: number
+      dailyExportDate?: string
+      dailyExportRows?: number
+      dailyExportMatchedSales?: number
+      apiCalls?: number
+      error?: string
+    } | null
   }
 }
 

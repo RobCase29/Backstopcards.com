@@ -5924,14 +5924,6 @@ button.sales-bucket-tile {
   line-height: 1.4;
 }
 
-.valuation-app .health-action-row {
-  grid-column: 2;
-  grid-row: 1 / span 3;
-  display: grid;
-  gap: 8px;
-  min-width: 210px;
-}
-
 .valuation-app .health-source-stack {
   margin-top: 0;
 }
@@ -6143,11 +6135,6 @@ button.sales-bucket-tile {
     grid-template-columns: 1fr;
   }
 
-  .valuation-app .health-action-row {
-    grid-column: auto;
-    grid-row: auto;
-    min-width: 0;
-  }
 }
 
 @media (max-width: 480px) {
@@ -12331,11 +12318,6 @@ button.sales-bucket-tile {
     grid-template-columns: 1fr;
   }
 
-  .valuation-app .health-action-row {
-    grid-column: 1;
-    grid-row: auto;
-    min-width: 0;
-  }
 }
 
 /* Product trust layer: compact evidence and next action on the daily board. */
@@ -15198,6 +15180,28 @@ button.sales-bucket-tile {
   min-height: 0;
   min-width: 0;
   padding: 16px;
+}
+
+.valuation-app .price-page-calculator.quick-price-card--missing-model .empty-state.compact .primary-button {
+  width: min(100%, 260px);
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.valuation-app .comp-refresh-feedback {
+  width: min(100%, 420px);
+  color: var(--muted);
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.valuation-app .comp-refresh-feedback.success {
+  color: var(--positive);
+}
+
+.valuation-app .comp-refresh-feedback.error {
+  color: var(--negative);
 }
 
 .valuation-app .price-page-calculator .quick-price-title h2.quick-price-missing {

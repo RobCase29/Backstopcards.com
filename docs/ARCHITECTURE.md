@@ -17,8 +17,9 @@ Anything that does not directly support those jobs should live in an operations 
 ```text
 Official checklists + Wax Pack Hero 1st lists
   -> checklist universe and card lanes
-  -> Card Hedge sold comps
-  -> canonical sold-comp cache
+  -> Card Hedge Elite daily export (broad discovery)
+  -> Card Hedge targeted search + comps (precision fallback)
+  -> Neon canonical hosted comp lanes + refresh queue
   -> base-auto anchors and variation fair values
   -> live marketplace scans
      -> eBay Browse active BIN/auction scans today
@@ -33,9 +34,9 @@ Official checklists + Wax Pack Hero 1st lists
 - eBay Browse: active BIN and auction discovery today.
 - Fanatics Collect: active fixed-price card discovery through the public search-key + Algolia path; no account login should be stored.
 - Scout the Statline snapshots: value-board ranking, trend, and coverage context.
-- Local canonical SQLite cache: durable modeling layer and cleanup memory.
+- Neon Postgres: production sold-comp lanes, item-level comp history, refresh queue, live snapshots, rejects, and cleanup memory.
+- Local canonical SQLite cache: development/import tooling and offline fallback.
 - Upstash Redis: hosted shared cache for repeated marketplace pages and ranking refreshes.
-- Neon Postgres: hosted live-market snapshot store for short-lived active listings.
 
 ### Optional / Fallback
 
@@ -47,12 +48,15 @@ Official checklists + Wax Pack Hero 1st lists
 
 Sold comps are immutable enough to store permanently. Live listings are not.
 
-- Canonical sold comps are stored locally and rebuilt into stable card lanes.
+- Production canonical sold comps are stored in Neon and update independently of deployments.
+- Card Hedge's Elite daily export is filtered through the official queued player universe and strict flagship-base-auto taxonomy before any row is accepted.
+- Known Card Hedge card IDs refresh directly; unknown players use the more expensive search-plus-comps path only until identity is established.
+- Batch FMV is corroborating evidence. Direct sold comps lead when sample depth is healthy; correlated/segment estimates never silently override them.
 - Fixed-price live marketplace query pages are cached for 24 hours when the provider supports stable query reuse.
 - Auction/live-bid query pages are cached briefly because bids and end times move.
 - Production stores reusable marketplace query pages in Upstash Redis before mapping/scoring.
 - Production stores live opportunity snapshots in Neon as observations, but every listing needs freshness metadata and should be treated as stale quickly.
-- Local development may fall back to ignored SQLite files when hosted services are not configured.
+- Local development and disaster recovery may fall back to ignored SQLite files and the generated static snapshot.
 - User rejects and bucket merges are cleanup signal, not throwaway UI state.
 
 ## Modeling Policy
@@ -76,6 +80,7 @@ The value board should use current base-auto price against rank-implied base pri
 - Hosted scans should check Redis before spending marketplace API requests and should write fresh snapshots to Neon after scoring.
 - Classification fixes should be encoded as parser rules or bucket overrides after repeated misses.
 - Rankings refresh through the hosted `/api/rankings/refresh` cron path and persist to Redis or Vercel Runtime Cache. Bundled CSV files are fallback snapshots, not the production write target.
+- Vercel Hobby runs one authenticated daily comp cron. On-demand player refreshes use the same durable queue, and a future worker can increase cadence without changing the data contract.
 
 ## Subscription Decisions
 
@@ -86,5 +91,5 @@ For the current architecture, Card Hedge and eBay are the important paid/credent
 1. Promote the shared marketplace listing model so eBay, Fanatics Collect, COMC, and future sources use the same query/result contract.
 2. Rename `/api/sales-cache` and `salesCache` internals to canonical sold model while preserving backward-compatible routes.
 3. Split the case-hit lab, sealed wax page, and sales model lab into lazily loaded modules.
-4. Add a scheduled Card Hedge refresh pipeline that writes canonical rows without manual browser capture.
-5. Add an admin-only source health page for cache hit rate, marketplace saved calls, and stale lanes.
+4. Add an admin-only operations page for export status, queue age, parser exceptions, cache hit rate, and marketplace saved calls.
+5. Promote repeated manual rejects into versioned taxonomy fixtures and replay them in CI.
