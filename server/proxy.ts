@@ -5176,11 +5176,20 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
         const maxFmvCards = Math.max(0, Math.min(2_000, reservedFmvCalls * 100))
         const minimumDelayMs = Math.ceil(60_000 / Math.max(1, usagePayload.limits.perMinute))
         let nextCallAt = 0
+        let callStartQueue = Promise.resolve()
+
+        const waitForCallSlot = async () => {
+          const scheduled = callStartQueue.then(async () => {
+            const delay = Math.max(0, nextCallAt - Date.now())
+            if (delay) await wait(delay)
+            nextCallAt = Date.now() + minimumDelayMs
+          })
+          callStartQueue = scheduled.catch(() => undefined)
+          await scheduled
+        }
 
         const requestCardHedge = async (endpoint: string, payload: Record<string, unknown>) => {
-          const delay = Math.max(0, nextCallAt - Date.now())
-          if (delay) await wait(delay)
-          nextCallAt = Date.now() + minimumDelayMs
+          await waitForCallSlot()
           const upstream = await fetch(`${CARD_HEDGE_API_BASE}${endpoint}`, {
             method: 'POST',
             headers: {
@@ -5230,7 +5239,7 @@ export async function handleCardHedgeRoute(route: string, request: Request, env:
           maxFmvCards,
           timeBudgetMs: targetedRefresh
             ? Math.max(15_000, Number(env.CARD_HEDGE_TARGET_REFRESH_TIME_BUDGET_MS ?? 35_000) || 35_000)
-            : Math.max(30_000, Number(env.CARD_HEDGE_REFRESH_TIME_BUDGET_MS ?? 52_000) || 52_000),
+            : Math.min(108_000, Math.max(30_000, Number(env.CARD_HEDGE_REFRESH_TIME_BUDGET_MS ?? 96_000) || 96_000)),
         })
         const status = await hostedCompStatusPayload(neonSql as HostedCompSql)
         return jsonResponse(result.ok ? 200 : 502, {

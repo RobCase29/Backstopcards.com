@@ -910,6 +910,19 @@ export async function hostedCompStatusPayload(sql: HostedCompSql) {
     GROUP BY status
     ORDER BY status
   `
+  const queueByReleaseRows = await sql`
+    SELECT
+      release_year AS "releaseYear",
+      COUNT(*)::INTEGER AS players,
+      COUNT(*) FILTER (WHERE status = 'done')::INTEGER AS done,
+      COUNT(*) FILTER (WHERE status = 'queued')::INTEGER AS queued,
+      COUNT(*) FILTER (WHERE status = 'error')::INTEGER AS errors,
+      COUNT(*) FILTER (WHERE status = 'no-match')::INTEGER AS "noMatch",
+      COUNT(*) FILTER (WHERE status = 'waiting-sales')::INTEGER AS "waitingSales"
+    FROM backstop_comp_refresh_queue
+    GROUP BY release_year
+    ORDER BY release_year DESC
+  `
   const [run] = await sql`
     SELECT
       run_id AS "runId", status, started_at AS "startedAt", completed_at AS "completedAt",
@@ -959,6 +972,15 @@ export async function hostedCompStatusPayload(sql: HostedCompSql) {
       freshFmvLanes: numberValue(laneStats?.freshFmvLanes),
       freshCompLanes: numberValue(laneStats?.freshCompLanes),
       queue: queueRows.map((row) => ({ status: stringValue(row.status), players: numberValue(row.players) })),
+      queueByRelease: queueByReleaseRows.map((row) => ({
+        releaseYear: numberValue(row.releaseYear),
+        players: numberValue(row.players),
+        done: numberValue(row.done),
+        queued: numberValue(row.queued),
+        errors: numberValue(row.errors),
+        noMatch: numberValue(row.noMatch),
+        waitingSales: numberValue(row.waitingSales),
+      })),
       latestRun: run ?? null,
     },
   }
@@ -966,7 +988,7 @@ export async function hostedCompStatusPayload(sql: HostedCompSql) {
 
 async function claimHostedTasks(sql: HostedCompSql, runId: string, limit: number) {
   const rows = await sql`
-    WITH selected AS (
+    WITH eligible AS (
       SELECT queue.player_lookup, queue.release_year
       FROM backstop_comp_refresh_queue AS queue
       LEFT JOIN backstop_comp_lanes AS lane
@@ -977,12 +999,37 @@ async function claimHostedTasks(sql: HostedCompSql, runId: string, limit: number
           queue.status IN ('queued', 'error', 'no-match', 'waiting-sales')
           OR (queue.status = 'done' AND COALESCE(queue.last_success_at, '-infinity'::timestamptz) < NOW() - INTERVAL '20 hours')
         )
+    ), ranked AS (
+      SELECT
+        queue.player_lookup,
+        queue.release_year,
+        queue.priority,
+        queue.player_name,
+        queue.status,
+        lane.card_id,
+        ROW_NUMBER() OVER (
+          PARTITION BY queue.release_year
+          ORDER BY
+            CASE WHEN lane.card_id IS NOT NULL AND lane.card_id <> '' THEN 0 ELSE 1 END,
+            CASE queue.status WHEN 'queued' THEN 0 WHEN 'error' THEN 1 WHEN 'waiting-sales' THEN 2 WHEN 'no-match' THEN 3 ELSE 4 END,
+            queue.priority DESC,
+            queue.player_name
+        ) AS release_position
+      FROM backstop_comp_refresh_queue AS queue
+      LEFT JOIN backstop_comp_lanes AS lane
+        ON lane.player_lookup = queue.player_lookup
+       AND lane.release_year = queue.release_year
+      JOIN eligible
+        ON eligible.player_lookup = queue.player_lookup
+       AND eligible.release_year = queue.release_year
+    ), selected AS (
+      SELECT player_lookup, release_year
+      FROM ranked
       ORDER BY
-        CASE WHEN lane.card_id IS NOT NULL AND lane.card_id <> '' THEN 0 ELSE 1 END,
-        CASE queue.status WHEN 'queued' THEN 0 WHEN 'error' THEN 1 WHEN 'waiting-sales' THEN 2 WHEN 'no-match' THEN 3 ELSE 4 END,
-        queue.priority DESC,
-        queue.release_year DESC,
-        queue.player_name
+        release_position,
+        priority DESC,
+        release_year DESC,
+        player_name
       LIMIT ${limit}
     )
     UPDATE backstop_comp_refresh_queue AS queue
@@ -1579,11 +1626,18 @@ export async function runHostedCompRefresh(options: HostedCompRefreshOptions) {
   const tasks = maxPlayers ? await claimHostedTasks(options.sql, runId, maxPlayers) : []
   await options.sql`UPDATE backstop_comp_sync_runs SET claimed_players = ${tasks.length} WHERE run_id = ${runId}`
 
-  try {
-    for (const task of tasks) {
-      if (Date.now() - startedAt > timeBudgetMs * 0.72) break
+  let reservedTaskApiCalls = apiCalls
+  let nextTaskIndex = 0
+  const taskConcurrency = Math.max(1, Math.min(8, Math.ceil(maxTaskApiCalls / 24)))
+  const processNextTask = async (): Promise<void> => {
+    while (nextTaskIndex < tasks.length) {
+      if (Date.now() - startedAt > timeBudgetMs * 0.78) return
+      const task = tasks[nextTaskIndex]
+      nextTaskIndex += 1
+      if (!task) return
       const expectedCalls = task.cardId ? 1 : 2
-      if (apiCalls + expectedCalls > maxTaskApiCalls) break
+      if (reservedTaskApiCalls + expectedCalls > maxTaskApiCalls) return
+      reservedTaskApiCalls += expectedCalls
       try {
         let match: {
           card: CardHedgeCard
@@ -1689,6 +1743,10 @@ export async function runHostedCompRefresh(options: HostedCompRefreshOptions) {
         await updateQueueTask(options.sql, task, 'error', error instanceof Error ? error.message : 'Card Hedge refresh failed')
       }
     }
+  }
+
+  try {
+    await Promise.all(Array.from({ length: Math.min(taskConcurrency, tasks.length) }, () => processNextTask()))
 
     if (Date.now() - startedAt < timeBudgetMs * 0.82 && maxFmvCards > 0) {
       const targets = await staleFmvCards(options.sql, maxFmvCards)

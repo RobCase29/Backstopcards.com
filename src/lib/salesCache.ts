@@ -149,6 +149,15 @@ export type SalesCacheStatus = {
     freshFmvLanes: number
     freshCompLanes: number
     queue: Array<{ status: string; players: number }>
+    queueByRelease?: Array<{
+      releaseYear: number
+      players: number
+      done: number
+      queued: number
+      errors: number
+      noMatch: number
+      waitingSales: number
+    }>
     latestRun: {
       runId?: string
       status?: string
