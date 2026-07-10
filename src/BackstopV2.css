@@ -1837,11 +1837,31 @@
     white-space: nowrap;
   }
 
-  .valuation-app .top-actions .refresh-model-button {
+  .valuation-app .eyebrow,
+  .valuation-app .release-line {
+    display: none;
+  }
+
+  .valuation-app .workbench-topbar .brand-block {
+    min-width: 0;
+    width: auto;
+    flex: 1 1 auto;
+  }
+
+  .valuation-app .workbench-topbar .top-actions {
+    width: auto;
+    flex: 0 0 auto;
+  }
+
+  .valuation-app .workbench-topbar .top-actions .refresh-model-button {
     width: 40px;
     min-width: 40px;
+    max-width: 40px;
+    flex: 0 0 40px;
     min-height: 40px;
+    padding: 0;
     border-radius: 12px;
+    font-size: 0;
   }
 
   .valuation-app .top-actions .export-button,
@@ -2327,6 +2347,18 @@
   .valuation-app .value-signal-cell {
     grid-column: 3;
     grid-row: 2;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-row .money-chip {
+    grid-column: 3;
+    grid-row: 1;
+    width: auto;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-row .value-signal-cell {
+    grid-column: 3;
+    grid-row: 2;
+    width: auto;
   }
 
   .valuation-app .mobile-cell-label {
