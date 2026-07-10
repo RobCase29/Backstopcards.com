@@ -112,7 +112,7 @@ describe('dynasty value scoring', () => {
       baseVolatility: 0.16,
     })
 
-    expect(cheapElite).toBeGreaterThan(expensiveElite + 8)
+    expect(cheapElite).toBeGreaterThan(expensiveElite + 6)
   })
 
   it('surfaces a top-two prospect with a very cheap base auto above expensive top-five peers', () => {
@@ -147,8 +147,34 @@ describe('dynasty value scoring', () => {
       baseVolatility: 0.18,
     })
 
-    expect(topTwoCheap).toBeGreaterThan(topOneExpensive + 18)
-    expect(topTwoCheap).toBeGreaterThan(topFiveExpensive + 20)
+    expect(topTwoCheap).toBeGreaterThan(topOneExpensive + 5)
+    expect(topTwoCheap).toBeGreaterThan(topFiveExpensive + 8)
+  })
+
+  it('balances percentage value with meaningful absolute dollar upside', () => {
+    const cheapTopTwenty = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: 23,
+      stsProspectRank: 19,
+      stsDynastyScore: 79,
+      baseTwmaPrice: 19,
+      baseEffectiveSales: 100,
+      baseConfidence: 0.98,
+      baseVolatility: 0.15,
+    })
+    const topOverall = scoreDynastyValueOpportunity({
+      ...baseRow,
+      stsRank: 1,
+      stsProspectRank: 1,
+      stsDynastyScore: 93,
+      baseTwmaPrice: 190,
+      baseEffectiveSales: 100,
+      baseConfidence: 0.98,
+      baseVolatility: 0.15,
+    })
+
+    expect(impliedDynastyBasePrice({ ...baseRow, stsRank: 1, stsProspectRank: 1, stsDynastyScore: 93 })).toBeGreaterThan(900)
+    expect(topOverall).toBeGreaterThan(cheapTopTwenty)
   })
 
   it('excludes players without ranking signal from value queues', () => {

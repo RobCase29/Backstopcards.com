@@ -109,14 +109,19 @@ function liquidityScore(row: DynastyValueInput) {
 
 function eliteAffordabilityBoost(row: DynastyValueInput, basePrice: number) {
   const isElite =
-    (row.stsProspectRank !== null && row.stsProspectRank <= 15) ||
-    (row.stsRank !== null && row.stsRank <= 25) ||
+    (row.stsProspectRank !== null && row.stsProspectRank <= 10) ||
+    (row.stsRank !== null && row.stsRank <= 12) ||
     (row.stsDynastyScore !== null && row.stsDynastyScore >= 88)
 
   const referencePrice = isElite ? 220 : 115
   const maxBoost = isElite ? 22 : 10
   const normalizedPrice = Math.max(10, basePrice)
   return clamp(Math.log(referencePrice / normalizedPrice) / Math.log(isElite ? 22 : 11.5), 0, 1) * maxBoost
+}
+
+function absoluteUpsideBoost(impliedBase: number, basePrice: number) {
+  const dollarUpside = Math.max(0, impliedBase - basePrice)
+  return clamp(dollarUpside / 900, 0, 1) * 16
 }
 
 export function impliedDynastyBasePrice(row: DynastyValueInput) {
@@ -142,6 +147,7 @@ export function scoreDynastyValueOpportunity(row: DynastyValueInput) {
   const qualityAdjustedValueGap = upsideGap * clamp(0.68 + rankQuality * 0.32, 0.62, 1)
   const downsidePenalty = valueRatio < 1 ? clamp(Math.log(1 / Math.max(0.08, valueRatio)) / Math.log(8), 0, 1) * 18 : 0
   const affordabilityBoost = eliteAffordabilityBoost(row, basePrice)
+  const dollarUpsideBoost = absoluteUpsideBoost(impliedBase, basePrice)
   const thinMarketPenalty =
     basePrice < 12 && (row.baseEffectiveSales < 1 || row.baseConfidence < 0.35 || row.basePriceSource === 'twma-fallback')
       ? 18
@@ -161,6 +167,7 @@ export function scoreDynastyValueOpportunity(row: DynastyValueInput) {
     rankQuality * 30 +
     qualityAdjustedValueGap +
     affordabilityBoost +
+    dollarUpsideBoost +
     positiveMomentum * 0.18 +
     riserSignal * 0.05 +
     ageUpside(row.stsAge) +
