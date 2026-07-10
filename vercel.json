@@ -21,6 +21,26 @@
   ],
   "rewrites": [
     {
+      "source": "/deals",
+      "destination": "/"
+    },
+    {
+      "source": "/price",
+      "destination": "/"
+    },
+    {
+      "source": "/health",
+      "destination": "/"
+    },
+    {
+      "source": "/case-hits",
+      "destination": "/"
+    },
+    {
+      "source": "/sealed-wax",
+      "destination": "/"
+    },
+    {
       "source": "/teams/(.*)",
       "destination": "/"
     }

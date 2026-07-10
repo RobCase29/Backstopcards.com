@@ -631,12 +631,31 @@ const BIN_ALL_MODELS_KEY = 'all-checklists'
 const MARLINS_TEAM_CODE = 'MIA'
 const MARLINS_ROUTE_PATH = '/teams/marlins'
 
+const WORK_MODE_PATHS: Record<WorkMode, string> = {
+  lookup: '/',
+  deals: '/deals',
+  price: '/price',
+  health: '/health',
+  'case-hits': '/case-hits',
+  wax: '/sealed-wax',
+}
+
 function appRouteFromPath(pathname: string): AppRoute {
   return pathname.replace(/\/+$/, '').toLowerCase() === MARLINS_ROUTE_PATH ? 'marlins' : 'desk'
 }
 
 function pathForAppRoute(route: AppRoute) {
   return route === 'marlins' ? MARLINS_ROUTE_PATH : '/'
+}
+
+function workModeFromPath(pathname: string): WorkMode {
+  const normalizedPath = pathname.replace(/\/+$/, '').toLowerCase() || '/'
+  const match = Object.entries(WORK_MODE_PATHS).find(([, path]) => path === normalizedPath)
+  return (match?.[0] as WorkMode | undefined) ?? 'lookup'
+}
+
+function pathForWorkMode(mode: WorkMode) {
+  return WORK_MODE_PATHS[mode]
 }
 
 function scoreSettingsForSearchMode(settings: ScoreSettings, searchMode: BinSearchMode): ScoreSettings {
@@ -2510,24 +2529,63 @@ function WorkflowCommand({
   listingCount: number
   modelReady: boolean
 }) {
-  const modeTitle =
-    mode === 'lookup'
-      ? 'Daily Value Board'
-      : mode === 'deals'
-        ? 'Live Deals'
-        : mode === 'price'
-          ? 'Price My Card'
-          : mode === 'health'
-            ? 'Data Health'
-            : mode === 'wax'
-              ? 'Sealed Wax'
-              : 'Case Hits'
-  const modeDescription =
-    mode === 'wax'
-      ? 'Scan 2026 Bowman Hobby and Jumbo boxes against your target price or recent comps, with live listings ranked into a clean offer queue.'
-      : mode === 'case-hits'
-        ? 'Explore rare Bowman inserts with print-run context, recent comps, and live listing checks.'
-        : 'Start with the daily value board, scan live listings when a target stands out, or price a card directly.'
+  const navigationItems = [
+    {
+      mode: 'lookup' as const,
+      tier: 'primary',
+      eyebrow: 'Discover',
+      title: 'Value Board',
+      description: 'Best rank-to-price gaps',
+      value: totalRows.toLocaleString(),
+      icon: <Search size={19} />,
+    },
+    {
+      mode: 'deals' as const,
+      tier: 'primary',
+      eyebrow: 'Shop',
+      title: 'Live Deals',
+      description: `${listingCount.toLocaleString()} listings checked`,
+      value: dealCount.toLocaleString(),
+      icon: <Radio size={19} />,
+    },
+    {
+      mode: 'price' as const,
+      tier: 'primary',
+      eyebrow: 'Value',
+      title: 'Price a Card',
+      description: 'Player, parallel, grade',
+      value: money(topBase),
+      icon: <Calculator size={19} />,
+    },
+    {
+      mode: 'case-hits' as const,
+      tier: 'secondary',
+      eyebrow: 'Rare',
+      title: 'Case Hits',
+      description: 'Print runs and live value',
+      value: 'Beta',
+      icon: <Gem size={19} />,
+    },
+    {
+      mode: 'wax' as const,
+      tier: 'secondary',
+      eyebrow: 'Sealed',
+      title: 'Sealed Wax',
+      description: 'Hobby and Jumbo boxes',
+      value: 'New',
+      icon: <Package size={19} />,
+    },
+    {
+      mode: 'health' as const,
+      tier: 'secondary',
+      eyebrow: 'System',
+      title: 'Data Health',
+      description: 'Freshness and coverage',
+      value: modelReady ? 'OK' : '--',
+      icon: <Activity size={19} />,
+    },
+  ]
+
   return (
     <section className="workflow-command" aria-label="Primary navigation">
       <div className="workflow-command-copy">
@@ -2535,8 +2593,8 @@ function WorkflowCommand({
           <Activity size={14} />
           Market Desk
         </span>
-        <h2>{modeTitle}</h2>
-        <p>{modeDescription}</p>
+        <h2>Backstop Market Desk</h2>
+        <p>Find a player worth buying, check the live market, or price a card.</p>
         <div className="workflow-mini-tape">
           <span>{modelReady ? 'Model live' : 'Model loading'}</span>
           <span>{totalRows.toLocaleString()} players</span>
@@ -2556,107 +2614,23 @@ function WorkflowCommand({
       </div>
 
       <div className="workflow-mode-grid">
-        <button
-          className={`workflow-mode-card ${mode === 'lookup' ? 'active' : ''}`}
-          type="button"
-          onClick={() => onModeChange('lookup')}
-          aria-pressed={mode === 'lookup'}
-        >
-          <span className="workflow-icon">
-            <Search size={19} />
-          </span>
-          <span className="workflow-card-copy">
-            <span>Home</span>
-            <strong>Daily Board</strong>
-            <small>Ranked players and teams</small>
-          </span>
-          <span className="workflow-value">{totalRows.toLocaleString()}</span>
-        </button>
-
-        <button
-          className={`workflow-mode-card ${mode === 'deals' ? 'active' : ''}`}
-          type="button"
-          onClick={() => onModeChange('deals')}
-          aria-pressed={mode === 'deals'}
-        >
-          <span className="workflow-icon">
-            <Radio size={19} />
-          </span>
-          <span className="workflow-card-copy">
-            <span>Live</span>
-            <strong>Live Deals</strong>
-            <small>{listingCount.toLocaleString()} listings checked</small>
-          </span>
-          <span className="workflow-value">{dealCount.toLocaleString()}</span>
-        </button>
-
-        <button
-          className={`workflow-mode-card ${mode === 'price' ? 'active' : ''}`}
-          type="button"
-          onClick={() => onModeChange('price')}
-          aria-pressed={mode === 'price'}
-        >
-          <span className="workflow-icon">
-            <Calculator size={19} />
-          </span>
-          <span className="workflow-card-copy">
-            <span>Quote</span>
-            <strong>Price My Card</strong>
-            <small>Player, variation, grade, all-in</small>
-          </span>
-          <span className="workflow-value">{money(topBase)}</span>
-        </button>
-
-        <button
-          className={`workflow-mode-card ${mode === 'health' ? 'active' : ''}`}
-          type="button"
-          onClick={() => onModeChange('health')}
-          aria-pressed={mode === 'health'}
-        >
-          <span className="workflow-icon">
-            <Activity size={19} />
-          </span>
-          <span className="workflow-card-copy">
-            <span>Trust</span>
-            <strong>Data Health</strong>
-            <small>Freshness and source coverage</small>
-          </span>
-          <span className="workflow-value">{modelReady ? 'OK' : '--'}</span>
-        </button>
-
-        <button
-          className={`workflow-mode-card ${mode === 'wax' ? 'active' : ''}`}
-          type="button"
-          onClick={() => onModeChange('wax')}
-          aria-pressed={mode === 'wax'}
-        >
-          <span className="workflow-icon">
-            <Package size={19} />
-          </span>
-          <span className="workflow-card-copy">
-            <span>Sealed</span>
-            <strong>Sealed Wax</strong>
-            <small>2026 Bowman Hobby/Jumbo</small>
-          </span>
-          <span className="workflow-value">New</span>
-        </button>
-
-        <button
-          className={`workflow-mode-card ${mode === 'case-hits' ? 'active' : ''}`}
-          type="button"
-          onClick={() => onModeChange('case-hits')}
-          aria-pressed={mode === 'case-hits'}
-        >
-          <span className="workflow-icon">
-            <Gem size={19} />
-          </span>
-          <span className="workflow-card-copy">
-            <span>Rare</span>
-            <strong>Case Hits</strong>
-            <small>Print runs and live value</small>
-          </span>
-          <span className="workflow-value">Beta</span>
-        </button>
+        {navigationItems.map((item) => (
+          <button
+            className={`workflow-mode-card ${item.tier} ${mode === item.mode ? 'active' : ''}`}
+            type="button"
+            onClick={() => onModeChange(item.mode)}
+            aria-pressed={mode === item.mode}
+            key={item.mode}
+          >
+            <span className="workflow-icon">{item.icon}</span>
+            <span className="workflow-card-copy">
+              <span>{item.eyebrow}</span>
+              <strong>{item.title}</strong>
+              <small>{item.description}</small>
+            </span>
+            <span className="workflow-value">{item.value}</span>
+          </button>
+        ))}
       </div>
     </section>
   )
@@ -6459,12 +6433,19 @@ function BinRadar({
         </div>
       </div>
 
+      <div className="bin-preset-head">
+        <div>
+          <span>Recommended</span>
+          <strong>Scan the strongest value signals first</strong>
+          <small>Checks active BINs and auctions for the 25 best rank-to-price gaps.</small>
+        </div>
+      </div>
       <div className="bin-preset-strip" aria-label="High value scan presets">
         <button className="preset-scan-card primary-preset" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
           <Brain size={17} />
           <span>
-            <strong>Value board</strong>
-            <small>{valuePlayerCount.toLocaleString()} ranked players</small>
+            <strong>Scan top values</strong>
+            <small>{valuePlayerCount.toLocaleString()} ranked targets</small>
           </span>
         </button>
         <button className="preset-scan-card" type="button" onClick={onScanTopProspects} disabled={!canScanTopProspects}>
@@ -6497,7 +6478,15 @@ function BinRadar({
         </button>
       </div>
 
-      <div className="bin-control-board" aria-label="BIN scan setup">
+      <details className="bin-advanced-controls">
+        <summary>
+          <span>
+            <SlidersHorizontal size={16} />
+            Build a custom scan
+          </span>
+          <small>Choose a set, player, parallel, or price rule</small>
+        </summary>
+      <div className="bin-control-board" aria-label="Custom live-market scan setup">
         <div className="bin-control-group">
           <div className="bin-control-group-head">
             <span>1 / Market</span>
@@ -6662,6 +6651,7 @@ function BinRadar({
           )}
         </div>
       </div>
+      </details>
 
       <div ref={resultsRef} className="bin-results-anchor" tabIndex={-1} aria-label="Scan results" />
 
@@ -8393,7 +8383,9 @@ function App() {
   const [stsFilter, setStsFilter] = useState<StsFilter>('all')
   const [sortMode, setSortMode] = useState<SortMode>('dynasty-value')
   const [selectedRowId, setSelectedRowId] = useState<string | undefined>()
-  const [workMode, setWorkMode] = useState<WorkMode>('lookup')
+  const [workMode, setWorkMode] = useState<WorkMode>(() =>
+    typeof window === 'undefined' ? 'lookup' : workModeFromPath(window.location.pathname),
+  )
   const [appRoute, setAppRoute] = useState<AppRoute>(() =>
     typeof window === 'undefined' ? 'desk' : appRouteFromPath(window.location.pathname),
   )
@@ -8402,11 +8394,11 @@ function App() {
   const [binLoading, setBinLoading] = useState(false)
   const [binError, setBinError] = useState<string | null>(null)
   const [binMinPrice, setBinMinPrice] = useState(25)
-  const [binPlayerScope, setBinPlayerScope] = useState<BinPlayerScope>('all')
+  const [binPlayerScope, setBinPlayerScope] = useState<BinPlayerScope>('value-25')
   const [binSearchMode, setBinSearchMode] = useState<BinSearchMode>('checklist')
   const [binSearchTerm, setBinSearchTerm] = useState('')
   const [binResultSort, setBinResultSort] = useState<BinResultSort>('conviction-desc')
-  const [binModelKey, setBinModelKey] = useState('')
+  const [binModelKey, setBinModelKey] = useState(BIN_ALL_MODELS_KEY)
   const [binScan, setBinScan] = useState<EbayBinScanResult | null>(null)
   const [listingRejections, setListingRejections] = useState<ListingRejection[]>(() => readListingRejections())
   const [lastRejectedListing, setLastRejectedListing] = useState<ListingRejection | null>(null)
@@ -8502,7 +8494,18 @@ function App() {
   const navigateAppRoute = useCallback((route: AppRoute) => {
     setAppRoute(route)
     if (typeof window === 'undefined') return
-    const nextPath = pathForAppRoute(route)
+    const nextPath = route === 'desk' ? pathForWorkMode(workMode) : pathForAppRoute(route)
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath)
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [workMode])
+
+  const navigateWorkMode = useCallback((mode: WorkMode) => {
+    setAppRoute('desk')
+    setWorkMode(mode)
+    if (typeof window === 'undefined') return
+    const nextPath = pathForWorkMode(mode)
     if (window.location.pathname !== nextPath) {
       window.history.pushState({}, '', nextPath)
     }
@@ -8511,7 +8514,10 @@ function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const syncRoute = () => setAppRoute(appRouteFromPath(window.location.pathname))
+    const syncRoute = () => {
+      setAppRoute(appRouteFromPath(window.location.pathname))
+      setWorkMode(workModeFromPath(window.location.pathname))
+    }
     window.addEventListener('popstate', syncRoute)
     return () => window.removeEventListener('popstate', syncRoute)
   }, [])
@@ -9466,7 +9472,6 @@ function App() {
     () => (selectedTeamOption ? visibleRowsForDisplay.filter(rowHasModel).slice(0, TEAM_DEAL_SCAN_LIMIT) : []),
     [selectedTeamOption, visibleRowsForDisplay],
   )
-  const selectedTeamIsMarlins = normalizeTeamCode(selectedTeamOption?.code) === MARLINS_TEAM_CODE
   const activeSalesCacheError =
     salesCacheError && salesCacheError.playerName === selectedRow?.playerName ? salesCacheError.message : null
   const flagCachedSale = useCallback(async (itemId: string, erroneous: boolean, note?: string) => {
@@ -9630,7 +9635,7 @@ function App() {
       searchTerm: '',
     }
 
-    setWorkMode('deals')
+    navigateWorkMode('deals')
     revealDealResults()
     void scanEbayBinListings(scanOptions)
     void scanEbayAuctionListings(scanOptions)
@@ -9639,11 +9644,6 @@ function App() {
   function scanSelectedTeamDeals() {
     if (!selectedTeamOption) {
       setBinError('Choose a current team before scanning team deals.')
-      return
-    }
-
-    if (selectedTeamIsMarlins) {
-      scanMarlinsTeamDeals()
       return
     }
 
@@ -9661,7 +9661,7 @@ function App() {
       searchTerm: '',
     }
 
-    setWorkMode('deals')
+    navigateWorkMode('deals')
     revealDealResults()
     void scanEbayBinListings(scanOptions)
     void scanEbayAuctionListings(scanOptions)
@@ -9954,7 +9954,7 @@ function App() {
     setBinError(null)
     resetAuctionScan()
 
-    setWorkMode('deals')
+    navigateWorkMode('deals')
     revealDealResults()
     void scanEbayBinListings({
       models: scanModels,
@@ -9971,7 +9971,7 @@ function App() {
   }
 
   function scanValue25Targets() {
-    setWorkMode('deals')
+    navigateWorkMode('deals')
     revealDealResults()
     setBinSearchMode('checklist')
     setBinSearchTerm('')
@@ -9989,7 +9989,7 @@ function App() {
   }
 
   function scanTop100Prospects() {
-    setWorkMode('deals')
+    navigateWorkMode('deals')
     revealDealResults()
     setBinSearchMode('checklist')
     setBinSearchTerm('')
@@ -10009,7 +10009,7 @@ function App() {
   }
 
   function scanBaseAutos() {
-    setWorkMode('deals')
+    navigateWorkMode('deals')
     revealDealResults()
     setBinSearchMode('base-auto')
     setBinSearchTerm('')
@@ -10025,7 +10025,7 @@ function App() {
   }
 
   function scanLowSerialNonAutos() {
-    setWorkMode('deals')
+    navigateWorkMode('deals')
     revealDealResults()
     setBinSearchMode('low-serial-non-auto')
     setBinSearchTerm('')
@@ -10045,7 +10045,7 @@ function App() {
   }
 
   function scanSuperfractors() {
-    setWorkMode('deals')
+    navigateWorkMode('deals')
     revealDealResults()
     setBinSearchMode('superfractor')
     setBinSearchTerm('')
@@ -10645,23 +10645,9 @@ function App() {
 
   const visibleBoardScanCount = Math.min(BOARD_DEAL_SCAN_LIMIT, playerNamesForPricingRows(renderedRowsForDisplay).length)
   const primaryBoardScanDisabled =
-    (selectedTeamIsMarlins
-      ? marlinsChecklistPlayerNames.length === 0
-      : selectedTeamOption
-        ? teamScanRows.length === 0
-        : visibleBoardScanCount === 0) ||
-    binLoading ||
-    auctionLoading
-  const primaryBoardScanLabel = selectedTeamIsMarlins
-    ? 'Scan All Marlins'
-    : selectedTeamOption
-      ? `Scan ${selectedTeamOption.label}`
-      : 'Scan Top Values'
-  const runPrimaryBoardScan = selectedTeamIsMarlins
-    ? scanMarlinsTeamDeals
-    : selectedTeamOption
-      ? scanSelectedTeamDeals
-      : scanVisibleBoardDeals
+    (selectedTeamOption ? teamScanRows.length === 0 : visibleBoardScanCount === 0) || binLoading || auctionLoading
+  const primaryBoardScanLabel = selectedTeamOption ? `Scan ${selectedTeamOption.label}` : 'Scan Top 25'
+  const runPrimaryBoardScan = selectedTeamOption ? scanSelectedTeamDeals : scanVisibleBoardDeals
   return (
     <main className="app-shell valuation-app">
       <section className="workbench-topbar">
@@ -10684,15 +10670,6 @@ function App() {
         </div>
 
         <div className="top-actions">
-          <button
-            className={`ghost-button app-route-button ${appRoute === 'marlins' ? 'active' : ''}`}
-            type="button"
-            onClick={() => navigateAppRoute('marlins')}
-            aria-pressed={appRoute === 'marlins'}
-          >
-            <Store size={16} />
-            Marlins Deals
-          </button>
           <button className="primary-button refresh-model-button" type="button" onClick={() => void refreshChecklistUniverse()} disabled={checklistLoading || catalogLoading}>
             <RefreshCw size={16} className={checklistLoading ? 'spin' : undefined} />
             {catalogLoading
@@ -10713,7 +10690,7 @@ function App() {
       {appRoute === 'desk' ? (
         <WorkflowCommand
           mode={workMode}
-          onModeChange={setWorkMode}
+          onModeChange={navigateWorkMode}
           totalRows={matrix.totalPlayers}
           pricedRows={matrix.totalPricedPlayers}
           topBase={topBase}
@@ -10795,12 +10772,14 @@ function App() {
           <div className="valuation-workspace">
             <div className="lookup-intent-bar">
               <div className="lookup-intent-copy">
-                <span>Daily Value Board</span>
-                <strong>{effectiveSelectedRow ? effectiveSelectedRow.playerName : trimmedQuery ? 'No modeled player selected' : 'Value board'}</strong>
+                <span>Top 25 Value Board</span>
+                <strong>
+                  {effectiveSelectedRow && (selectedRowId || trimmedQuery) ? effectiveSelectedRow.playerName : 'Best rank-to-price gaps'}
+                </strong>
                 <small>
-                  {effectiveSelectedRow
+                  {effectiveSelectedRow && (selectedRowId || trimmedQuery)
                     ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} / ${effectiveSelectedRow.currentTeamName ?? 'team unknown'} / ${formatBasePrice(effectiveSelectedRow)} base auto / ${formatStsLine(effectiveSelectedRow) || 'no rank signal'}`
-                    : 'Ranked by price gap, rank signal, and base-auto quality.'}
+                    : 'Consensus player rank compared with the latest modeled 1st Bowman base-auto price.'}
                 </small>
               </div>
               <label className="lookup-primary-search">
@@ -10829,19 +10808,19 @@ function App() {
                 <button
                   className="ghost-button calculator-toggle-button"
                   type="button"
-                  onClick={() => setWorkMode('price')}
+                  onClick={() => navigateWorkMode('price')}
                 >
                   <Calculator size={15} />
-                  Price Card
+                  Price a Card
                 </button>
-                <button className="ghost-button board-radar-button" type="button" onClick={() => setWorkMode('deals')}>
+                <button className="ghost-button board-radar-button" type="button" onClick={() => navigateWorkMode('deals')}>
                   <SlidersHorizontal size={15} />
                   Live Deals
                 </button>
               </div>
             </div>
 
-            <div className="toolbar valuation-toolbar">
+            <div className="toolbar valuation-toolbar" aria-label="Value board filters">
               <label className="filter-select">
                 <span>Set</span>
                 <select value={releaseFilter} onChange={(event) => setReleaseFilter(event.target.value)}>
@@ -10854,7 +10833,7 @@ function App() {
                 </select>
               </label>
               <label className="filter-select team-filter">
-                <span>Current team</span>
+                <span>Team</span>
                 <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value as TeamFilter)}>
                   <option value="all">All teams</option>
                   {teamOptions.map((team) => (
@@ -10864,29 +10843,8 @@ function App() {
                   ))}
                 </select>
               </label>
-              <label className="filter-select family-filter">
-                <span>Family</span>
-                <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as CategoryFilter)}>
-                  <option value="all">All families</option>
-                  {CHECKLIST_CATEGORIES.map((category) => (
-                    <option value={category} key={category}>
-                      {CATEGORY_LABELS[category]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="filter-select base-source-filter">
-                <span>Model</span>
-                <select value={baseSourceFilter} onChange={(event) => setBaseSourceFilter(event.target.value as BaseSourceFilter)}>
-                  {BASE_FILTER_LABELS.map((option) => (
-                    <option value={option.value} key={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <label className="filter-select">
-                <span>Rank</span>
+                <span>Player pool</span>
                 <select value={stsFilter} onChange={(event) => setStsFilter(event.target.value as StsFilter)}>
                   {Object.entries(STS_FILTER_LABELS).map(([filter, label]) => (
                     <option value={filter} key={filter}>
@@ -10905,6 +10863,35 @@ function App() {
                   ))}
                 </select>
               </label>
+              <details className="board-advanced-filters">
+                <summary>
+                  <SlidersHorizontal size={15} />
+                  More filters
+                </summary>
+                <div className="board-advanced-filter-grid">
+                  <label className="filter-select family-filter">
+                    <span>Card family</span>
+                    <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as CategoryFilter)}>
+                      <option value="all">All families</option>
+                      {CHECKLIST_CATEGORIES.map((category) => (
+                        <option value={category} key={category}>
+                          {CATEGORY_LABELS[category]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="filter-select base-source-filter">
+                    <span>Model quality</span>
+                    <select value={baseSourceFilter} onChange={(event) => setBaseSourceFilter(event.target.value as BaseSourceFilter)}>
+                      {BASE_FILTER_LABELS.map((option) => (
+                        <option value={option.value} key={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </details>
               <div className="row-counts">
                 <div className="deal-count">
                   <strong>{visibleRows.length.toLocaleString()}</strong>
@@ -10933,7 +10920,11 @@ function App() {
 
             {rankingOnlyMatch ? <RankingOnlyMatch ranking={rankingOnlyMatch} /> : null}
 
-            <div className="lookup-board-market-grid">
+            <div
+              className={`lookup-board-market-grid ${
+                displayedBinOpportunities.length + displayedAuctionOpportunities.length > 0 ? 'has-market' : 'board-only'
+              }`}
+            >
               <Leaderboard
                 rows={renderedRowsForDisplay}
                 rankById={visibleRowRankById}
@@ -10953,14 +10944,16 @@ function App() {
                     : undefined
                 }
               />
-              <LiveMarketMap
-                binOpportunities={displayedBinOpportunities}
-                auctionOpportunities={displayedAuctionOpportunities}
-                binScan={binScan}
-                auctionScan={auctionScan}
-                cachedObservedAt={cachedLiveMarket?.observedAt ?? null}
-                compact
-              />
+              {displayedBinOpportunities.length + displayedAuctionOpportunities.length > 0 ? (
+                <LiveMarketMap
+                  binOpportunities={displayedBinOpportunities}
+                  auctionOpportunities={displayedAuctionOpportunities}
+                  binScan={binScan}
+                  auctionScan={auctionScan}
+                  cachedObservedAt={cachedLiveMarket?.observedAt ?? null}
+                  compact
+                />
+              ) : null}
             </div>
 
             {SHOW_LOOKUP_MODEL_LAB && (salesCacheLoading || activeSalesCacheError || activeSalesCacheModel?.available) ? (
@@ -11018,11 +11011,11 @@ function App() {
                 />
               </label>
               <div className="price-workflow-actions">
-                <button className="ghost-button" type="button" onClick={() => setWorkMode('lookup')}>
+                <button className="ghost-button" type="button" onClick={() => navigateWorkMode('lookup')}>
                   <Search size={15} />
-                  Daily Board
+                  Value Board
                 </button>
-                <button className="ghost-button" type="button" onClick={() => setWorkMode('deals')}>
+                <button className="ghost-button" type="button" onClick={() => navigateWorkMode('deals')}>
                   <Radio size={15} />
                   Live Deals
                 </button>

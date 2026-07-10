@@ -11,6 +11,16 @@ npm run dev
 
 The app opens directly into the Backstop workflow: find underpriced players, price a card, and scan active BINs/auctions against the current model. The current source-of-truth path is official Bowman checklists + Wax Pack Hero 1st Bowman evidence + Card Hedge/local sold comps; eBay and Fanatics Collect fixed-price listings are active live-market layers, eBay remains the ending-soon auction layer, and legacy checklist feeds remain optional fallback data.
 
+## Product Navigation
+
+The public workflow has three primary jobs:
+
+- `/` — **Value Board**: the default Top 25 rank-to-price gaps, with player search and universal set/team filters.
+- `/deals` — **Live Deals**: a recommended Top 25 scan first, followed by optional custom scans for a player, parallel, set, or price rule.
+- `/price` — **Price a Card**: player, parallel, grade, and all-in price calculator.
+
+Case hits, sealed wax, and system health live at `/case-hits`, `/sealed-wax`, and `/health`. Teams are facets of the same player universe rather than separate product areas; the legacy `/teams/marlins` route remains available for backward compatibility but is not part of primary navigation.
+
 Use Node 22.13+ locally. This repo includes `.nvmrc` set to Node 22 to match Vercel.
 
 For the current source-of-truth spec, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

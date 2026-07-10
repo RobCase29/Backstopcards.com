@@ -15658,3 +15658,359 @@ button.sales-bucket-tile {
     font-size: 1.55rem;
   }
 }
+
+/* Product UX v6: one clear loop - discover value, scan the market, price a card. */
+.valuation-app .workflow-mode-grid {
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+}
+
+.valuation-app .workflow-mode-card.primary {
+  grid-column: span 2;
+}
+
+.valuation-app .workflow-mode-card.secondary {
+  grid-column: span 1;
+  grid-template-columns: 30px minmax(0, 1fr);
+  padding-inline: 8px;
+}
+
+.valuation-app .workflow-mode-card.secondary .workflow-value,
+.valuation-app .workflow-mode-card.secondary .workflow-card-copy small {
+  display: none;
+}
+
+.valuation-app .workflow-mode-card.secondary .workflow-card-copy strong {
+  overflow: visible;
+  font-size: 0.72rem;
+  line-height: 0.98;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.valuation-app .lookup-intent-bar {
+  grid-template-columns: minmax(250px, 0.78fr) minmax(380px, 1.35fr) auto;
+}
+
+.valuation-app .lookup-intent-copy {
+  display: grid;
+}
+
+.valuation-app .lookup-intent-copy > span,
+.valuation-app .bin-preset-head span {
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.valuation-app .lookup-intent-copy > strong {
+  font-size: 1.08rem;
+}
+
+.valuation-app .lookup-intent-copy > small {
+  max-width: 48ch;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.valuation-app .toolbar.valuation-toolbar {
+  position: relative;
+  z-index: 4;
+  grid-template-columns: repeat(4, minmax(135px, 1fr)) minmax(120px, 0.56fr) auto;
+  gap: 8px;
+  padding: 8px;
+  background: rgba(255, 253, 247, 0.58);
+}
+
+.valuation-app .board-advanced-filters {
+  position: relative;
+  min-width: 0;
+}
+
+.valuation-app .board-advanced-filters > summary {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid rgba(14, 47, 46, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 253, 247, 0.88);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 900;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.valuation-app .board-advanced-filters > summary::-webkit-details-marker,
+.valuation-app .bin-advanced-controls > summary::-webkit-details-marker {
+  display: none;
+}
+
+.valuation-app .board-advanced-filters[open] > summary {
+  border-color: rgba(8, 127, 140, 0.34);
+  box-shadow: var(--focus-ring);
+}
+
+.valuation-app .board-advanced-filter-grid {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 20;
+  width: min(520px, 82vw);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(8, 127, 140, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 253, 247, 0.98);
+  box-shadow: 0 18px 42px rgba(19, 32, 31, 0.18);
+}
+
+.valuation-app .toolbar.valuation-toolbar .row-counts {
+  grid-column: auto;
+  min-width: 118px;
+  justify-content: flex-end;
+}
+
+.valuation-app .lookup-board-market-grid.board-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.valuation-app .lookup-board-market-grid.board-only .leaderboard-list {
+  min-height: 0;
+  max-height: none;
+}
+
+.valuation-app .bin-preset-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 6px;
+}
+
+.valuation-app .bin-preset-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.valuation-app .bin-preset-head strong {
+  color: #fffaf0;
+  font-size: 1.02rem;
+}
+
+.valuation-app .bin-preset-head small {
+  color: rgba(255, 250, 240, 0.58);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.valuation-app .bin-preset-strip {
+  grid-template-columns: minmax(190px, 1.25fr) repeat(4, minmax(145px, 1fr));
+  margin-top: 8px;
+}
+
+.valuation-app .bin-advanced-controls {
+  margin-top: 10px;
+  border: 1px solid rgba(255, 250, 240, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 250, 240, 0.035);
+  overflow: hidden;
+}
+
+.valuation-app .bin-advanced-controls > summary {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+  color: rgba(255, 250, 240, 0.84);
+  cursor: pointer;
+  list-style: none;
+}
+
+.valuation-app .bin-advanced-controls > summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 900;
+}
+
+.valuation-app .bin-advanced-controls > summary > span svg {
+  color: #9fd8cf;
+}
+
+.valuation-app .bin-advanced-controls > summary small {
+  color: rgba(255, 250, 240, 0.5);
+  font-weight: 750;
+}
+
+.valuation-app .bin-advanced-controls[open] > summary {
+  border-bottom: 1px solid rgba(255, 250, 240, 0.1);
+  background: rgba(159, 216, 207, 0.06);
+}
+
+.valuation-app .bin-advanced-controls .bin-control-board {
+  padding: 10px;
+}
+
+@media (max-width: 1200px) and (min-width: 721px) {
+  .valuation-app .workflow-mode-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .valuation-app .workflow-mode-card.primary,
+  .valuation-app .workflow-mode-card.secondary {
+    grid-column: span 1;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+  }
+
+  .valuation-app .workflow-mode-card.secondary .workflow-value {
+    display: inline;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .row-counts {
+    grid-column: auto;
+  }
+
+  .valuation-app .bin-preset-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .valuation-app .workflow-mode-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .valuation-app .workflow-mode-card.primary,
+  .valuation-app .workflow-mode-card.secondary {
+    grid-column: span 1;
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-app .workflow-mode-card.secondary:last-child {
+    display: none;
+  }
+
+  .valuation-app .workflow-mode-card.secondary .workflow-card-copy {
+    display: block;
+  }
+
+  .valuation-app .lookup-intent-bar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 9px;
+  }
+
+  .valuation-app .lookup-intent-copy {
+    display: grid;
+    grid-row: 1;
+    padding: 2px 2px 0;
+  }
+
+  .valuation-app .lookup-intent-copy > strong {
+    font-size: 1rem;
+  }
+
+  .valuation-app .lookup-intent-copy > small {
+    font-size: 0.7rem;
+  }
+
+  .valuation-app .lookup-primary-search {
+    grid-row: 2;
+  }
+
+  .valuation-app .lookup-action-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .valuation-app .lookup-action-stack .board-scan-button {
+    grid-column: 1 / -1;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .valuation-app .board-advanced-filters,
+  .valuation-app .toolbar.valuation-toolbar .row-counts {
+    grid-column: 1 / -1;
+  }
+
+  .valuation-app .board-advanced-filters > summary {
+    min-height: 44px;
+  }
+
+  .valuation-app .board-advanced-filter-grid {
+    position: static;
+    width: 100%;
+    grid-template-columns: 1fr;
+    margin-top: 7px;
+    box-shadow: none;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .row-counts {
+    min-height: 24px;
+    justify-content: flex-start;
+  }
+
+  .valuation-app .bin-preset-head {
+    margin-top: 12px;
+  }
+
+  .valuation-app .bin-preset-head strong {
+    font-size: 0.95rem;
+  }
+
+  .valuation-app .bin-preset-head small {
+    font-size: 0.7rem;
+  }
+
+  .valuation-app .bin-preset-strip {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    margin-inline: -2px;
+    padding: 2px 2px 8px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .valuation-app .bin-preset-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .valuation-app .preset-scan-card {
+    flex: 0 0 min(72vw, 238px);
+    min-height: 68px;
+    scroll-snap-align: start;
+  }
+
+  .valuation-app .preset-scan-card.primary-preset {
+    flex-basis: min(80vw, 270px);
+  }
+
+  .valuation-app .bin-advanced-controls > summary {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding-block: 9px;
+  }
+
+  .valuation-app .bin-advanced-controls > summary small {
+    padding-left: 24px;
+    font-size: 0.68rem;
+  }
+}
