@@ -28,6 +28,7 @@
     "comps:batch:market-movers": "node scripts/market-movers-comp-queue.mjs",
     "comps:queue:sync": "node scripts/market-movers-comp-queue.mjs --sync-complete",
     "comps:coverage": "node scripts/card-hedge-coverage-sync.mjs",
+    "comps:coverage:audit": "node scripts/audit-checklist-coverage.mjs",
     "canonical:rebuild": "node scripts/rebuild-canonical-market.mjs",
     "model:backtest": "node scripts/backtest-fair-value.mjs",
     "sales:refresh": "npm run sales:sync && npm run sales:sync:structured && npm run canonical:rebuild && npm run sales:doctor",

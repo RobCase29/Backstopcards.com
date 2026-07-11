@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 const ROOT = process.cwd()
 const DB_PATH = resolve(ROOT, process.argv[2] ?? 'local-data/backstop-sales.sqlite')
 const OUTPUT_PATH = resolve(ROOT, process.argv[3] ?? 'src/data/staticChecklistSnapshot.ts')
-const MIN_YEAR = Number(process.env.STATIC_CHECKLIST_MIN_YEAR ?? 2020)
+const MIN_YEAR = Number(process.env.STATIC_CHECKLIST_MIN_YEAR ?? 2016)
 const MAX_BASE_SALES_PER_PLAYER = 80
 
 if (!existsSync(DB_PATH)) {
@@ -110,12 +110,7 @@ const releases = db.prepare(`
     imported_at AS importedAt
   FROM checklist_releases
   WHERE release_year >= ?
-    AND EXISTS (
-      SELECT 1
-      FROM checklist_cards source_cards
-      WHERE source_cards.release_key = checklist_releases.release_key
-        AND source_cards.source_sheet = 'Wax Pack Hero First Bowman'
-    )
+    AND EXISTS (SELECT 1 FROM checklist_cards source_cards WHERE source_cards.release_key = checklist_releases.release_key)
   ORDER BY release_year DESC, release_name
 `).all(MIN_YEAR)
 
@@ -130,7 +125,6 @@ const playerStatement = db.prepare(`
     COUNT(*) AS checklistRows
   FROM checklist_cards c
   WHERE c.release_key = ?
-    AND c.source_sheet = 'Wax Pack Hero First Bowman'
   GROUP BY c.release_key, c.release_year, c.player_key
   ORDER BY playerName
 `)
@@ -242,44 +236,51 @@ function baseSalesByPlayer(releaseYear) {
   return map
 }
 
-function variationRowsByPlayer(releaseYear, baseMap) {
+function variationRowsByPlayer(releaseYear, baseMap, allowedPlayerKeys) {
   const byPlayer = new Map()
-  const multiplierBuckets = new Map()
 
   for (const row of variationStatement.all(releaseYear)) {
     const price = modelPrice(row)
     if (!price) continue
     const playerName = rowString(row, 'playerName')
     const playerKey = playerYearKey(playerName, releaseYear)
+    if (!allowedPlayerKeys.has(playerKey)) continue
     const label = displayVariation(row)
     const serialDenominator = rowNumber(row, 'serialDenominator')
     const base = modelPrice(baseMap.get(playerKey))
     const releaseMultiplier = base > 0 ? price / base : 0
 
-    if (!isBaseVariation(label) && releaseMultiplier > 0) {
-      const bucket = multiplierBuckets.get(label) ?? {
-        label,
-        values: [],
-        playerCount: 0,
-        totalSales: 0,
-        sortOrder: variationSortOrder(label, serialDenominator),
-      }
-      bucket.values.push(releaseMultiplier)
-      bucket.playerCount += 1
-      bucket.totalSales += rowNumber(row, 'saleCount')
-      bucket.sortOrder = Math.min(bucket.sortOrder, variationSortOrder(label, serialDenominator))
-      multiplierBuckets.set(label, bucket)
-    }
-
-    const current = byPlayer.get(playerKey) ?? []
+    const current = byPlayer.get(playerKey) ?? new Map()
     if (!isBaseVariation(label)) {
-      current.push({
+      const candidate = {
         variation: label,
         avgPrice: money(price),
         multiplier: releaseMultiplier > 0 ? Number(releaseMultiplier.toFixed(3)) : 0,
         salesCount: rowNumber(row, 'saleCount'),
-      })
+        sortOrder: variationSortOrder(label, serialDenominator),
+      }
+      const existing = current.get(label)
+      if (!existing || candidate.salesCount > existing.salesCount) current.set(label, candidate)
       byPlayer.set(playerKey, current)
+    }
+  }
+
+  const multiplierBuckets = new Map()
+  for (const rows of byPlayer.values()) {
+    for (const row of rows.values()) {
+      if (row.multiplier <= 0) continue
+      const bucket = multiplierBuckets.get(row.variation) ?? {
+        label: row.variation,
+        values: [],
+        playerCount: 0,
+        totalSales: 0,
+        sortOrder: row.sortOrder,
+      }
+      bucket.values.push(row.multiplier)
+      bucket.playerCount += 1
+      bucket.totalSales += row.salesCount
+      bucket.sortOrder = Math.min(bucket.sortOrder, row.sortOrder)
+      multiplierBuckets.set(row.variation, bucket)
     }
   }
 
@@ -287,8 +288,8 @@ function variationRowsByPlayer(releaseYear, baseMap) {
     {
       variation: 'Base Auto',
       avgMultiplier: 1,
-      playerCount: baseMap.size,
-      totalSales: [...baseMap.values()].reduce((total, row) => total + rowNumber(row, 'saleCount'), 0),
+      playerCount: [...allowedPlayerKeys].filter((key) => baseMap.has(key)).length,
+      totalSales: [...allowedPlayerKeys].reduce((total, key) => total + rowNumber(baseMap.get(key), 'saleCount'), 0),
       sortOrder: -1,
     },
     ...[...multiplierBuckets.values()]
@@ -304,12 +305,24 @@ function variationRowsByPlayer(releaseYear, baseMap) {
   ]
 
   const multiplierLookup = new Map(multipliers.map((bucket) => [bucket.variation, bucket.avgMultiplier]))
-  for (const rows of byPlayer.values()) {
-    for (const row of rows) {
+  for (const [playerKey, rows] of byPlayer.entries()) {
+    const validRows = []
+    for (const row of rows.values()) {
       if (row.multiplier > 0) continue
       const fallback = multiplierLookup.get(row.variation)
       if (fallback && fallback > 0) row.multiplier = fallback
     }
+    for (const row of rows.values()) {
+      if (row.multiplier <= 0) continue
+      const { sortOrder: _sortOrder, ...publicRow } = row
+      validRows.push(publicRow)
+    }
+    validRows.sort((left, right) => {
+      const leftOrder = rows.get(left.variation)?.sortOrder ?? 0
+      const rightOrder = rows.get(right.variation)?.sortOrder ?? 0
+      return leftOrder - rightOrder || left.variation.localeCompare(right.variation)
+    })
+    byPlayer.set(playerKey, validRows)
   }
 
   return { byPlayer, multipliers }
@@ -319,10 +332,14 @@ const models = releases.map((releaseRow) => {
   const releaseKey = rowString(releaseRow, 'releaseKey')
   const releaseYear = rowNumber(releaseRow, 'releaseYear')
   const releaseName = rowString(releaseRow, 'releaseName')
+  const checklistPlayerRows = playerStatement.all(releaseKey)
+  const allowedPlayerKeys = new Set(
+    checklistPlayerRows.map((row) => playerYearKey(rowString(row, 'playerName'), releaseYear)),
+  )
   const baseMap = baseCandidatesByPlayer(releaseYear)
   const salesMap = baseSalesByPlayer(releaseYear)
-  const { byPlayer: variationMap, multipliers } = variationRowsByPlayer(releaseYear, baseMap)
-  const players = playerStatement.all(releaseKey).map((row) => {
+  const { byPlayer: variationMap, multipliers } = variationRowsByPlayer(releaseYear, baseMap, allowedPlayerKeys)
+  const players = checklistPlayerRows.map((row) => {
     const key = playerYearKey(rowString(row, 'playerName'), releaseYear)
     const baseRow = baseMap.get(key)
     const baseAvgPrice = money(modelPrice(baseRow))
@@ -330,7 +347,7 @@ const models = releases.map((releaseRow) => {
     return {
       playerName: rowString(row, 'playerName'),
       team: rowString(row, 'team') || null,
-      status: rowNumber(row, 'confirmedFirst') ? 'confirmed_1st' : 'first_bowman',
+      status: rowNumber(row, 'confirmedFirst') ? 'confirmed_1st' : 'checklist',
       prospectId: rowString(row, 'playerKey') || null,
       baseAvgPrice,
       baseSalesCount,
@@ -344,7 +361,7 @@ const models = releases.map((releaseRow) => {
     release: releaseSlug(releaseName, releaseKey),
     releaseYear,
     totalPlayers: players.length,
-    firstChromeAutos: players.length,
+    firstChromeAutos: players.filter((player) => player.status === 'confirmed_1st').length,
     activeChecklistPlayers: pricedPlayers.length,
     multipliers,
     players,

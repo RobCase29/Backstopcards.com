@@ -5,11 +5,18 @@ import {
   dailyExportDateCandidates,
   evaluateBowmanBaseAutoCandidate,
   normalizeHostedTimestamp,
+  releaseSearchLabel,
   summarizeHostedCompSales,
   visitCsvRows,
 } from './hostedComps'
 
 describe('hosted comp card matching', () => {
+  it('uses the exact Bowman release and normalizes Draft naming variants', () => {
+    expect(releaseSearchLabel('2025 Bowman Chrome', 2025)).toBe('2025 Bowman Chrome')
+    expect(releaseSearchLabel('2024 Bowman Chrome Draft', 2024)).toBe('2024 Bowman Draft')
+    expect(releaseSearchLabel('2018 Bowman Draft Chrome', 2018)).toBe('2018 Bowman Draft')
+  })
+
   it('accepts a structured flagship base auto without treating a team color as a parallel', () => {
     const result = evaluateBowmanBaseAutoCandidate(
       {
