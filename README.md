@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-The app opens directly into the Backstop workflow: find underpriced players, price a card, and scan active BINs/auctions against the current model. The current source-of-truth path is official Bowman checklists + Wax Pack Hero 1st Bowman evidence + Card Hedge/local sold comps; eBay and Fanatics Collect fixed-price listings are active live-market layers, eBay remains the ending-soon auction layer, and legacy checklist feeds remain optional fallback data.
+The app opens directly into the Backstop workflow: find underpriced players, price a card, and scan active BINs/auctions against the current model. The current source-of-truth path is official Bowman checklists + Wax Pack Hero 1st Bowman evidence + Card Hedge/local sold comps; eBay is the default active-listing layer, while Fanatics Collect is available only through explicitly authorized search/feed access.
 
 ## Product Navigation
 
@@ -40,13 +40,13 @@ Official checklists + Wax Pack Hero 1st lists
   -> checklist universe and card lanes
   -> Card Hedge sold comps + hosted canonical comp cache
   -> base-auto anchors and variation fair values
-  -> live marketplace scans (eBay + Fanatics Collect BINs; eBay auctions)
+  -> live marketplace scans (eBay BINs/auctions; authorized Fanatics Collect feed)
   -> opportunity board, live chart, reject/cleanup loop
 ```
 
-Card Hedge and the canonical comp cache are the pricing core. Production models live in Neon and refresh independently of deployments; the local SQLite database is an offline research and taxonomy workbench. Live marketplace providers only answer "what is active right now?" and raw query pages/snapshots are cached before scoring so multiple users do not repeat the same external calls. eBay Browse powers active BINs and auctions; Fanatics Collect uses its public search-key flow for active fixed-price listings without storing account credentials. The legacy checklist feed is no longer part of normal startup when local checklist data exists.
+Card Hedge and the canonical comp cache are the pricing core. Production models live in Neon and refresh independently of deployments; the local SQLite database is an offline research and taxonomy workbench. Live marketplace providers only answer "what is active right now?" and raw query pages/snapshots are cached before scoring so multiple users do not repeat the same external calls. eBay Browse powers active BINs and auctions. Fanatics Collect access fails closed unless a written authorization reference and approved data path are configured. The legacy checklist feed is no longer part of normal startup when local checklist data exists.
 
-Subscription read: keep Card Hedge and eBay active. Market Movers is now a validation/taxonomy backup unless Card Hedge coverage proves weaker than expected. Fanatics Collect does not require stored login credentials for the current public fixed-price search path. The legacy checklist feed can be cancelled after local checklists and multipliers cover the releases you care about.
+Subscription read: keep Card Hedge and eBay active. Market Movers is now a validation/taxonomy backup unless Card Hedge coverage proves weaker than expected. Fanatics Collect requires written data-access permission or a licensed export/feed before enabling automated retrieval. The legacy checklist feed can be cancelled after local checklists and multipliers cover the releases you care about.
 
 ## Hosted Storage
 
@@ -176,6 +176,12 @@ EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS=600
 `EBAY_ZIP_CODE` improves shipping context. `EBAY_CATEGORY_ID` can narrow search once you choose the correct eBay leaf category for trading cards.
 
 The `/api/ebay/search` proxy caches raw eBay query pages before the app maps and scores them. Fixed-price Browse pages default to 24 hours, so if one visitor scans `Aiva Arquette 2026 Bowman Chrome 1st auto`, the next visitor reuses that page instead of spending another eBay request. Auction pages default to 10 minutes because current bids and end times go stale quickly. The deployed site uses Upstash Redis first, then Vercel Runtime Cache if available, and finally the local SQLite cache in development. Scan stats report live pages versus cached pages so rate-limit savings are visible.
+
+## Fanatics Collect Wide Scan (Authorized Data Only)
+
+The dedicated `/fanatics` page turns an authorized Fanatics inventory feed into a clean Bowman prospect-auto board: player/set search, fair-or-better and near-model bands, raw/graded and max-price filters, several deal sorts, and persistent personal hold targets. The Deals page also includes a Fanatics-only wide-scan action. Both paths fail closed until a written authorization reference and approved cursor feed are configured; they do not crawl Fanatics pages or undocumented endpoints.
+
+See [the Fanatics wide-scan plan and feed contract](docs/FANATICS_COLLECT_WIDE_SCAN.md) for configuration, legal/operational guardrails, response schema, matching rules, and acceptance criteria.
 
 ## eBay Sold Access (Optional)
 

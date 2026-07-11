@@ -4,6 +4,7 @@ import {
   normalizedTitleKey,
   superfractorVariationLabel,
   titleEligibleForBowmanChromeAutoModel,
+  titleLooksLikeAutograph,
   titleLooksLikeBaseAuto,
   titleLooksLikeLowSerialNonAuto,
   titleLooksLikeSuperfractor,
@@ -30,13 +31,21 @@ type FanaticsCollectQueryMeta = {
   serialDenominator?: number
 }
 
-type FanaticsCollectHit = {
+export type FanaticsCollectHit = {
   objectID?: string
+  id?: string
   title?: string
   listingUuid?: string
+  listingId?: string
+  listing_id?: string
   slug?: string
+  url?: string
+  listingUrl?: string
+  listing_url?: string
   marketplace?: string
   marketplaceSource?: string
+  saleType?: string
+  sale_type?: string
   status?: string
   askingPrice?: number | string | null
   currentPrice?: number | string | null
@@ -46,6 +55,31 @@ type FanaticsCollectHit = {
   images?: unknown
   allowOffers?: boolean
   quantityAvailable?: number
+  year?: number | string | null
+  releaseYear?: number | string | null
+  release_year?: number | string | null
+  release?: string | null
+  setName?: string | null
+  set_name?: string | null
+  product?: string | null
+  productName?: string | null
+  product_name?: string | null
+  productTitle?: string | null
+  categoryParent?: string | string[] | null
+  subCategory1?: string | string[] | null
+  cardNumber?: string | null
+  card_number?: string | null
+  serial?: string | number | null
+  gradingService?: string | null
+  grading_service?: string | null
+  grader?: string | null
+  grade?: number | string | null
+  listedAt?: number | string | null
+  listed_at?: number | string | null
+  updatedAt?: number | string | null
+  updated_at?: number | string | null
+  sellerName?: string | null
+  seller_name?: string | null
   _backstopQuery?: FanaticsCollectQueryMeta
 }
 
@@ -55,6 +89,79 @@ type FanaticsCollectSearchResponse = {
   fetchedAt?: string
   stats?: Omit<EbayBinScanResult['stats'], 'mappedListings' | 'rejectedPlayerMismatches'>
   error?: string
+}
+
+export type FanaticsCollectStatus = {
+  provider: 'fanatics-collect'
+  label: string
+  configured: boolean
+  reachable: boolean
+  mode: 'disabled' | 'authorized-targeted-search'
+  marketplaceUrl: string
+  termsUrl: string
+  authorization?: {
+    configured: boolean
+    authorizationId?: string | null
+  }
+  targetedSearch?: {
+    configured: boolean
+    reachable: boolean
+  }
+  wideScan?: {
+    configured: boolean
+    mode: 'disabled' | 'authorized-feed'
+    imageRights: boolean
+    maxPages: number
+    message: string
+  }
+  message: string
+}
+
+type FanaticsCollectWideSearchResponse = FanaticsCollectSearchResponse & {
+  provenance?: {
+    mode?: string
+    authorizationId?: string
+    imageRights?: boolean
+  }
+  coverage?: {
+    complete?: boolean
+    stoppedReason?: string
+    nextCursor?: string | null
+    pageSize?: number
+    maxPages?: number
+    pagesFetched?: number
+    durationMs?: number
+  }
+}
+
+export type FanaticsCollectWideMatchStats = {
+  inputItems: number
+  mappedListings: number
+  rejectedInactive: number
+  rejectedSaleType: number
+  rejectedNonBowman: number
+  rejectedNonAuto: number
+  rejectedPrice: number
+  rejectedYear: number
+  rejectedPlayer: number
+  rejectedAmbiguousPlayer: number
+  rejectedModel: number
+  rejectedAmbiguousModel: number
+  rejectedTitleGuard: number
+}
+
+export type FanaticsCollectWideScanResult = EbayBinScanResult & {
+  coverage: {
+    complete: boolean
+    stoppedReason: string
+    pagesFetched: number
+    durationMs: number
+  }
+  matchStats: FanaticsCollectWideMatchStats
+  provenance: {
+    mode: string
+    authorizationId: string | null
+  }
 }
 
 type FetchFanaticsCollectListingsOptions = {
@@ -188,7 +295,7 @@ function slugFromTitle(title: string) {
 }
 
 function listingUuid(item: FanaticsCollectHit) {
-  const explicit = firstString([item.listingUuid])
+  const explicit = firstString([item.listingUuid, item.listingId, item.listing_id, item.id])
   if (explicit) return explicit
   const objectId = firstString([item.objectID])
   const match = objectId.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
@@ -196,10 +303,51 @@ function listingUuid(item: FanaticsCollectHit) {
 }
 
 function fanaticsCollectListingUrl(item: FanaticsCollectHit, title: string) {
+  const explicitUrl = firstString([item.listingUrl, item.listing_url, item.url])
+  if (/^https:\/\/(?:www\.)?fanaticscollect\.com\//i.test(explicitUrl)) return explicitUrl
   const uuid = listingUuid(item)
   if (!uuid) return 'https://www.fanaticscollect.com/marketplace?type=FIXED'
   const slug = firstString([item.slug], slugFromTitle(title))
   return `https://www.fanaticscollect.com/buy-now/${uuid}/${slug || slugFromTitle(title)}`
+}
+
+function fanaticsCollectTimestamp(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const milliseconds = value < 10_000_000_000 ? value * 1_000 : value
+    const date = new Date(milliseconds)
+    return Number.isNaN(date.getTime()) ? null : date.toISOString()
+  }
+  if (typeof value !== 'string' || !value.trim()) return null
+  const numeric = Number(value)
+  if (Number.isFinite(numeric)) return fanaticsCollectTimestamp(numeric)
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function fanaticsCollectReleaseYear(item: FanaticsCollectHit, title: string) {
+  const explicit = numberValue(item.year ?? item.releaseYear ?? item.release_year, 0)
+  if (explicit >= 1900 && explicit <= 2100) return explicit
+  const titleYear = title.match(/\b(19\d{2}|20\d{2})\b/)
+  return titleYear ? Number(titleYear[1]) : null
+}
+
+function fanaticsCollectIsActive(item: FanaticsCollectHit) {
+  const status = firstString([item.status]).toLowerCase()
+  return !status || /^(live|active|available)$/.test(status)
+}
+
+function fanaticsCollectIsFixedPrice(item: FanaticsCollectHit) {
+  const saleType = firstString([item.saleType, item.sale_type, item.marketplace]).toLowerCase()
+  return !saleType || /^(fixed|buy.?now|bin)$/.test(saleType)
+}
+
+function fanaticsCollectCategoryMatches(title: string, category?: ChecklistModel['category']) {
+  if (!category) return true
+  const isDraft = /\bbowman(?:\s+chrome)?\s+draft\b|\bdraft\b/i.test(title)
+  if (category === 'draft') return isDraft
+  if (isDraft) return false
+  if (category === 'chrome') return /\bbowman\s+chrome\b/i.test(title)
+  return /\bbowman\b/i.test(title)
 }
 
 function imageUrlFrom(value: unknown): string {
@@ -233,6 +381,10 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
   const playerName = firstString([meta?.playerName])
   const title = firstString([item.title])
   if (!playerName || !title || !titleMatchesPlayerName(title, playerName)) return null
+  if (!fanaticsCollectIsActive(item) || !fanaticsCollectIsFixedPrice(item)) return null
+  const releaseYear = fanaticsCollectReleaseYear(item, title)
+  if (meta?.releaseYear && releaseYear !== meta.releaseYear) return null
+  if (!fanaticsCollectCategoryMatches(title, meta?.category)) return null
   if (!titleMatchesVariationTerm(title, meta?.variationTerm)) return null
   if (meta?.superfractorOnly) {
     if (!titleLooksLikeSuperfractor(title)) return null
@@ -240,6 +392,7 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
     if (!titleLooksLikeLowSerialNonAuto(title)) return null
   } else {
     if (meta?.baseAutoOnly && !titleLooksLikeBaseAuto(title)) return null
+    if (!titleLooksLikeAutograph(title)) return null
     if (!titleEligibleForBowmanChromeAutoModel(title)) return null
   }
 
@@ -263,18 +416,21 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
   const uuid = listingUuid(item)
 
   return {
-    item_id: uuid || firstString([item.objectID], title),
+    item_id: `fanatics-collect:${uuid || firstString([item.objectID, item.id], title)}`,
     player_name: playerName,
     title,
     current_price: price,
-    shipping_cost: 0,
+    shipping_cost: null,
     buying_format: 'Buy It Now',
     listing_status: 'active',
     listing_url: fanaticsCollectListingUrl(item, title),
     marketplace: 'fanatics-collect',
     marketplace_label: 'Fanatics Collect',
     image_url: imageUrlFrom(item.imageSets) || imageUrlFrom(item.images),
-    release_year: meta?.releaseYear ?? null,
+    created_at: fanaticsCollectTimestamp(item.listedAt ?? item.listed_at),
+    listed_at: fanaticsCollectTimestamp(item.listedAt ?? item.listed_at),
+    seller_username: firstString([item.sellerName, item.seller_name]) || null,
+    release_year: releaseYear,
     product_type: meta?.superfractorOnly ? 'Bowman Superfractor' : fallbackReleaseLabel,
     release: meta?.release ?? fallbackReleaseLabel,
     variation: inferredVariation,
@@ -282,6 +438,9 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
     is_hand_signed: isHandSigned,
     checklist_match: true,
     checklist_first_bowman: meta?.superfractorOnly ? /\b(1st|first)\b/i.test(title) : !meta?.lowSerialNonAuto,
+    is_graded: Boolean(firstString([item.gradingService, item.grading_service, item.grader]) || item.grade),
+    grader: firstString([item.gradingService, item.grading_service, item.grader]) || null,
+    grade: item.grade ?? null,
     comps: [],
     prospect: {
       name: playerName,
@@ -308,6 +467,275 @@ function dedupeListings(listings: MarketplaceListing[]) {
     deduped.push(listing)
   }
   return deduped
+}
+
+type FanaticsWideCandidate = {
+  model: ChecklistModel
+  playerName: string
+  playerKey: string
+}
+
+function emptyWideMatchStats(inputItems: number): FanaticsCollectWideMatchStats {
+  return {
+    inputItems,
+    mappedListings: 0,
+    rejectedInactive: 0,
+    rejectedSaleType: 0,
+    rejectedNonBowman: 0,
+    rejectedNonAuto: 0,
+    rejectedPrice: 0,
+    rejectedYear: 0,
+    rejectedPlayer: 0,
+    rejectedAmbiguousPlayer: 0,
+    rejectedModel: 0,
+    rejectedAmbiguousModel: 0,
+    rejectedTitleGuard: 0,
+  }
+}
+
+function fanaticsCollectExplicitRelease(item: FanaticsCollectHit) {
+  return firstString([
+    item.release,
+    item.setName,
+    item.set_name,
+    item.product,
+    item.productName,
+    item.product_name,
+  ])
+}
+
+function fanaticsCollectModelReleaseKey(model: ChecklistModel) {
+  return normalizedTitleKey(`${model.releaseYear} ${model.release.replace(/[-_]+/g, ' ')}`)
+}
+
+function explicitReleaseMatchesModel(explicitRelease: string, model: ChecklistModel) {
+  if (!explicitRelease) return false
+  const explicit = normalizedTitleKey(explicitRelease)
+  const modelKey = fanaticsCollectModelReleaseKey(model)
+  if (explicit === modelKey) return true
+  const hasYear = explicit.includes(String(model.releaseYear))
+  if (!hasYear) return false
+  if (model.category === 'draft') return /\bdraft\b/.test(explicit)
+  if (model.category === 'chrome') return /\bchrome\b/.test(explicit) && !/\bdraft\b/.test(explicit)
+  return /\bbowman\b/.test(explicit) && !/\b(?:chrome|draft)\b/.test(explicit)
+}
+
+function fanaticsCollectWideCandidates(models: ChecklistModel[]) {
+  const byYear = new Map<number, FanaticsWideCandidate[]>()
+  for (const model of models) {
+    for (const player of model.players) {
+      const playerKey = normalizedTitleKey(player.playerName)
+      if (!playerKey) continue
+      const candidates = byYear.get(model.releaseYear) ?? []
+      candidates.push({ model, playerName: player.playerName, playerKey })
+      byYear.set(model.releaseYear, candidates)
+    }
+  }
+  return byYear
+}
+
+function uniquePlayerMatches(title: string, candidates: FanaticsWideCandidate[]) {
+  const byPlayer = new Map<string, FanaticsWideCandidate[]>()
+  for (const candidate of candidates) {
+    if (!titleMatchesPlayerName(title, candidate.playerName)) continue
+    const current = byPlayer.get(candidate.playerKey) ?? []
+    current.push(candidate)
+    byPlayer.set(candidate.playerKey, current)
+  }
+  const matches = [...byPlayer.entries()]
+    .map(([playerKey, playerCandidates]) => ({ playerKey, candidates: playerCandidates }))
+    .sort(
+      (left, right) =>
+        right.playerKey.split(' ').length - left.playerKey.split(' ').length ||
+        right.playerKey.length - left.playerKey.length,
+    )
+  const best = matches[0]
+  if (!best) return { candidates: [] as FanaticsWideCandidate[], ambiguous: false }
+  const bestWords = best.playerKey.split(' ').length
+  const bestLength = best.playerKey.length
+  const equallySpecific = matches.filter(
+    (match) => match.playerKey.split(' ').length === bestWords && match.playerKey.length === bestLength,
+  )
+  return {
+    candidates: best.candidates,
+    ambiguous: equallySpecific.length > 1,
+  }
+}
+
+function categoryNarrowedCandidates(title: string, candidates: FanaticsWideCandidate[]) {
+  const isDraft = /\bdraft\b/i.test(title)
+  if (isDraft) return candidates.filter((candidate) => candidate.model.category === 'draft')
+  return candidates.filter((candidate) => candidate.model.category !== 'draft')
+}
+
+function resolveFanaticsCollectWideCandidate(item: FanaticsCollectHit, modelsByYear: Map<number, FanaticsWideCandidate[]>) {
+  const title = firstString([item.title, item.productTitle])
+  const year = fanaticsCollectReleaseYear(item, title)
+  if (!year) return { code: 'year' as const }
+  const yearCandidates = modelsByYear.get(year) ?? []
+  if (yearCandidates.length === 0) return { code: 'model' as const }
+
+  const playerMatch = uniquePlayerMatches(title, yearCandidates)
+  if (playerMatch.ambiguous) return { code: 'ambiguous-player' as const }
+  if (playerMatch.candidates.length === 0) return { code: 'player' as const }
+
+  let candidates = categoryNarrowedCandidates(title, playerMatch.candidates)
+  const explicitRelease = fanaticsCollectExplicitRelease(item)
+  if (explicitRelease) {
+    const explicitMatches = candidates.filter((candidate) => explicitReleaseMatchesModel(explicitRelease, candidate.model))
+    if (explicitMatches.length > 0) candidates = explicitMatches
+  }
+
+  const modelsByKey = new Map<string, FanaticsWideCandidate>()
+  for (const candidate of candidates) {
+    const key = `${candidate.model.category}:${candidate.model.releaseYear}:${normalizedTitleKey(candidate.model.release)}`
+    modelsByKey.set(key, candidate)
+  }
+  const uniqueCandidates = [...modelsByKey.values()]
+  if (uniqueCandidates.length === 0) return { code: 'model' as const }
+  if (uniqueCandidates.length > 1) return { code: 'ambiguous-model' as const }
+  return { code: 'matched' as const, candidate: uniqueCandidates[0], title, year }
+}
+
+export function mapAuthorizedFanaticsCollectInventory(
+  items: FanaticsCollectHit[],
+  models: ChecklistModel[],
+): { listings: MarketplaceListing[]; stats: FanaticsCollectWideMatchStats } {
+  const stats = emptyWideMatchStats(items.length)
+  const modelsByYear = fanaticsCollectWideCandidates(models)
+  const listings: MarketplaceListing[] = []
+
+  for (const item of items) {
+    const title = firstString([item.title, item.productTitle])
+    if (!fanaticsCollectIsActive(item)) {
+      stats.rejectedInactive += 1
+      continue
+    }
+    if (!fanaticsCollectIsFixedPrice(item)) {
+      stats.rejectedSaleType += 1
+      continue
+    }
+    if (!/\bbowman\b/i.test(title)) {
+      stats.rejectedNonBowman += 1
+      continue
+    }
+    if (!titleLooksLikeAutograph(title)) {
+      stats.rejectedNonAuto += 1
+      continue
+    }
+    if (fanaticsCollectPrice(item) <= 0) {
+      stats.rejectedPrice += 1
+      continue
+    }
+    if (!titleEligibleForBowmanChromeAutoModel(title)) {
+      stats.rejectedTitleGuard += 1
+      continue
+    }
+
+    const resolved = resolveFanaticsCollectWideCandidate(item, modelsByYear)
+    if (resolved.code === 'year') stats.rejectedYear += 1
+    else if (resolved.code === 'player') stats.rejectedPlayer += 1
+    else if (resolved.code === 'ambiguous-player') stats.rejectedAmbiguousPlayer += 1
+    else if (resolved.code === 'model') stats.rejectedModel += 1
+    else if (resolved.code === 'ambiguous-model') stats.rejectedAmbiguousModel += 1
+    if (resolved.code !== 'matched') continue
+
+    const { candidate } = resolved
+    const listing = mapFanaticsCollectHitToListing(
+      {
+        ...item,
+        title,
+        _backstopQuery: {
+          playerName: candidate.playerName,
+          release: candidate.model.release,
+          releaseYear: candidate.model.releaseYear,
+          category: candidate.model.category,
+        },
+      },
+      releaseProductLabel(candidate.model),
+    )
+    if (!listing) {
+      stats.rejectedTitleGuard += 1
+      continue
+    }
+    listings.push(listing)
+  }
+
+  const deduped = dedupeListings(listings)
+  stats.mappedListings = deduped.length
+  return { listings: deduped, stats }
+}
+
+export async function fetchFanaticsCollectStatus(signal?: AbortSignal): Promise<FanaticsCollectStatus> {
+  const response = await fetch('/api/fanatics-collect/status', { signal })
+  const payload = (await response.json()) as FanaticsCollectStatus & { error?: string }
+  if (!response.ok) throw new Error(payload.error ?? 'Could not read Fanatics Collect status')
+  return payload
+}
+
+export async function fetchFanaticsCollectWideListings(options: {
+  models: ChecklistModel[]
+  minPrice?: number
+  pageSize?: number
+  maxPages?: number
+  signal?: AbortSignal
+}): Promise<FanaticsCollectWideScanResult> {
+  if (options.models.length === 0) throw new Error('No checklist models are loaded for the Fanatics wide scan.')
+  const response = await fetch('/api/fanatics-collect/wide-scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal: options.signal,
+    body: JSON.stringify({
+      minPrice: options.minPrice ?? 0,
+      pageSize: options.pageSize,
+      maxPages: options.maxPages,
+    }),
+  })
+  const payload = (await response.json()) as FanaticsCollectWideSearchResponse
+  if (!response.ok) throw new Error(payload.error ?? 'Fanatics Collect wide scan failed')
+
+  const mapped = mapAuthorizedFanaticsCollectInventory(payload.items ?? [], options.models)
+  const coverage = {
+    complete: Boolean(payload.coverage?.complete),
+    stoppedReason: payload.coverage?.stoppedReason ?? 'unknown',
+    pagesFetched: payload.coverage?.pagesFetched ?? payload.stats?.pagesFetched ?? 0,
+    durationMs: payload.coverage?.durationMs ?? 0,
+  }
+  const errors = [...(payload.errors ?? [])]
+  if (!coverage.complete && errors.length === 0) {
+    errors.push({ error: `Fanatics wide scan is partial (${coverage.stoppedReason}).` })
+  }
+
+  return {
+    listings: mapped.listings,
+    fetchedAt: payload.fetchedAt ?? new Date().toISOString(),
+    errors,
+    stats: {
+      queriesRun: payload.stats?.queriesRun ?? 1,
+      queriesSucceeded: payload.stats?.queriesSucceeded ?? (coverage.complete ? 1 : 0),
+      queriesFailed: payload.stats?.queriesFailed ?? (coverage.complete ? 0 : 1),
+      pagesFetched: payload.stats?.pagesFetched ?? coverage.pagesFetched,
+      upstreamTotal: payload.stats?.upstreamTotal ?? payload.items?.length ?? 0,
+      dedupedItems: payload.stats?.dedupedItems ?? payload.items?.length ?? 0,
+      mappedListings: mapped.listings.length,
+      rejectedPlayerMismatches:
+        mapped.stats.inputItems - mapped.stats.mappedListings,
+      cacheHits: payload.stats?.cacheHits ?? 0,
+      cacheMisses: payload.stats?.cacheMisses ?? 0,
+      cacheWrites: payload.stats?.cacheWrites ?? 0,
+      cacheSkips: payload.stats?.cacheSkips ?? 0,
+      redisCacheHits: payload.stats?.redisCacheHits ?? 0,
+      runtimeCacheHits: payload.stats?.runtimeCacheHits ?? 0,
+      sqliteCacheHits: payload.stats?.sqliteCacheHits ?? 0,
+      upstreamPagesFetched: payload.stats?.upstreamPagesFetched ?? coverage.pagesFetched,
+    },
+    coverage,
+    matchStats: mapped.stats,
+    provenance: {
+      mode: payload.provenance?.mode ?? 'authorized-feed',
+      authorizationId: payload.provenance?.authorizationId ?? null,
+    },
+  }
 }
 
 export async function fetchFanaticsCollectBinListings(options: FetchFanaticsCollectListingsOptions): Promise<EbayBinScanResult> {

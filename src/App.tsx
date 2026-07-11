@@ -14,6 +14,7 @@ import {
   Package,
   Radio,
   RefreshCw,
+  ScanSearch,
   Search,
   ShieldCheck,
   Sigma,
@@ -29,6 +30,7 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as Reac
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import './BackstopV2.css'
+import { FanaticsCollectPage } from './FanaticsCollectPage'
 import {
   fetchChecklistCatalog,
   fetchChecklistModel,
@@ -42,7 +44,12 @@ import {
   type EbayBinSearchMode,
   type EbayStatus,
 } from './lib/ebay'
-import { fetchFanaticsCollectBinListings } from './lib/fanaticsCollect'
+import {
+  fetchFanaticsCollectBinListings,
+  fetchFanaticsCollectStatus,
+  fetchFanaticsCollectWideListings,
+  type FanaticsCollectStatus,
+} from './lib/fanaticsCollect'
 import { impliedDynastyBasePrice, scoreDynastyValueOpportunity } from './lib/dynastyValue'
 import {
   capLiveMarketOpportunities,
@@ -219,7 +226,7 @@ type QuickGradeKey =
   | 'sgc-10'
   | 'cgc-9'
   | 'cgc-10'
-type WorkMode = 'lookup' | 'deals' | 'price' | 'health' | 'case-hits' | 'wax'
+type WorkMode = 'lookup' | 'deals' | 'fanatics' | 'price' | 'health' | 'case-hits' | 'wax'
 type FreshnessTone = 'fresh' | 'watch' | 'stale' | 'empty' | 'offline'
 type AppRoute = 'desk' | 'marlins'
 type BinVariationOption = {
@@ -637,6 +644,7 @@ const MARLINS_ROUTE_PATH = '/teams/marlins'
 const WORK_MODE_PATHS: Record<WorkMode, string> = {
   lookup: '/',
   deals: '/deals',
+  fanatics: '/fanatics',
   price: '/price',
   health: '/health',
   'case-hits': '/case-hits',
@@ -2520,6 +2528,7 @@ function WorkflowCommand({
   pricedRows,
   topBase,
   dealCount,
+  fanaticsDealCount,
   listingCount,
   modelReady,
 }: {
@@ -2529,6 +2538,7 @@ function WorkflowCommand({
   pricedRows: number
   topBase: number
   dealCount: number
+  fanaticsDealCount: number
   listingCount: number
   modelReady: boolean
 }) {
@@ -2564,6 +2574,15 @@ function WorkflowCommand({
       icon: <Calculator size={19} />,
     },
     {
+      mode: 'fanatics' as const,
+      tier: 'primary',
+      eyebrow: 'Collect',
+      title: 'Fanatics Finds',
+      description: 'Cards within 50% of model',
+      value: fanaticsDealCount.toLocaleString(),
+      icon: <Store size={19} />,
+    },
+    {
       mode: 'case-hits' as const,
       tier: 'secondary',
       eyebrow: 'Rare',
@@ -2592,7 +2611,7 @@ function WorkflowCommand({
     },
   ]
   const primaryMobileItems = navigationItems.filter((item) =>
-    ['lookup', 'deals', 'price'].includes(item.mode),
+    ['lookup', 'deals', 'fanatics', 'price'].includes(item.mode),
   )
   const secondaryMobileItems = navigationItems.filter((item) =>
     ['case-hits', 'wax', 'health'].includes(item.mode),
@@ -2681,7 +2700,7 @@ function WorkflowCommand({
             key={`mobile:${item.mode}`}
           >
             <span>{item.icon}</span>
-            <strong>{item.mode === 'lookup' ? 'Board' : item.mode === 'deals' ? 'Deals' : 'Price'}</strong>
+            <strong>{item.mode === 'lookup' ? 'Board' : item.mode === 'deals' ? 'Deals' : item.mode === 'fanatics' ? 'Fanatics' : 'Price'}</strong>
           </button>
         ))}
         <button
@@ -6319,6 +6338,7 @@ function BinRadar({
   scan,
   auctionScan,
   ebayStatus,
+  fanaticsStatus,
   loading,
   auctionLoading,
   modelLoading,
@@ -6348,6 +6368,7 @@ function BinRadar({
   onScanBaseAutos,
   onScanLowSerial,
   onScanSuperfractors,
+  onScanFanaticsWide,
   resultsRef,
 }: {
   models: ChecklistModel[]
@@ -6362,6 +6383,7 @@ function BinRadar({
   scan: EbayBinScanResult | null
   auctionScan: EbayBinScanResult | null
   ebayStatus: EbayStatus | null
+  fanaticsStatus: FanaticsCollectStatus | null
   loading: boolean
   auctionLoading: boolean
   modelLoading: boolean
@@ -6391,9 +6413,14 @@ function BinRadar({
   onScanBaseAutos: () => void
   onScanLowSerial: () => void
   onScanSuperfractors: () => void
+  onScanFanaticsWide: () => void
   resultsRef: RefObject<HTMLDivElement | null>
 }) {
-  const configured = Boolean(ebayStatus?.configured)
+  const ebayConfigured = Boolean(ebayStatus?.configured)
+  const fanaticsTargetedConfigured = Boolean(fanaticsStatus?.targetedSearch?.configured)
+  const fanaticsWideConfigured = Boolean(fanaticsStatus?.wideScan?.configured)
+  const targetedConfigured = ebayConfigured || fanaticsTargetedConfigured
+  const configured = targetedConfigured || fanaticsWideConfigured
   const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
   const listingMarketplaceCounts = scan ? marketplaceCountsFromListings(scan.listings) : []
   const opportunityMarketplaceCounts = opportunities.length ? marketplaceCountsFromOpportunities(opportunities) : []
@@ -6442,12 +6469,13 @@ function BinRadar({
         ? 'Browse cache on'
         : 'Browse cache off'
   const busy = loading || auctionLoading
-  const canScan = configured && setCount > 0 && hasPlayerUniverse && hasFocus && hasTargetQueue && !busy && !modelLoading
-  const canScanBaseAutos = configured && setCount > 0 && hasPlayerUniverse && hasTargetQueue && !busy && !modelLoading
-  const canScanLowSerial = configured && setCount > 0 && hasPlayerUniverse && valuePlayerCount > 0 && !busy && !modelLoading
-  const canScanSuperfractors = configured && setCount > 0 && hasPlayerUniverse && !busy && !modelLoading
-  const canScanValueTargets = configured && setCount > 0 && hasPlayerUniverse && valuePlayerCount > 0 && !busy && !modelLoading
-  const canScanTopProspects = configured && setCount > 0 && hasPlayerUniverse && prospectPlayerCount > 0 && !busy && !modelLoading
+  const canScan = targetedConfigured && setCount > 0 && hasPlayerUniverse && hasFocus && hasTargetQueue && !busy && !modelLoading
+  const canScanBaseAutos = targetedConfigured && setCount > 0 && hasPlayerUniverse && hasTargetQueue && !busy && !modelLoading
+  const canScanLowSerial = targetedConfigured && setCount > 0 && hasPlayerUniverse && valuePlayerCount > 0 && !busy && !modelLoading
+  const canScanSuperfractors = targetedConfigured && setCount > 0 && hasPlayerUniverse && !busy && !modelLoading
+  const canScanValueTargets = targetedConfigured && setCount > 0 && hasPlayerUniverse && valuePlayerCount > 0 && !busy && !modelLoading
+  const canScanTopProspects = targetedConfigured && setCount > 0 && hasPlayerUniverse && prospectPlayerCount > 0 && !busy && !modelLoading
+  const canScanFanaticsWide = fanaticsWideConfigured && setCount > 0 && hasPlayerUniverse && !busy && !modelLoading
   const queueWaitingLabel =
     playerScope === 'value-25' ? 'Value board waiting' : playerScope === 'prospect-100' ? 'Top 100 waiting' : 'Target 50 waiting'
   let readinessLabel = 'Ready'
@@ -6468,7 +6496,7 @@ function BinRadar({
   else if (setCount === 0 || !hasPlayerUniverse) scanButtonLabel = 'Player list needed'
   else if (!hasTargetQueue) scanButtonLabel = queueWaitingLabel
   else if (!hasFocus) scanButtonLabel = searchMode === 'player' ? 'Enter player' : 'Enter variation'
-  const auctionButtonLabel = auctionLoading ? 'Scanning auctions' : modelLoading ? 'Model loading' : configured ? 'Auctions only' : 'eBay offline'
+  const auctionButtonLabel = auctionLoading ? 'Scanning auctions' : modelLoading ? 'Model loading' : ebayConfigured ? 'Auctions only' : 'eBay offline'
   const focusPlaceholder = searchMode === 'player' ? 'Eli Willits' : 'Select variation'
   const scopeLabel =
     playerScope === 'value-25'
@@ -6518,7 +6546,15 @@ function BinRadar({
         <div className="bin-radar-pills">
           <span className={configured ? 'connected' : 'offline'}>
             {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
-            {configured ? 'eBay + Fanatics' : 'eBay keys needed'}
+            {ebayConfigured && (fanaticsTargetedConfigured || fanaticsWideConfigured)
+              ? 'eBay + Fanatics'
+              : ebayConfigured
+                ? 'eBay live'
+                : fanaticsWideConfigured
+                  ? 'Fanatics authorized feed'
+                  : fanaticsTargetedConfigured
+                    ? 'Fanatics targeted search'
+                    : 'Marketplace unavailable'}
           </span>
           {configured ? <span className={ebayStatus?.cache?.enabled ? 'connected' : 'offline'}>{browseCacheLabel}</span> : null}
           <span className={hasPlayerUniverse ? 'connected' : 'offline'}>{readinessLabel}</span>
@@ -6557,6 +6593,19 @@ function BinRadar({
         </div>
       </div>
       <div className="bin-preset-strip" aria-label="High value scan presets">
+        <button
+          className={`preset-scan-card ${fanaticsWideConfigured ? 'primary-preset' : ''}`}
+          type="button"
+          onClick={onScanFanaticsWide}
+          disabled={!canScanFanaticsWide}
+          title={fanaticsStatus?.wideScan?.message}
+        >
+          <ScanSearch size={17} />
+          <span>
+            <strong>Wide Fanatics sweep</strong>
+            <small>{fanaticsWideConfigured ? `All ${playerCount.toLocaleString()} loaded player lanes` : 'Requires approved Fanatics data access'}</small>
+          </span>
+        </button>
         <button className="preset-scan-card primary-preset" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
           <Brain size={17} />
           <span>
@@ -6593,6 +6642,14 @@ function BinRadar({
           </span>
         </button>
       </div>
+      {!fanaticsWideConfigured ? (
+        <div className="bin-control-note">
+          <span>
+            Wide Fanatics scans stay disabled until an authorized feed and written data-access reference are configured.{' '}
+            <a href={fanaticsStatus?.termsUrl} target="_blank" rel="noreferrer">Fanatics terms</a>
+          </span>
+        </div>
+      ) : null}
 
       <details className="bin-advanced-controls">
         <summary>
@@ -6746,7 +6803,7 @@ function BinRadar({
               <RefreshCw size={16} className={loading || auctionLoading ? 'spin' : undefined} />
               {scanButtonLabel}
             </button>
-            <button className="ghost-button value-scan-button" type="button" onClick={onScanAuctions} disabled={!canScan}>
+            <button className="ghost-button value-scan-button" type="button" onClick={onScanAuctions} disabled={!canScan || !ebayConfigured}>
               <Activity size={16} className={auctionLoading ? 'spin' : undefined} />
               {auctionButtonLabel}
             </button>
@@ -8506,6 +8563,7 @@ function App() {
     typeof window === 'undefined' ? 'desk' : appRouteFromPath(window.location.pathname),
   )
   const [ebayStatus, setEbayStatus] = useState<EbayStatus | null>(null)
+  const [fanaticsStatus, setFanaticsStatus] = useState<FanaticsCollectStatus | null>(null)
   const [binListings, setBinListings] = useState<MarketplaceListing[]>([])
   const [binLoading, setBinLoading] = useState(false)
   const [binError, setBinError] = useState<string | null>(null)
@@ -8891,6 +8949,7 @@ function App() {
     let active = true
     const catalogController = new AbortController()
     const ebayController = new AbortController()
+    const fanaticsController = new AbortController()
     const liveMarketController = new AbortController()
     const observabilityController = new AbortController()
     const rankingsController = new AbortController()
@@ -8906,6 +8965,31 @@ function App() {
             marketplaceId: 'EBAY_US',
             hasCategoryId: false,
             message: statusError instanceof Error ? statusError.message : 'Could not read eBay status',
+          })
+        }
+      })
+    fetchFanaticsCollectStatus(fanaticsController.signal)
+      .then((status) => {
+        if (active) setFanaticsStatus(status)
+      })
+      .catch((statusError) => {
+        if (active && !fanaticsController.signal.aborted) {
+          setFanaticsStatus({
+            provider: 'fanatics-collect',
+            label: 'Fanatics Collect',
+            configured: false,
+            reachable: false,
+            mode: 'disabled',
+            marketplaceUrl: 'https://www.fanaticscollect.com/marketplace?type=FIXED',
+            termsUrl: 'https://support.fanaticscollect.com/en_us/terms-of-use-r11C70QTge',
+            wideScan: {
+              configured: false,
+              mode: 'disabled',
+              imageRights: false,
+              maxPages: 0,
+              message: statusError instanceof Error ? statusError.message : 'Could not read Fanatics Collect status',
+            },
+            message: statusError instanceof Error ? statusError.message : 'Could not read Fanatics Collect status',
           })
         }
       })
@@ -8977,6 +9061,7 @@ function App() {
       active = false
       catalogController.abort()
       ebayController.abort()
+      fanaticsController.abort()
       liveMarketController.abort()
       observabilityController.abort()
       rankingsController.abort()
@@ -10194,15 +10279,89 @@ function App() {
   }
 
   async function loadSalesCacheModelsForListings(listings: MarketplaceListing[], signal?: AbortSignal) {
-    const playerNames = playerNamesFromListings(listings)
+    const playerNames = playerNamesFromListings(listings, 3_000)
     if (playerNames.length === 0) return {}
 
-    const response = await fetchSalesCachePlayers(playerNames, signal)
-    const record = salesCacheModelsToRecord(response.players ?? [])
+    const batches: string[][] = []
+    for (let index = 0; index < playerNames.length; index += 140) batches.push(playerNames.slice(index, index + 140))
+    const responses = await mapWithConcurrency(batches, 3, (batch) => fetchSalesCachePlayers(batch, signal))
+    const record = salesCacheModelsToRecord(responses.flatMap((response) => response.players ?? []))
     if (Object.keys(record).length > 0) {
       setActiveSalesCacheModels((current) => ({ ...current, ...record }))
     }
     return record
+  }
+
+  async function scanFanaticsCollectWide(destination: 'deals' | 'fanatics' = 'deals') {
+    const scanModels = binModelOptions.filter((model) => model.players.length > 0)
+    if (scanModels.length === 0) {
+      setBinError('No checklist models are loaded for the Fanatics wide scan.')
+      return
+    }
+    if (!fanaticsStatus?.wideScan?.configured) {
+      setBinError(
+        fanaticsStatus?.wideScan?.message ??
+          'Fanatics Collect wide scan requires an approved data feed and written data-access permission.',
+      )
+      return
+    }
+
+    navigateWorkMode(destination)
+    revealDealResults()
+    setBinModelKey(BIN_ALL_MODELS_KEY)
+    setBinSearchMode('checklist')
+    setBinSearchTerm('')
+    setBinPlayerScope('all')
+    setBinResultSort('edge-desc')
+    resetAuctionScan()
+    binRequestRef.current?.abort()
+    const controller = new AbortController()
+    binRequestRef.current = controller
+    setBinLoading(true)
+    setBinError(null)
+    setLastRejectedListing(null)
+
+    try {
+      const scanResult = await fetchFanaticsCollectWideListings({
+        models: scanModels,
+        minPrice: binMinPrice,
+        maxPages: fanaticsStatus.wideScan.maxPages,
+        signal: controller.signal,
+      })
+      if (controller.signal.aborted) return
+      const visibleScanResult = filterRejectedScanResult(scanResult, rejectedListingKeys)
+      setBinListings(scanResult.listings)
+      setBinScan(scanResult)
+      setBinError(binScanErrorSummary(scanResult))
+
+      let scanSalesCacheModels = activeSalesCacheModels
+      try {
+        const loadedSalesCacheModels = await loadSalesCacheModelsForListings(visibleScanResult.listings, controller.signal)
+        scanSalesCacheModels = { ...activeSalesCacheModels, ...loadedSalesCacheModels }
+      } catch {
+        scanSalesCacheModels = activeSalesCacheModels
+      }
+      if (controller.signal.aborted) return
+      void saveScoredLiveMarketSnapshot({
+        scanType: 'bin',
+        scanResult: visibleScanResult,
+        models: scanModels,
+        minPrice: binMinPrice,
+        playerScope: 'all',
+        playerNames: [],
+        searchMode: 'checklist',
+        searchTerm: 'authorized-fanatics-wide-feed',
+        salesCacheModels: scanSalesCacheModels,
+      })
+    } catch (scanError) {
+      if (controller.signal.aborted) return
+      setBinError(scanError instanceof Error ? scanError.message : 'Fanatics Collect wide scan failed')
+    } finally {
+      if (binRequestRef.current === controller) {
+        setBinLoading(false)
+        binRequestRef.current = null
+      }
+    }
   }
 
   async function saveScoredLiveMarketSnapshot(options: {
@@ -10263,6 +10422,7 @@ function App() {
         targetType: options.coverageTargetType ?? 'listing',
       })
       if (targets.length > 0) {
+        const scannedMarketplaces = scanCoverageMarketplaceHits(scanResult.listings).map((marketplace) => marketplace.marketplace)
         await saveScanCoverageRun({
           scanType: options.scanType,
           scanKey,
@@ -10274,7 +10434,7 @@ function App() {
           releaseScope: effectiveBinModelKey === BIN_ALL_MODELS_KEY ? 'all' : 'selected',
           observedAt: options.scanResult.fetchedAt,
           status: scanResult.errors.length > 0 ? 'partial' : 'complete',
-          marketplaces: ['ebay', 'fanatics-collect'],
+          marketplaces: scannedMarketplaces,
           request: {
             minPrice: options.minPrice,
             modelKeys: options.models.map(checklistModelKey),
@@ -10342,8 +10502,9 @@ function App() {
       return
     }
 
-    if (!ebayStatus?.configured) {
-      setBinError(ebayStatus?.message ?? 'Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in .env.local')
+    const binProvidersConfigured = Boolean(ebayStatus?.configured || fanaticsStatus?.targetedSearch?.configured)
+    if (!binProvidersConfigured) {
+      setBinError(fanaticsStatus?.message ?? ebayStatus?.message ?? 'No authorized live-listing provider is configured.')
       return
     }
 
@@ -10417,10 +10578,13 @@ function App() {
             searchTerm: activeSearchTerm,
             signal: controller.signal,
           }
-          const providerScans = await Promise.allSettled([
-            fetchEbayBinListings(providerOptions),
-            fetchFanaticsCollectBinListings(providerOptions),
-          ])
+          const providers = [
+            ...(ebayStatus?.configured ? [{ label: 'eBay', run: () => fetchEbayBinListings(providerOptions) }] : []),
+            ...(fanaticsStatus?.targetedSearch?.configured
+              ? [{ label: 'Fanatics Collect', run: () => fetchFanaticsCollectBinListings(providerOptions) }]
+              : []),
+          ]
+          const providerScans = await Promise.allSettled(providers.map((provider) => provider.run()))
           const successfulProviderScans = providerScans.flatMap((providerResult) =>
             providerResult.status === 'fulfilled' ? [providerResult.value] : [],
           )
@@ -10428,13 +10592,11 @@ function App() {
             providerResult.status === 'rejected'
               ? [
                   {
-                    query: `${checklistModelLabel(model)} / ${providerIndex === 0 ? 'eBay' : 'Fanatics Collect'}`,
+                    query: `${checklistModelLabel(model)} / ${providers[providerIndex]?.label ?? 'marketplace'}`,
                     error:
                       providerResult.reason instanceof Error
                         ? providerResult.reason.message
-                        : providerIndex === 0
-                          ? 'eBay BIN scan failed'
-                          : 'Fanatics Collect scan failed',
+                        : `${providers[providerIndex]?.label ?? 'Marketplace'} BIN scan failed`,
                   },
                 ]
               : [],
@@ -10824,6 +10986,9 @@ function App() {
           pricedRows={matrix.totalPricedPlayers}
           topBase={topBase}
           dealCount={displayedBinOpportunities.length + displayedAuctionOpportunities.length}
+          fanaticsDealCount={displayedBinOpportunities.filter(
+            (opportunity) => opportunity.listing.marketplace === 'fanatics-collect' && opportunity.listing.allInPrice <= opportunity.fairValue,
+          ).length}
           listingCount={displayedLiveListingCount}
           modelReady={matrix.totalResolvedCells > 0}
         />
@@ -11118,6 +11283,15 @@ function App() {
             </aside>
           ) : null}
         </section>
+      ) : workMode === 'fanatics' ? (
+        <FanaticsCollectPage
+          opportunities={displayedBinOpportunities}
+          scan={binScan}
+          status={fanaticsStatus}
+          loading={binLoading}
+          error={binError}
+          onRunScan={() => void scanFanaticsCollectWide('fanatics')}
+        />
       ) : workMode === 'price' ? (
         <section className="price-workflow" aria-label="Price my card">
           <div className="price-workflow-shell">
@@ -11177,6 +11351,7 @@ function App() {
             scan={binScan}
             auctionScan={auctionScan}
             ebayStatus={ebayStatus}
+            fanaticsStatus={fanaticsStatus}
             loading={binLoading}
             auctionLoading={auctionLoading}
             modelLoading={checklistLoading}
@@ -11209,6 +11384,7 @@ function App() {
             onScanBaseAutos={scanBaseAutos}
             onScanLowSerial={scanLowSerialNonAutos}
             onScanSuperfractors={scanSuperfractors}
+            onScanFanaticsWide={() => void scanFanaticsCollectWide()}
             resultsRef={dealResultsRef}
           />
           <LiveMarketMap
