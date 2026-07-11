@@ -111,14 +111,33 @@ function normalizedText(value: string) {
     .trim()
 }
 
+const TEAM_LABEL_ALIASES = Object.fromEntries(
+  Object.entries(TEAM_LABELS).map(([code, label]) => [normalizedText(label), TEAM_CODE_ALIASES[code] ?? code]),
+)
+
+const COMPACT_TEAM_ALIASES = Object.fromEntries(
+  Object.entries(TEAM_LABELS).map(([code, label]) => [normalizedText(label).replace(/\s+/g, ''), TEAM_CODE_ALIASES[code] ?? code]),
+)
+
 export function normalizeTeamCode(value?: string | null) {
   const raw = compact(String(value ?? ''))
   if (!raw) return ''
   const upper = raw.toUpperCase().replace(/[^A-Z]/g, '')
   const canonical = TEAM_CODE_ALIASES[upper] ?? upper
   if (TEAM_LABELS[canonical]) return canonical
-  const alias = TEAM_ALIASES[normalizedText(raw)]
-  return alias ?? upper
+  const normalized = normalizedText(raw)
+  const alias = TEAM_ALIASES[normalized] ?? TEAM_LABEL_ALIASES[normalized]
+  if (alias) return alias
+
+  // Some imported ranking feeds collapse a full team name into one token.
+  // Recover a single unambiguous MLB club, but never invent a code from an
+  // unknown or multi-team history value.
+  const compactName = normalized.replace(/\s+/g, '')
+  const compactMatches = Object.entries(COMPACT_TEAM_ALIASES)
+    .filter(([label]) => compactName.includes(label))
+    .map(([, code]) => code)
+  const uniqueMatches = [...new Set(compactMatches)]
+  return uniqueMatches.length === 1 ? uniqueMatches[0] : ''
 }
 
 export function teamDisplayName(value?: string | null) {

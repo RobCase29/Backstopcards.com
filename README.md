@@ -57,6 +57,17 @@ The production scale layer uses two small managed stores:
 
 Production comp freshness is a two-speed pipeline: the Card Hedge Elite daily export bulk-loads eligible Bowman base-auto sales once per UTC day, while targeted Card Hedge search/comps calls repair identity gaps and user-requested players immediately. Known Card Hedge card IDs skip repeat searches. See [`docs/HOSTED_COMPS_RUNBOOK.md`](docs/HOSTED_COMPS_RUNBOOK.md) for the freshness contract, safety rules, and recovery flow.
 
+Checklist coverage is enforced from the canonical ledger, not inferred from whichever players happen to have sold comps. Every imported checklist identity is exported to the app. Confirmed firsts and explicitly listed autograph subjects are tracked through one of these states: direct base model, variation evidence, autograph card found without sales, no autograph card found, queued, or search error. Audit and repair locally with:
+
+```bash
+npm run comps:coverage:audit
+npm run comps:coverage -- --limit=100 --retry-cooldown-days=1
+npm run checklist:static-snapshot
+npm run comps:hosted-bootstrap
+```
+
+Coverage searches include the exact release name (Bowman, Bowman Chrome, or Bowman Draft). A completed search is not treated as a completed model.
+
 Local development still falls back to the ignored SQLite files in `local-data/`. Production should set these Vercel environment variables:
 
 ```bash
