@@ -74,6 +74,12 @@
   grid-template-columns: 110px minmax(180px, 1fr) auto;
 }
 
+.fanatics-scope-panel {
+  display: grid;
+  flex: 0 1 620px;
+  gap: 6px;
+}
+
 .fanatics-scope-search input,
 .fanatics-scope-search select {
   background: rgba(226, 239, 230, 0.08);
@@ -89,6 +95,12 @@
 
 .fanatics-scope-search input::placeholder {
   color: #71877d;
+}
+
+.fanatics-scope-count {
+  color: #81968c;
+  font-size: 0.66rem;
+  padding-left: 118px;
 }
 
 .fanatics-recent-scopes {
@@ -472,6 +484,10 @@
   .fanatics-scope-search {
     flex-basis: auto;
     grid-template-columns: 1fr;
+  }
+
+  .fanatics-scope-count {
+    padding-left: 0;
   }
 
   .fanatics-permission-note {

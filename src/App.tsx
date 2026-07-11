@@ -31,6 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import './BackstopV2.css'
 import { FanaticsCollectPage } from './FanaticsCollectPage'
+import { buildFanaticsScopeOptions, fanaticsScopedPlayerNames } from './lib/fanaticsScopeOptions'
 import {
   fetchChecklistCatalog,
   fetchChecklistModel,
@@ -9169,6 +9170,13 @@ function App() {
     [checklistModels],
   )
   const binModelOptions = useMemo(() => sortChecklistModels(checklistModels), [checklistModels])
+  const fanaticsScopeOptions = useMemo(
+    () => buildFanaticsScopeOptions(
+      binModelOptions,
+      (playerName, checklistTeam) => teamDisplayName(checklistTeam ?? findStsRanking(playerName)?.team),
+    ),
+    [binModelOptions],
+  )
   const marlinsChecklistPlayerNamesByModel = useMemo(() => {
     void rankingsDatasetVersion
     const byModel = new Map<string, string[]>()
@@ -10308,11 +10316,13 @@ function App() {
     const loadedModels = binModelOptions.filter((model) => model.players.length > 0)
     let scopedPlayerNames: string[] = []
     if (scopeType !== 'set') {
-      const matches = loadedModels.flatMap((model) => model.players.filter((player) => {
-        const candidate = scanNameKey(scopeType === 'team' ? player.team ?? '' : player.playerName)
-        return candidate === scopeKey || candidate.includes(scopeKey) || scopeKey.includes(candidate)
-      }))
-      scopedPlayerNames = [...new Set(matches.map((player) => player.playerName))].slice(0, scopeType === 'player' ? 20 : 100)
+      const resolvedScopeValue = scopeType === 'team' ? teamDisplayName(scopeValue) : scopeValue
+      scopedPlayerNames = fanaticsScopedPlayerNames(
+        loadedModels,
+        scopeType,
+        resolvedScopeValue,
+        (playerName, checklistTeam) => teamDisplayName(checklistTeam ?? findStsRanking(playerName)?.team),
+      ).slice(0, scopeType === 'player' ? 20 : 100)
     }
     const scopeWords = scopeKey.split(' ').filter(Boolean)
     const scanModels = scopeType === 'set'
@@ -11399,6 +11409,7 @@ function App() {
           status={fanaticsStatus}
           loading={binLoading}
           error={binError}
+          scopeOptions={fanaticsScopeOptions}
           onSearch={(scopeType, scopeValue) => void searchFanaticsCollectScope(scopeType, scopeValue)}
         />
       ) : workMode === 'price' ? (

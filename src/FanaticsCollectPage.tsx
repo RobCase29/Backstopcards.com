@@ -2,6 +2,7 @@ import { ExternalLink, RefreshCw, Search, Star, Target } from 'lucide-react'
 import { useMemo, useState, type FormEvent } from 'react'
 import type { EbayBinScanResult } from './lib/ebay'
 import type { FanaticsCollectScopeType, FanaticsCollectStatus } from './lib/fanaticsCollect'
+import type { FanaticsScopeOptions } from './lib/fanaticsScopeOptions'
 import {
   fanaticsPlayerKey,
   filterFanaticsDealOpportunities,
@@ -85,6 +86,7 @@ export function FanaticsCollectPage({
   status,
   loading,
   error,
+  scopeOptions,
   onSearch,
 }: {
   opportunities: Opportunity[]
@@ -92,6 +94,7 @@ export function FanaticsCollectPage({
   status: FanaticsCollectStatus | null
   loading: boolean
   error: string | null
+  scopeOptions: FanaticsScopeOptions
   onSearch: (scopeType: FanaticsCollectScopeType, scopeValue: string) => void
 }) {
   const [filterQuery, setFilterQuery] = useState('')
@@ -127,6 +130,12 @@ export function FanaticsCollectPage({
     (opportunity) => opportunity.listing.allInPrice <= opportunity.fairValue * 1.5,
   ).length
   const latestLabel = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleString() : 'Enter a scope to search'
+  const activeScopeOptions = scopeOptions[scopeType]
+  const scopeListId = `fanatics-${scopeType}-options`
+  const scopeOptionNodes = useMemo(
+    () => activeScopeOptions.map((option) => <option value={option} key={option} />),
+    [activeScopeOptions],
+  )
 
   const submitScope = (event: FormEvent) => {
     event.preventDefault()
@@ -159,8 +168,16 @@ export function FanaticsCollectPage({
           <h2>Collect finds, without the clunky hunt.</h2>
           <p>See every matched card within 50% of model, then narrow the board or save the players you want to hold.</p>
         </div>
+        <div className="fanatics-scope-panel">
         <form className="fanatics-scope-search" onSubmit={submitScope}>
-          <select value={scopeType} onChange={(event) => setScopeType(event.target.value as FanaticsCollectScopeType)} aria-label="Fanatics search scope">
+          <select
+            value={scopeType}
+            onChange={(event) => {
+              setScopeType(event.target.value as FanaticsCollectScopeType)
+              setScopeValue('')
+            }}
+            aria-label="Fanatics search scope"
+          >
             <option value="player">Player</option>
             <option value="team">Team</option>
             <option value="set">Set</option>
@@ -168,14 +185,22 @@ export function FanaticsCollectPage({
           <input
             value={scopeValue}
             onChange={(event) => setScopeValue(event.target.value)}
+            list={scopeListId}
             placeholder={scopeType === 'player' ? 'e.g. Aiva Arquette' : scopeType === 'team' ? 'e.g. Miami Marlins' : 'e.g. 2026 Bowman Chrome'}
             aria-label={`Fanatics ${scopeType} search`}
           />
+          <datalist id={scopeListId}>
+            {scopeOptionNodes}
+          </datalist>
           <button className="fanatics-scan-button" type="submit" disabled={!searchReady || loading || scopeValue.trim().length < 2}>
             <RefreshCw size={17} className={loading ? 'spin' : undefined} />
             {loading ? 'Finding deals' : 'Find Fanatics deals'}
           </button>
         </form>
+        <small className="fanatics-scope-count">
+          {activeScopeOptions.length.toLocaleString()} {scopeType === 'set' ? 'sets' : `${scopeType}s`} available
+        </small>
+        </div>
       </header>
 
       {recentScopes.length > 0 ? (
