@@ -38,6 +38,12 @@ const FANATICS_COLLECT_QUERY_CACHE_NAMESPACE = 'backstop-fanatics-collect-query-
 const FANATICS_COLLECT_SEARCH_KEY_TTL_MS = 10 * 60 * 1000
 const FANATICS_COLLECT_QUERY_BATCH_SIZE = 25
 const FANATICS_COLLECT_QUERY_CACHE_TTL_SECONDS = 24 * 60 * 60
+const FANATICS_COLLECT_TERMS_URL = 'https://support.fanaticscollect.com/en_us/terms-of-use-r11C70QTge'
+const FANATICS_COLLECT_WIDE_DEFAULT_PAGE_SIZE = 250
+const FANATICS_COLLECT_WIDE_DEFAULT_MAX_PAGES = 40
+const FANATICS_COLLECT_WIDE_MAX_PAGES = 200
+const FANATICS_COLLECT_WIDE_DEFAULT_TIME_BUDGET_MS = 25_000
+const FANATICS_COLLECT_WIDE_MAX_TIME_BUDGET_MS = 50_000
 const DAVE_ADAMS_BASE_URL = 'https://www.dacardworld.com'
 const DAVE_ADAMS_QUERY_CACHE_NAMESPACE = 'backstop-dave-adams-query-v1'
 const DAVE_ADAMS_QUERY_CACHE_TTL_SECONDS = 6 * 60 * 60
@@ -57,7 +63,7 @@ const MAX_EBAY_QUERIES = 140
 const MAX_EBAY_QUERY_LENGTH = 140
 const PROSPECTPULSE_FUNCTION_ROUTES = new Set(['api-checklists', 'api-listings'])
 const EBAY_ROUTES = new Set(['search', 'sold'])
-const FANATICS_COLLECT_ROUTES = new Set(['status', 'search'])
+const FANATICS_COLLECT_ROUTES = new Set(['status', 'search', 'wide-scan'])
 const DAVE_ADAMS_ROUTES = new Set(['status', 'search'])
 const CARD_HEDGE_ROUTES = new Set([
   'status',
@@ -4358,6 +4364,7 @@ type FanaticsCollectQueryMeta = {
   variationTerm?: string
   baseAutoOnly?: boolean
   lowSerialNonAuto?: boolean
+  superfractorOnly?: boolean
   serialDenominator?: number
 }
 
@@ -4374,6 +4381,36 @@ type FanaticsCollectSearchResult = {
   stats: EbayQueryCacheStats
 }
 
+type FanaticsCollectWideScanPayload = {
+  minPrice?: number | string
+  pageSize?: number | string
+  maxPages?: number | string
+}
+
+type FanaticsCollectAuthorizedFeedPage = {
+  items?: Array<Record<string, unknown>>
+  listings?: Array<Record<string, unknown>>
+  data?: Array<Record<string, unknown>>
+  nextCursor?: string | null
+  next_cursor?: string | null
+  cursor?: string | null
+  hasMore?: boolean
+  has_more?: boolean
+  total?: number | string
+  fetchedAt?: string
+  observedAt?: string
+}
+
+type FanaticsCollectAuthorization = {
+  authorizationId: string
+  searchAuthorized: boolean
+  feedAuthorized: boolean
+  feedUrl: string
+  feedToken: string
+  imageRights: boolean
+  issue?: string
+}
+
 function fanaticsCollectString(value: unknown, fallback = '') {
   if (typeof value !== 'string') return fallback
   const trimmed = value.trim()
@@ -4383,6 +4420,72 @@ function fanaticsCollectString(value: unknown, fallback = '') {
 function fanaticsCollectNumber(value: unknown, fallback = 0) {
   const parsed = Number(String(value ?? '').replace(/[$,%\s,]/g, ''))
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function fanaticsCollectEnabled(value: unknown) {
+  return /^(1|true|yes|on)$/i.test(String(value ?? '').trim())
+}
+
+function fanaticsCollectAuthorization(env: ServerEnv): FanaticsCollectAuthorization {
+  const authorizationId = fanaticsCollectString(env.FANATICS_COLLECT_AUTHORIZATION_ID)
+  const feedUrl = fanaticsCollectString(env.FANATICS_COLLECT_AUTHORIZED_FEED_URL)
+  const feedToken = fanaticsCollectString(env.FANATICS_COLLECT_AUTHORIZED_FEED_TOKEN)
+  const searchAttested = fanaticsCollectEnabled(env.FANATICS_COLLECT_SEARCH_AUTHORIZED)
+  const feedAttested = fanaticsCollectEnabled(env.FANATICS_COLLECT_WIDE_SCAN_AUTHORIZED)
+  const imageRights = fanaticsCollectEnabled(env.FANATICS_COLLECT_IMAGE_RIGHTS_AUTHORIZED)
+
+  let normalizedFeedUrl = ''
+  let issue = ''
+  if (feedUrl) {
+    try {
+      const parsed = new URL(feedUrl)
+      const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)
+      if (parsed.protocol !== 'https:' && !localHttp) {
+        issue = 'The authorized Fanatics feed URL must use HTTPS (localhost HTTP is allowed for development).'
+      } else {
+        normalizedFeedUrl = parsed.toString()
+      }
+    } catch {
+      issue = 'The authorized Fanatics feed URL is invalid.'
+    }
+  }
+
+  if ((searchAttested || feedAttested) && !authorizationId) {
+    issue = 'Set FANATICS_COLLECT_AUTHORIZATION_ID to the written permission or licensed-feed reference.'
+  }
+
+  return {
+    authorizationId,
+    searchAuthorized: searchAttested && Boolean(authorizationId),
+    feedAuthorized: feedAttested && Boolean(authorizationId) && Boolean(normalizedFeedUrl) && !issue,
+    feedUrl: normalizedFeedUrl,
+    feedToken,
+    imageRights,
+    issue: issue || undefined,
+  }
+}
+
+function requireFanaticsCollectSearchAuthorization(env: ServerEnv) {
+  const authorization = fanaticsCollectAuthorization(env)
+  if (!authorization.searchAuthorized) {
+    throw new ProxyRequestError(
+      503,
+      `Fanatics Collect search is disabled until written data-access permission is configured. See ${FANATICS_COLLECT_TERMS_URL}`,
+    )
+  }
+  return authorization
+}
+
+function requireFanaticsCollectFeedAuthorization(env: ServerEnv) {
+  const authorization = fanaticsCollectAuthorization(env)
+  if (!authorization.feedAuthorized) {
+    throw new ProxyRequestError(
+      503,
+      authorization.issue ??
+        `Fanatics Collect wide scan requires an authorized feed and written data-access permission. See ${FANATICS_COLLECT_TERMS_URL}`,
+    )
+  }
+  return authorization
 }
 
 function fanaticsCollectQueryFrom(value: FanaticsCollectQueryMeta | string) {
@@ -4406,6 +4509,7 @@ function fanaticsCollectQueryFrom(value: FanaticsCollectQueryMeta | string) {
     variationTerm: fanaticsCollectString(value.variationTerm),
     baseAutoOnly: Boolean(value.baseAutoOnly),
     lowSerialNonAuto: Boolean(value.lowSerialNonAuto),
+    superfractorOnly: Boolean(value.superfractorOnly),
     serialDenominator: fanaticsCollectNumber(value.serialDenominator, 0) || undefined,
   }
 }
@@ -4479,6 +4583,7 @@ function dedupeFanaticsCollectHits(items: Array<Record<string, unknown>>) {
 }
 
 async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env: ServerEnv): Promise<FanaticsCollectSearchResult> {
+  requireFanaticsCollectSearchAuthorization(env)
   const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
   const appId = env.FANATICS_COLLECT_ALGOLIA_APP_ID?.trim() || FANATICS_COLLECT_ALGOLIA_APP_ID
   const indexName = env.FANATICS_COLLECT_ALGOLIA_INDEX?.trim() || FANATICS_COLLECT_ALGOLIA_INDEX
@@ -4508,6 +4613,16 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
       'images',
       'allowOffers',
       'quantityAvailable',
+      'year',
+      'productTitle',
+      'categoryParent',
+      'subCategory1',
+      'cardNumber',
+      'serial',
+      'grade',
+      'gradingService',
+      'listedAt',
+      'updatedAt',
     ],
     attributesToHighlight: [],
   }))
@@ -4628,10 +4743,217 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
   return response
 }
 
+function fanaticsCollectWideItemIdentity(item: Record<string, unknown>) {
+  return fanaticsCollectString(item.listingUuid) ||
+    fanaticsCollectString(item.listing_id) ||
+    fanaticsCollectString(item.listingId) ||
+    fanaticsCollectString(item.objectID) ||
+    fanaticsCollectString(item.id) ||
+    fanaticsCollectString(item.url) ||
+    fanaticsCollectString(item.listingUrl)
+}
+
+function fanaticsCollectWideItemPrice(item: Record<string, unknown>) {
+  const values = [
+    item.askingPrice,
+    item.asking_price,
+    item.buyNowPrice,
+    item.buy_now_price,
+    item.currentPrice,
+    item.current_price,
+    item.price,
+  ]
+  for (const value of values) {
+    const parsed = fanaticsCollectNumber(value, Number.NaN)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+  return 0
+}
+
+function fanaticsCollectWideFeedItems(page: FanaticsCollectAuthorizedFeedPage) {
+  if (Array.isArray(page.items)) return page.items
+  if (Array.isArray(page.listings)) return page.listings
+  if (Array.isArray(page.data)) return page.data
+  return []
+}
+
+function fanaticsCollectWideNextCursor(page: FanaticsCollectAuthorizedFeedPage) {
+  return fanaticsCollectString(page.nextCursor) ||
+    fanaticsCollectString(page.next_cursor) ||
+    fanaticsCollectString(page.cursor)
+}
+
+function stripUnlicensedFanaticsImages(item: Record<string, unknown>, imageRights: boolean) {
+  if (imageRights) return item
+  const sanitized = { ...item }
+  for (const key of ['image', 'images', 'imageSets', 'imageUrl', 'image_url', 'thumbnail', 'thumbnailUrl']) {
+    delete sanitized[key]
+  }
+  return sanitized
+}
+
+function fanaticsCollectFeedRetryDelay(response: Response) {
+  const retryAfter = response.headers.get('retry-after')
+  if (!retryAfter) return 0
+  const seconds = Number(retryAfter)
+  if (Number.isFinite(seconds)) return Math.min(2_000, Math.max(0, seconds * 1_000))
+  const dateMs = Date.parse(retryAfter)
+  return Number.isFinite(dateMs) ? Math.min(2_000, Math.max(0, dateMs - Date.now())) : 0
+}
+
+async function waitForFanaticsFeedRetry(delayMs: number) {
+  if (delayMs <= 0) return
+  await new Promise((resolve) => setTimeout(resolve, delayMs))
+}
+
+async function fetchFanaticsCollectAuthorizedPage(options: {
+  authorization: FanaticsCollectAuthorization
+  cursor: string
+  pageSize: number
+  signal: AbortSignal
+}) {
+  const url = new URL(options.authorization.feedUrl)
+  url.searchParams.set('limit', String(options.pageSize))
+  url.searchParams.set('query', 'Bowman')
+  url.searchParams.set('saleType', 'FIXED')
+  url.searchParams.set('status', 'active')
+  url.searchParams.set('category', 'baseball')
+  if (options.cursor) url.searchParams.set('cursor', options.cursor)
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-Backstop-Authorization-Id': options.authorization.authorizationId,
+  }
+  if (options.authorization.feedToken) headers.Authorization = `Bearer ${options.authorization.feedToken}`
+
+  let upstream = await fetch(url, { method: 'GET', headers, signal: options.signal })
+  if (upstream.status === 429 || upstream.status === 503) {
+    await waitForFanaticsFeedRetry(fanaticsCollectFeedRetryDelay(upstream))
+    upstream = await fetch(url, { method: 'GET', headers, signal: options.signal })
+  }
+
+  const payload = (await upstream.json().catch(() => null)) as FanaticsCollectAuthorizedFeedPage | { error?: string; message?: string } | null
+  if (!upstream.ok || !payload || typeof payload !== 'object') {
+    const message = payload && 'message' in payload
+      ? fanaticsCollectString(payload.message)
+      : payload && 'error' in payload
+        ? fanaticsCollectString(payload.error)
+        : `${upstream.status} ${upstream.statusText}`.trim()
+    throw new ProxyRequestError(upstream.status || 502, `Authorized Fanatics feed failed: ${message || 'invalid response'}`)
+  }
+  return payload as FanaticsCollectAuthorizedFeedPage
+}
+
+async function scanAuthorizedFanaticsCollectFeed(payload: FanaticsCollectWideScanPayload, env: ServerEnv) {
+  const authorization = requireFanaticsCollectFeedAuthorization(env)
+  const minPrice = Math.max(0, fanaticsCollectNumber(payload.minPrice, 0))
+  const pageSize = clampInt(payload.pageSize, FANATICS_COLLECT_WIDE_DEFAULT_PAGE_SIZE, 1, 1_000)
+  const configuredMaxPages = clampInt(
+    env.FANATICS_COLLECT_WIDE_MAX_PAGES,
+    FANATICS_COLLECT_WIDE_DEFAULT_MAX_PAGES,
+    1,
+    FANATICS_COLLECT_WIDE_MAX_PAGES,
+  )
+  const maxPages = clampInt(payload.maxPages, configuredMaxPages, 1, configuredMaxPages)
+  const timeBudgetMs = clampInt(
+    env.FANATICS_COLLECT_WIDE_TIME_BUDGET_MS,
+    FANATICS_COLLECT_WIDE_DEFAULT_TIME_BUDGET_MS,
+    1_000,
+    FANATICS_COLLECT_WIDE_MAX_TIME_BUDGET_MS,
+  )
+  const startedAt = Date.now()
+  const deadline = startedAt + timeBudgetMs
+  const seenCursors = new Set<string>()
+  const itemsById = new Map<string, Record<string, unknown>>()
+  let cursor = ''
+  let pagesFetched = 0
+  let upstreamTotal = 0
+  let sourceFetchedAt = ''
+  let stoppedReason: 'complete' | 'page-budget' | 'time-budget' | 'cursor-loop' = 'complete'
+
+  while (pagesFetched < maxPages) {
+    if (Date.now() >= deadline) {
+      stoppedReason = 'time-budget'
+      break
+    }
+    if (cursor && seenCursors.has(cursor)) {
+      stoppedReason = 'cursor-loop'
+      break
+    }
+    if (cursor) seenCursors.add(cursor)
+
+    const remainingMs = Math.max(500, deadline - Date.now())
+    const page = await fetchFanaticsCollectAuthorizedPage({
+      authorization,
+      cursor,
+      pageSize,
+      signal: AbortSignal.timeout(remainingMs),
+    })
+    pagesFetched += 1
+    const pageItems = fanaticsCollectWideFeedItems(page)
+    upstreamTotal = Math.max(upstreamTotal, fanaticsCollectNumber(page.total, 0))
+    sourceFetchedAt = fanaticsCollectString(page.fetchedAt) || fanaticsCollectString(page.observedAt) || sourceFetchedAt
+
+    for (const rawItem of pageItems) {
+      const identity = fanaticsCollectWideItemIdentity(rawItem)
+      if (!identity || (minPrice > 0 && fanaticsCollectWideItemPrice(rawItem) < minPrice)) continue
+      itemsById.set(identity, stripUnlicensedFanaticsImages(rawItem, authorization.imageRights))
+    }
+
+    const nextCursor = fanaticsCollectWideNextCursor(page)
+    const hasMore = page.hasMore ?? page.has_more ?? Boolean(nextCursor)
+    if (!hasMore || !nextCursor) {
+      stoppedReason = 'complete'
+      cursor = ''
+      break
+    }
+    cursor = nextCursor
+  }
+
+  if (cursor && stoppedReason === 'complete' && pagesFetched >= maxPages) stoppedReason = 'page-budget'
+  const complete = stoppedReason === 'complete'
+  return {
+    items: [...itemsById.values()],
+    errors: complete ? [] : [{ error: `Authorized Fanatics feed stopped at the ${stoppedReason.replace('-', ' ')}.` }],
+    fetchedAt: sourceFetchedAt || new Date().toISOString(),
+    provenance: {
+      mode: 'authorized-feed',
+      authorizationId: authorization.authorizationId,
+      imageRights: authorization.imageRights,
+    },
+    coverage: {
+      complete,
+      stoppedReason,
+      nextCursor: cursor || null,
+      pageSize,
+      maxPages,
+      pagesFetched,
+      durationMs: Date.now() - startedAt,
+    },
+    stats: {
+      queriesRun: 1,
+      queriesSucceeded: complete ? 1 : 0,
+      queriesFailed: complete ? 0 : 1,
+      pagesFetched,
+      upstreamTotal: upstreamTotal || itemsById.size,
+      dedupedItems: itemsById.size,
+      cacheHits: 0,
+      cacheMisses: 0,
+      cacheWrites: 0,
+      cacheSkips: 0,
+      redisCacheHits: 0,
+      runtimeCacheHits: 0,
+      sqliteCacheHits: 0,
+      upstreamPagesFetched: pagesFetched,
+    },
+  }
+}
+
 export async function handleFanaticsCollectRoute(route: string, request: Request, env: ServerEnv) {
   if (!FANATICS_COLLECT_ROUTES.has(route)) return new Response(null, { status: 404 })
   if (route === 'status' && request.method !== 'GET') return new Response(null, { status: 404 })
   if (route === 'search' && request.method !== 'POST') return new Response(null, { status: 404 })
+  if (route === 'wide-scan' && request.method !== 'POST') return new Response(null, { status: 404 })
 
   try {
     if (route === 'search') {
@@ -4642,16 +4964,25 @@ export async function handleFanaticsCollectRoute(route: string, request: Request
       return jsonResponse(200, search)
     }
 
+    if (route === 'wide-scan') {
+      const unsafePost = rejectUnsafePost(request)
+      if (unsafePost) return unsafePost
+      const payload = await readJsonBody<FanaticsCollectWideScanPayload>(request, MAX_EBAY_BODY_BYTES)
+      return jsonResponse(200, await scanAuthorizedFanaticsCollectFeed(payload, env))
+    }
+
+    const authorization = fanaticsCollectAuthorization(env)
     const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
-    const appId = env.FANATICS_COLLECT_ALGOLIA_APP_ID?.trim() || FANATICS_COLLECT_ALGOLIA_APP_ID
-    const indexName = env.FANATICS_COLLECT_ALGOLIA_INDEX?.trim() || FANATICS_COLLECT_ALGOLIA_INDEX
     let reachable = false
-    let message = 'Fanatics Collect public search is ready.'
-    try {
-      await fetchFanaticsCollectSearchKey(graphqlUrl)
-      reachable = true
-    } catch (error) {
-      message = error instanceof Error ? error.message : 'Fanatics Collect public search is unavailable.'
+    let message = authorization.issue ?? 'Fanatics Collect search requires written data-access permission.'
+    if (authorization.searchAuthorized) {
+      try {
+        await fetchFanaticsCollectSearchKey(graphqlUrl)
+        reachable = true
+        message = 'Authorized Fanatics Collect targeted search is ready.'
+      } catch (error) {
+        message = error instanceof Error ? error.message : 'Authorized Fanatics Collect search is unavailable.'
+      }
     }
 
     return jsonResponse(200, {
@@ -4659,11 +4990,31 @@ export async function handleFanaticsCollectRoute(route: string, request: Request
       label: 'Fanatics Collect',
       configured: reachable,
       reachable,
-      mode: reachable ? 'public-algolia-search' : 'offline',
-      graphqlUrl,
+      mode: reachable ? 'authorized-targeted-search' : 'disabled',
       marketplaceUrl: FANATICS_COLLECT_MARKETPLACE_URL,
-      algoliaAppId: appId,
-      algoliaIndex: indexName,
+      termsUrl: FANATICS_COLLECT_TERMS_URL,
+      authorization: {
+        configured: Boolean(authorization.authorizationId),
+        authorizationId: authorization.authorizationId || null,
+      },
+      targetedSearch: {
+        configured: authorization.searchAuthorized && reachable,
+        reachable,
+      },
+      wideScan: {
+        configured: authorization.feedAuthorized,
+        mode: authorization.feedAuthorized ? 'authorized-feed' : 'disabled',
+        imageRights: authorization.imageRights,
+        maxPages: clampInt(
+          env.FANATICS_COLLECT_WIDE_MAX_PAGES,
+          FANATICS_COLLECT_WIDE_DEFAULT_MAX_PAGES,
+          1,
+          FANATICS_COLLECT_WIDE_MAX_PAGES,
+        ),
+        message: authorization.feedAuthorized
+          ? 'Authorized Fanatics Collect wide feed is ready.'
+          : authorization.issue ?? 'Configure a licensed/authorized Fanatics feed to enable wide scan.',
+      },
       message,
     })
   } catch (error) {
