@@ -4370,6 +4370,10 @@ type FanaticsCollectQueryMeta = {
 
 type FanaticsCollectSearchPayload = {
   queries?: Array<FanaticsCollectQueryMeta | string>
+  scope?: {
+    type?: string
+    value?: string
+  }
   minPrice?: number | string
   limit?: number | string
 }
@@ -4379,6 +4383,11 @@ type FanaticsCollectSearchResult = {
   errors: Array<{ query?: string; error: string }>
   fetchedAt: string
   stats: EbayQueryCacheStats
+  provenance?: {
+    mode: 'authorized-targeted-search' | 'user-scoped-search'
+    scopeType: string
+    scopeValue: string
+  }
 }
 
 type FanaticsCollectWideScanPayload = {
@@ -4465,15 +4474,26 @@ function fanaticsCollectAuthorization(env: ServerEnv): FanaticsCollectAuthorizat
   }
 }
 
-function requireFanaticsCollectSearchAuthorization(env: ServerEnv) {
-  const authorization = fanaticsCollectAuthorization(env)
-  if (!authorization.searchAuthorized) {
-    throw new ProxyRequestError(
-      503,
-      `Fanatics Collect search is disabled until written data-access permission is configured. See ${FANATICS_COLLECT_TERMS_URL}`,
-    )
+function fanaticsCollectUserScope(payload: FanaticsCollectSearchPayload) {
+  const type = fanaticsCollectString(payload.scope?.type).toLowerCase()
+  const value = fanaticsCollectString(payload.scope?.value)
+  if (!['player', 'team', 'set'].includes(type)) {
+    throw new ProxyRequestError(400, 'Choose a player, team, or set before searching Fanatics Collect.')
   }
-  return authorization
+  if (value.length < 2 || value.length > 80 || /[*?%]/.test(value)) {
+    throw new ProxyRequestError(400, 'Enter a specific player, team, or set between 2 and 80 characters.')
+  }
+  return { type, value }
+}
+
+function requireFanaticsCollectSearchAuthorization(env: ServerEnv, payload: FanaticsCollectSearchPayload) {
+  const authorization = fanaticsCollectAuthorization(env)
+  const scope = fanaticsCollectUserScope(payload)
+  return {
+    authorization,
+    scope,
+    mode: authorization.searchAuthorized ? 'authorized-targeted-search' as const : 'user-scoped-search' as const,
+  }
 }
 
 function requireFanaticsCollectFeedAuthorization(env: ServerEnv) {
@@ -4583,7 +4603,7 @@ function dedupeFanaticsCollectHits(items: Array<Record<string, unknown>>) {
 }
 
 async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env: ServerEnv): Promise<FanaticsCollectSearchResult> {
-  requireFanaticsCollectSearchAuthorization(env)
+  const searchAccess = requireFanaticsCollectSearchAuthorization(env, payload)
   const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
   const appId = env.FANATICS_COLLECT_ALGOLIA_APP_ID?.trim() || FANATICS_COLLECT_ALGOLIA_APP_ID
   const indexName = env.FANATICS_COLLECT_ALGOLIA_INDEX?.trim() || FANATICS_COLLECT_ALGOLIA_INDEX
@@ -4713,6 +4733,11 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
     items,
     errors,
     fetchedAt: new Date().toISOString(),
+    provenance: {
+      mode: searchAccess.mode,
+      scopeType: searchAccess.scope.type,
+      scopeValue: searchAccess.scope.value,
+    },
     stats: {
       queriesRun: queries.length,
       queriesSucceeded: Math.max(0, results.length - errors.length),
@@ -4975,11 +5000,13 @@ export async function handleFanaticsCollectRoute(route: string, request: Request
     const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
     let reachable = false
     let message = authorization.issue ?? 'Fanatics Collect search requires written data-access permission.'
-    if (authorization.searchAuthorized) {
+    {
       try {
         await fetchFanaticsCollectSearchKey(graphqlUrl)
         reachable = true
-        message = 'Authorized Fanatics Collect targeted search is ready.'
+        message = authorization.searchAuthorized
+          ? 'Authorized Fanatics Collect targeted search is ready.'
+          : 'User-scoped Fanatics Collect search is ready.'
       } catch (error) {
         message = error instanceof Error ? error.message : 'Authorized Fanatics Collect search is unavailable.'
       }
@@ -4990,7 +5017,9 @@ export async function handleFanaticsCollectRoute(route: string, request: Request
       label: 'Fanatics Collect',
       configured: reachable,
       reachable,
-      mode: reachable ? 'authorized-targeted-search' : 'disabled',
+      mode: reachable
+        ? authorization.searchAuthorized ? 'authorized-targeted-search' : 'user-scoped-search'
+        : 'disabled',
       marketplaceUrl: FANATICS_COLLECT_MARKETPLACE_URL,
       termsUrl: FANATICS_COLLECT_TERMS_URL,
       authorization: {
@@ -4998,8 +5027,9 @@ export async function handleFanaticsCollectRoute(route: string, request: Request
         authorizationId: authorization.authorizationId || null,
       },
       targetedSearch: {
-        configured: authorization.searchAuthorized && reachable,
+        configured: reachable,
         reachable,
+        mode: authorization.searchAuthorized ? 'authorized-targeted-search' : 'user-scoped-search',
       },
       wideScan: {
         configured: authorization.feedAuthorized,

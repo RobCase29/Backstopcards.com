@@ -936,6 +936,7 @@ export async function fetchSealedWaxListings(options: {
       headers: { 'Content-Type': 'application/json' },
       signal: options.signal,
       body: JSON.stringify({
+        scope: { type: 'set', value: query },
         queries: [query],
         minPrice: options.minPrice,
         limit: 80,

@@ -48,6 +48,7 @@ import {
   fetchFanaticsCollectBinListings,
   fetchFanaticsCollectStatus,
   fetchFanaticsCollectWideListings,
+  type FanaticsCollectScopeType,
   type FanaticsCollectStatus,
 } from './lib/fanaticsCollect'
 import { impliedDynastyBasePrice, scoreDynastyValueOpportunity } from './lib/dynastyValue'
@@ -10292,6 +10293,114 @@ function App() {
     return record
   }
 
+  async function searchFanaticsCollectScope(scopeType: FanaticsCollectScopeType, rawScopeValue: string) {
+    const scopeValue = rawScopeValue.trim()
+    const scopeKey = scanNameKey(scopeValue)
+    if (scopeKey.length < 2) {
+      setBinError('Enter a specific player, team, or set to search Fanatics Collect.')
+      return
+    }
+    if (!fanaticsStatus?.targetedSearch?.configured) {
+      setBinError(fanaticsStatus?.message ?? 'Fanatics Collect scoped search is unavailable.')
+      return
+    }
+
+    const loadedModels = binModelOptions.filter((model) => model.players.length > 0)
+    let scopedPlayerNames: string[] = []
+    if (scopeType !== 'set') {
+      const matches = loadedModels.flatMap((model) => model.players.filter((player) => {
+        const candidate = scanNameKey(scopeType === 'team' ? player.team ?? '' : player.playerName)
+        return candidate === scopeKey || candidate.includes(scopeKey) || scopeKey.includes(candidate)
+      }))
+      scopedPlayerNames = [...new Set(matches.map((player) => player.playerName))].slice(0, scopeType === 'player' ? 20 : 100)
+    }
+    const scopeWords = scopeKey.split(' ').filter(Boolean)
+    const scanModels = scopeType === 'set'
+      ? loadedModels.filter((model) => {
+        const label = scanNameKey(`${checklistModelLabel(model)} ${model.release} ${model.releaseYear}`)
+        return label.includes(scopeKey) || scopeWords.every((word) => label.includes(word))
+      }).slice(0, 4)
+      : modelsContainingPlayerNames(loadedModels, scopedPlayerNames).slice(0, 16)
+
+    if (scanModels.length === 0 || (scopeType !== 'set' && scopedPlayerNames.length === 0)) {
+      setBinError(`No loaded Bowman checklist ${scopeType === 'set' ? 'set' : scopeType === 'team' ? 'players for that team' : 'player'} matches “${scopeValue}”.`)
+      return
+    }
+
+    navigateWorkMode('fanatics')
+    setBinModelKey(BIN_ALL_MODELS_KEY)
+    setBinSearchMode('checklist')
+    setBinSearchTerm('')
+    setBinPlayerScope('all')
+    setBinResultSort('edge-desc')
+    resetAuctionScan()
+    binRequestRef.current?.abort()
+    const controller = new AbortController()
+    binRequestRef.current = controller
+    setBinLoading(true)
+    setBinError(null)
+    setLastRejectedListing(null)
+
+    try {
+      const settled = await mapWithConcurrency(scanModels, 3, async (model) => {
+        const modelPlayerNames = scopeType === 'set'
+          ? undefined
+          : model.players.filter((player) => scopedPlayerNames.includes(player.playerName)).map((player) => player.playerName)
+        try {
+          return await fetchFanaticsCollectBinListings({
+            model,
+            minPrice: binMinPrice,
+            playerNames: modelPlayerNames,
+            searchMode: 'checklist',
+            signal: controller.signal,
+            scope: { type: scopeType, value: scopeValue },
+          })
+        } catch (reason) {
+          return { model, reason }
+        }
+      })
+      if (controller.signal.aborted) return
+      const successfulScans = settled.filter((result): result is EbayBinScanResult => 'listings' in result)
+      const failedScans = settled.flatMap((result) => 'listings' in result ? [] : [{
+        query: checklistModelLabel(result.model),
+        error: result.reason instanceof Error ? result.reason.message : 'Fanatics Collect scoped search failed',
+      }])
+      if (successfulScans.length === 0) throw new Error(failedScans[0]?.error ?? 'Fanatics Collect scoped search failed')
+
+      const scanResult = mergeBinScans(successfulScans, failedScans)
+      const visibleScanResult = filterRejectedScanResult(scanResult, rejectedListingKeys)
+      setBinListings(scanResult.listings)
+      setBinScan(scanResult)
+      setBinError(binScanErrorSummary(scanResult))
+      let scanSalesCacheModels = activeSalesCacheModels
+      try {
+        const loaded = await loadSalesCacheModelsForListings(visibleScanResult.listings, controller.signal)
+        scanSalesCacheModels = { ...activeSalesCacheModels, ...loaded }
+      } catch {
+        scanSalesCacheModels = activeSalesCacheModels
+      }
+      if (controller.signal.aborted) return
+      void saveScoredLiveMarketSnapshot({
+        scanType: 'bin',
+        scanResult: visibleScanResult,
+        models: scanModels,
+        minPrice: binMinPrice,
+        playerScope: 'all',
+        playerNames: scopedPlayerNames,
+        searchMode: 'checklist',
+        searchTerm: `${scopeType}:${scopeValue}`,
+        salesCacheModels: scanSalesCacheModels,
+      })
+    } catch (searchError) {
+      if (!controller.signal.aborted) setBinError(searchError instanceof Error ? searchError.message : 'Fanatics Collect scoped search failed')
+    } finally {
+      if (binRequestRef.current === controller) {
+        setBinLoading(false)
+        binRequestRef.current = null
+      }
+    }
+  }
+
   async function scanFanaticsCollectWide(destination: 'deals' | 'fanatics' = 'deals') {
     const scanModels = binModelOptions.filter((model) => model.players.length > 0)
     if (scanModels.length === 0) {
@@ -11290,7 +11399,7 @@ function App() {
           status={fanaticsStatus}
           loading={binLoading}
           error={binError}
-          onRunScan={() => void scanFanaticsCollectWide('fanatics')}
+          onSearch={(scopeType, scopeValue) => void searchFanaticsCollectScope(scopeType, scopeValue)}
         />
       ) : workMode === 'price' ? (
         <section className="price-workflow" aria-label="Price my card">

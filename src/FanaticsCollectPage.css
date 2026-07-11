@@ -66,6 +66,57 @@
   cursor: not-allowed;
 }
 
+.fanatics-scope-search {
+  align-items: center;
+  display: grid;
+  flex: 0 1 620px;
+  gap: 8px;
+  grid-template-columns: 110px minmax(180px, 1fr) auto;
+}
+
+.fanatics-scope-search input,
+.fanatics-scope-search select {
+  background: rgba(226, 239, 230, 0.08);
+  border: 1px solid rgba(201, 255, 119, 0.22);
+  border-radius: 11px;
+  color: #f0f7f1;
+  font: inherit;
+  font-size: 0.8rem;
+  height: 46px;
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.fanatics-scope-search input::placeholder {
+  color: #71877d;
+}
+
+.fanatics-recent-scopes {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.fanatics-recent-scopes > span {
+  color: #667e73;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fanatics-recent-scopes button {
+  background: #edf5ef;
+  border: 1px solid #cfddd3;
+  border-radius: 999px;
+  color: #26483d;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 6px 10px;
+}
+
 .fanatics-summary {
   display: flex;
   flex-wrap: wrap;
@@ -416,6 +467,11 @@
 
   .fanatics-scan-button {
     width: 100%;
+  }
+
+  .fanatics-scope-search {
+    flex-basis: auto;
+    grid-template-columns: 1fr;
   }
 
   .fanatics-permission-note {

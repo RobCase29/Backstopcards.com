@@ -2,14 +2,14 @@
 
 ## Outcome
 
-Backstop can run a Fanatics-only, fixed-price inventory sweep from an authorized cursor-based feed, match the returned Bowman cards to the loaded checklist/model universe, and rank the accepted listings by model edge. The integration is disabled by default.
+Backstop supports two distinct Fanatics paths: a user-initiated scoped search and a licensed wide feed. The scoped path requires the user to enter a player, team, or set before each search. The wide path can run a Fanatics-only, fixed-price inventory sweep from an authorized cursor-based feed. Both paths match returned Bowman cards to the loaded checklist/model universe and rank accepted listings by model edge.
 
 This boundary is intentional. Fanatics Collect's [Terms of Use](https://support.fanaticscollect.com/en_us/terms-of-use-r11C70QTge) currently prohibit scraping, automated data mining, and systematic retrieval. No public developer API or published integration quota was found during implementation. Do not enable the adapter unless Fanatics has granted written permission or supplied a licensed feed/export that explicitly covers this use.
 
 ## What is implemented
 
 - Independent Fanatics capability status at `/api/fanatics-collect/status`.
-- Fail-closed authorization checks for both the legacy targeted search path and the wide-feed path.
+- Fail-closed scope validation for user-initiated search and separate authorization checks for the wide-feed path.
 - A dedicated `POST /api/fanatics-collect/wide-scan` endpoint.
 - Cursor pagination with page and wall-clock budgets.
 - One bounded retry that honors `Retry-After` for `429` and `503` responses.
@@ -21,10 +21,24 @@ This boundary is intentional. Fanatics Collect's [Terms of Use](https://support.
 - Marketplace-namespaced identities (`fanatics-collect:<listing id>`).
 - Unknown shipping remains unknown instead of being represented as a known `$0` cost.
 - A dedicated **Wide Fanatics sweep** action on the Live Deals page. It uses every loaded model, switches the result sort to raw dollar edge, and never calls eBay.
-- A dedicated `/fanatics` discovery page with prospect-auto search, fair/near-model bands, raw/graded and max-price filters, deal sorting, and persistent player hold targets.
+- A dedicated `/fanatics` discovery page where the user selects Player, Team, or Set, enters a specific scope, and receives model-ranked results. Recent scopes and player hold targets persist locally.
 - Full sold-cache enrichment in batches rather than stopping at the first 160 players.
 
 ## Authorized feed contract
+
+The user-scoped route is `POST /api/fanatics-collect/search`. Every request must include a nonblank scope:
+
+```json
+{
+  "scope": { "type": "player", "value": "Aiva Arquette" },
+  "queries": [],
+  "limit": 40
+}
+```
+
+`scope.type` must be `player`, `team`, or `set`; `scope.value` must contain 2–80 characters and cannot contain wildcard characters. Blank/unscoped requests fail before any upstream call. Responses record the scope in `provenance`, and query-shaped responses may be cached under that exact request scope. The UI derives player queries from the loaded Bowman checklist rather than accepting an unrestricted marketplace-wide request.
+
+The licensed wide-feed path is configured separately:
 
 Configure:
 

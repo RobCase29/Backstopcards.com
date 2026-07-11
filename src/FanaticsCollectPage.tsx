@@ -1,7 +1,7 @@
-import { ExternalLink, RefreshCw, Search, ShieldCheck, Star, Target } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { ExternalLink, RefreshCw, Search, Star, Target } from 'lucide-react'
+import { useMemo, useState, type FormEvent } from 'react'
 import type { EbayBinScanResult } from './lib/ebay'
-import type { FanaticsCollectStatus } from './lib/fanaticsCollect'
+import type { FanaticsCollectScopeType, FanaticsCollectStatus } from './lib/fanaticsCollect'
 import {
   fanaticsPlayerKey,
   filterFanaticsDealOpportunities,
@@ -13,6 +13,9 @@ import type { Opportunity } from './types'
 import './FanaticsCollectPage.css'
 
 const HOLD_TARGETS_KEY = 'backstop:fanatics-hold-targets:v1'
+const RECENT_SCOPES_KEY = 'backstop:fanatics-recent-scopes:v1'
+
+type RecentScope = { type: FanaticsCollectScopeType; value: string }
 
 function money(value: number) {
   return new Intl.NumberFormat('en-US', {
@@ -45,6 +48,28 @@ function writeHoldTargets(targets: string[]) {
   }
 }
 
+function readRecentScopes() {
+  if (typeof window === 'undefined') return [] as RecentScope[]
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(RECENT_SCOPES_KEY) ?? '[]') as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((scope): scope is RecentScope =>
+      Boolean(scope && typeof scope === 'object' && ['player', 'team', 'set'].includes(String((scope as RecentScope).type)) && String((scope as RecentScope).value).trim()),
+    ).slice(0, 6)
+  } catch {
+    return []
+  }
+}
+
+function writeRecentScopes(scopes: RecentScope[]) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(RECENT_SCOPES_KEY, JSON.stringify(scopes.slice(0, 6)))
+  } catch {
+    // Recent scopes are a convenience; searches still work without storage.
+  }
+}
+
 function valueLabel(opportunity: Opportunity) {
   const ratio = opportunity.listing.allInPrice / Math.max(opportunity.fairValue, 1)
   if (ratio <= 0.8) return 'Strong value'
@@ -60,23 +85,26 @@ export function FanaticsCollectPage({
   status,
   loading,
   error,
-  onRunScan,
+  onSearch,
 }: {
   opportunities: Opportunity[]
   scan: EbayBinScanResult | null
   status: FanaticsCollectStatus | null
   loading: boolean
   error: string | null
-  onRunScan: () => void
+  onSearch: (scopeType: FanaticsCollectScopeType, scopeValue: string) => void
 }) {
-  const [query, setQuery] = useState('')
+  const [filterQuery, setFilterQuery] = useState('')
+  const [scopeType, setScopeType] = useState<FanaticsCollectScopeType>('player')
+  const [scopeValue, setScopeValue] = useState('')
+  const [recentScopes, setRecentScopes] = useState<RecentScope[]>(readRecentScopes)
   const [valueBand, setValueBand] = useState<FanaticsValueBand>('within-50')
   const [grade, setGrade] = useState<FanaticsGradeFilter>('all')
   const [sort, setSort] = useState<FanaticsDealSort>('edge')
   const [maxPrice, setMaxPrice] = useState(0)
   const [holdsOnly, setHoldsOnly] = useState(false)
   const [holdTargets, setHoldTargets] = useState<string[]>(readHoldTargets)
-  const authorized = Boolean(status?.wideScan?.configured)
+  const searchReady = Boolean(status?.targetedSearch?.configured)
   const fanaticsOpportunities = useMemo(
     () => opportunities.filter((opportunity) => opportunity.listing.marketplace === 'fanatics-collect'),
     [opportunities],
@@ -84,7 +112,7 @@ export function FanaticsCollectPage({
   const filtered = useMemo(
     () =>
       filterFanaticsDealOpportunities(fanaticsOpportunities, {
-        query,
+        query: filterQuery,
         valueBand,
         grade,
         sort,
@@ -92,13 +120,23 @@ export function FanaticsCollectPage({
         holdsOnly,
         holdTargets,
       }),
-    [fanaticsOpportunities, grade, holdTargets, holdsOnly, maxPrice, query, sort, valueBand],
+    [fanaticsOpportunities, filterQuery, grade, holdTargets, holdsOnly, maxPrice, sort, valueBand],
   )
   const holdKeys = useMemo(() => new Set(holdTargets.map(fanaticsPlayerKey)), [holdTargets])
   const withinModelWindowCount = fanaticsOpportunities.filter(
     (opportunity) => opportunity.listing.allInPrice <= opportunity.fairValue * 1.5,
   ).length
-  const latestLabel = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleString() : 'No authorized scan yet'
+  const latestLabel = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleString() : 'Enter a scope to search'
+
+  const submitScope = (event: FormEvent) => {
+    event.preventDefault()
+    const value = scopeValue.trim()
+    if (!value || !searchReady || loading) return
+    const next = [{ type: scopeType, value }, ...recentScopes.filter((scope) => !(scope.type === scopeType && fanaticsPlayerKey(scope.value) === fanaticsPlayerKey(value)))].slice(0, 6)
+    setRecentScopes(next)
+    writeRecentScopes(next)
+    onSearch(scopeType, value)
+  }
 
   const toggleHoldTarget = (playerName: string) => {
     const playerKey = fanaticsPlayerKey(playerName)
@@ -121,11 +159,35 @@ export function FanaticsCollectPage({
           <h2>Collect finds, without the clunky hunt.</h2>
           <p>See every matched card within 50% of model, then narrow the board or save the players you want to hold.</p>
         </div>
-        <button className="fanatics-scan-button" type="button" onClick={onRunScan} disabled={!authorized || loading}>
-          <RefreshCw size={17} className={loading ? 'spin' : undefined} />
-          {loading ? 'Scanning Fanatics' : authorized ? 'Run wide Fanatics scan' : 'Approved feed required'}
-        </button>
+        <form className="fanatics-scope-search" onSubmit={submitScope}>
+          <select value={scopeType} onChange={(event) => setScopeType(event.target.value as FanaticsCollectScopeType)} aria-label="Fanatics search scope">
+            <option value="player">Player</option>
+            <option value="team">Team</option>
+            <option value="set">Set</option>
+          </select>
+          <input
+            value={scopeValue}
+            onChange={(event) => setScopeValue(event.target.value)}
+            placeholder={scopeType === 'player' ? 'e.g. Aiva Arquette' : scopeType === 'team' ? 'e.g. Miami Marlins' : 'e.g. 2026 Bowman Chrome'}
+            aria-label={`Fanatics ${scopeType} search`}
+          />
+          <button className="fanatics-scan-button" type="submit" disabled={!searchReady || loading || scopeValue.trim().length < 2}>
+            <RefreshCw size={17} className={loading ? 'spin' : undefined} />
+            {loading ? 'Finding deals' : 'Find Fanatics deals'}
+          </button>
+        </form>
       </header>
+
+      {recentScopes.length > 0 ? (
+        <div className="fanatics-recent-scopes" aria-label="Recent Fanatics searches">
+          <span>Recent</span>
+          {recentScopes.map((scope) => (
+            <button key={`${scope.type}:${scope.value}`} type="button" onClick={() => { setScopeType(scope.type); setScopeValue(scope.value); onSearch(scope.type, scope.value) }} disabled={loading || !searchReady}>
+              {scope.type}: {scope.value}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div className="fanatics-summary" aria-label="Fanatics scan summary">
         <span><strong>{fanaticsOpportunities.length.toLocaleString()}</strong> modeled listings</span>
@@ -135,23 +197,12 @@ export function FanaticsCollectPage({
         <span>{latestLabel}</span>
       </div>
 
-      {!authorized ? (
-        <div className="fanatics-permission-note">
-          <ShieldCheck size={18} />
-          <div>
-            <strong>Ready for an approved Fanatics feed.</strong>
-            <span>{status?.wideScan?.message ?? 'Written data-access permission is required before automated retrieval can run.'}</span>
-          </div>
-          <a href={status?.termsUrl} target="_blank" rel="noreferrer">Review terms <ExternalLink size={13} /></a>
-        </div>
-      ) : null}
-
       <div className="fanatics-filter-bar" aria-label="Fanatics listing filters">
         <label className="fanatics-search">
           <Search size={17} />
           <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            value={filterQuery}
+            onChange={(event) => setFilterQuery(event.target.value)}
             placeholder="Search player, set, or parallel"
             aria-label="Search Fanatics prospect autos"
           />
@@ -218,8 +269,8 @@ export function FanaticsCollectPage({
       {filtered.length === 0 ? (
         <div className="fanatics-empty">
           <Target size={25} />
-          <strong>{scan ? 'No cards match these filters.' : 'Run the authorized wide scan to build this board.'}</strong>
-          <span>{scan ? 'Try the all-listings view, remove the price cap, or search another player.' : 'Then star any player to create your personal hold-target view.'}</span>
+          <strong>{scan ? 'No cards match these filters.' : 'Search a player, team, or set to build this board.'}</strong>
+          <span>{scan ? 'Try the all-listings view, remove the price cap, or enter another scope.' : 'We’ll rank every matched result against the Backstop model.'}</span>
         </div>
       ) : (
         <div className="fanatics-card-grid">

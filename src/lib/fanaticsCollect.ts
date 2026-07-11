@@ -91,12 +91,14 @@ type FanaticsCollectSearchResponse = {
   error?: string
 }
 
+export type FanaticsCollectScopeType = 'player' | 'team' | 'set'
+
 export type FanaticsCollectStatus = {
   provider: 'fanatics-collect'
   label: string
   configured: boolean
   reachable: boolean
-  mode: 'disabled' | 'authorized-targeted-search'
+  mode: 'disabled' | 'authorized-targeted-search' | 'user-scoped-search'
   marketplaceUrl: string
   termsUrl: string
   authorization?: {
@@ -106,6 +108,7 @@ export type FanaticsCollectStatus = {
   targetedSearch?: {
     configured: boolean
     reachable: boolean
+    mode?: 'authorized-targeted-search' | 'user-scoped-search'
   }
   wideScan?: {
     configured: boolean
@@ -173,6 +176,10 @@ type FetchFanaticsCollectListingsOptions = {
   searchMode?: EbayBinSearchMode
   searchTerm?: string
   signal?: AbortSignal
+  scope?: {
+    type: FanaticsCollectScopeType
+    value: string
+  }
 }
 
 function numberValue(value: unknown, fallback = 0) {
@@ -778,6 +785,7 @@ export async function fetchFanaticsCollectBinListings(options: FetchFanaticsColl
     signal: options.signal,
     body: JSON.stringify({
       queries,
+      scope: options.scope,
       minPrice: options.minPrice ?? 0,
       limit: options.limitPerPlayer ?? 40,
     }),
