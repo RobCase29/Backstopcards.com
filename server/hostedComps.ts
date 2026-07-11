@@ -74,6 +74,7 @@ type CardHedgeFmvResult = {
 type HostedQueueTask = {
   playerName: string
   releaseYear: number
+  releaseName: string
   priority: number
   cardId: string
   cardDescription: string
@@ -133,7 +134,7 @@ type DailyExportCandidate = {
   sales: CardHedgeRawSale[]
 }
 
-const HOSTED_COMP_SCHEMA_VERSION = 1
+const HOSTED_COMP_SCHEMA_VERSION = 2
 const BASE_AUTO_PRODUCT_FAMILY = 'Bowman Chrome'
 const BASE_AUTO_VARIATION = 'Base Auto'
 const BASE_AUTO_GRADE = 'Raw'
@@ -178,6 +179,13 @@ function stringValue(value: unknown) {
 
 function releaseYearFromText(value: unknown) {
   return Number(compact(value).match(/\b(20\d{2})\b/)?.[1] ?? 0) || null
+}
+
+export function releaseSearchLabel(value: unknown, fallbackYear: number) {
+  const label = compact(value) || `${fallbackYear} Bowman`
+  return label
+    .replace(/\bBowman\s+Chrome\s+Draft\b/i, 'Bowman Draft')
+    .replace(/\bBowman\s+Draft\s+Chrome\b/i, 'Bowman Draft')
 }
 
 function positive(value: unknown): value is number {
@@ -500,6 +508,7 @@ async function ensureHostedCompSchemaInternal(sql: HostedCompSql) {
       player_name TEXT NOT NULL,
       player_lookup TEXT NOT NULL,
       release_year INTEGER NOT NULL,
+      release_name TEXT NOT NULL DEFAULT '',
       priority DOUBLE PRECISION NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'queued',
       attempts INTEGER NOT NULL DEFAULT 0,
@@ -512,6 +521,7 @@ async function ensureHostedCompSchemaInternal(sql: HostedCompSql) {
       PRIMARY KEY (player_lookup, release_year)
     )
   `
+  await sql`ALTER TABLE backstop_comp_refresh_queue ADD COLUMN IF NOT EXISTS release_name TEXT NOT NULL DEFAULT ''`
   await sql`CREATE INDEX IF NOT EXISTS idx_backstop_comp_queue_claim ON backstop_comp_refresh_queue (status, next_attempt_at, priority DESC)`
   await sql`
     CREATE TABLE IF NOT EXISTS backstop_comp_sync_runs (
@@ -556,25 +566,32 @@ export async function ensureHostedCompSchema(sql: HostedCompSql) {
 
 export async function bootstrapHostedCompData(sql: HostedCompSql) {
   await ensureHostedCompSchema(sql)
-  const [queueCountRow] = await sql`SELECT COUNT(*)::INTEGER AS count FROM backstop_comp_refresh_queue`
+  const [queueCountRow] = await sql`
+    SELECT
+      COUNT(*)::INTEGER AS count,
+      COUNT(*) FILTER (WHERE release_name = '')::INTEGER AS "missingReleaseNames"
+    FROM backstop_comp_refresh_queue
+  `
   const queueCount = numberValue(queueCountRow?.count)
-  if (queueCount < HOSTED_COMP_QUEUE_SEEDS.length) {
+  if (queueCount < HOSTED_COMP_QUEUE_SEEDS.length || numberValue(queueCountRow?.missingReleaseNames) > 0) {
     const payload = JSON.stringify(
-      HOSTED_COMP_QUEUE_SEEDS.map(([playerName, releaseYear, priority]) => ({
+      HOSTED_COMP_QUEUE_SEEDS.map(([playerName, releaseYear, priority, releaseName]) => ({
         player_name: playerName,
         player_lookup: normalizedName(playerName),
         release_year: releaseYear,
+        release_name: releaseName,
         priority,
       })),
     )
     await sql`
       INSERT INTO backstop_comp_refresh_queue (
-        player_name, player_lookup, release_year, priority, status, next_attempt_at, updated_at
+        player_name, player_lookup, release_year, release_name, priority, status, next_attempt_at, updated_at
       )
       SELECT
         seed.player_name,
         seed.player_lookup,
         seed.release_year,
+        seed.release_name,
         seed.priority,
         'queued',
         NOW(),
@@ -583,10 +600,12 @@ export async function bootstrapHostedCompData(sql: HostedCompSql) {
         player_name TEXT,
         player_lookup TEXT,
         release_year INTEGER,
+        release_name TEXT,
         priority DOUBLE PRECISION
       )
       ON CONFLICT (player_lookup, release_year) DO UPDATE SET
         player_name = EXCLUDED.player_name,
+        release_name = EXCLUDED.release_name,
         priority = GREATEST(backstop_comp_refresh_queue.priority, EXCLUDED.priority)
     `
   }
@@ -1044,7 +1063,7 @@ async function claimHostedTasks(sql: HostedCompSql, runId: string, limit: number
     WHERE queue.player_lookup = selected.player_lookup
       AND queue.release_year = selected.release_year
       AND queue.status <> 'running'
-    RETURNING queue.player_name AS "playerName", queue.player_lookup AS "playerLookup", queue.release_year AS "releaseYear", queue.priority
+    RETURNING queue.player_name AS "playerName", queue.player_lookup AS "playerLookup", queue.release_year AS "releaseYear", queue.release_name AS "releaseName", queue.priority
   `
   if (!rows.length) return [] satisfies HostedQueueTask[]
   const lookups = rows.map((row) => stringValue(row.playerLookup))
@@ -1065,6 +1084,7 @@ async function claimHostedTasks(sql: HostedCompSql, runId: string, limit: number
     return {
       playerName: stringValue(row.playerName),
       releaseYear: numberValue(row.releaseYear),
+      releaseName: stringValue(row.releaseName) || `${numberValue(row.releaseYear)} Bowman`,
       priority: numberValue(row.priority),
       cardId: stringValue(lane?.cardId),
       cardDescription: stringValue(lane?.cardDescription),
@@ -1295,7 +1315,7 @@ async function hostedDailyExportAlreadyIngested(sql: HostedCompSql, date: string
 
 async function ingestHostedDailyExport(sql: HostedCompSql, text: string, date: string, now: Date) {
   const queueRows = await sql`
-    SELECT player_name AS "playerName", player_lookup AS "playerLookup", release_year AS "releaseYear", priority
+    SELECT player_name AS "playerName", player_lookup AS "playerLookup", release_year AS "releaseYear", release_name AS "releaseName", priority
     FROM backstop_comp_refresh_queue
   `
   const laneRows = await sql`
@@ -1315,6 +1335,7 @@ async function ingestHostedDailyExport(sql: HostedCompSql, text: string, date: s
     taskByKey.set(key, {
       playerName: stringValue(row.playerName),
       releaseYear: numberValue(row.releaseYear),
+      releaseName: stringValue(row.releaseName) || `${numberValue(row.releaseYear)} Bowman`,
       priority: numberValue(row.priority),
       cardId: stringValue(lane?.cardId),
       cardDescription: stringValue(lane?.cardDescription),
@@ -1666,7 +1687,7 @@ export async function runHostedCompRefresh(options: HostedCompRefreshOptions) {
           : null
         if (!match) {
           const searchPayload = (await options.requestCardHedge('/v1/cards/card-search', {
-            search: `${task.playerName} ${task.releaseYear} Bowman`,
+            search: `${task.playerName} ${releaseSearchLabel(task.releaseName, task.releaseYear)}`,
             category: 'Baseball',
             page: 1,
             page_size: 100,

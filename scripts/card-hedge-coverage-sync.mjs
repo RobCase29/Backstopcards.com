@@ -47,6 +47,23 @@ function compact(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim()
 }
 
+function normalizePlayerLookup(value) {
+  return compact(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function releaseSearchLabel(value, fallbackYear) {
+  const label = compact(value) || `${fallbackYear} Bowman`
+  return label
+    .replace(/\bBowman\s+Chrome\s+Draft\b/i, 'Bowman Draft')
+    .replace(/\bBowman\s+Draft\s+Chrome\b/i, 'Bowman Draft')
+}
+
 function cardScopeOption(fallback = 'base-auto-first') {
   const raw = compact(textOption('card-scope', fallback)).toLowerCase()
   return raw === 'all' || raw === 'auto' || raw === 'base-auto-first' ? raw : fallback
@@ -97,9 +114,11 @@ function priorityScore(row, staleDays, retryCooldownDays) {
   const base = {
     timeout: 96,
     error: 92,
-    missing: 88,
+    missing: 94,
     queued: 84,
-    'no-clean-base': 74,
+    // A completed generic search without a model is now the most important
+    // retry: exact release-aware queries can recover these lanes.
+    'no-clean-base': 90,
     stale: 58,
     thin: 48,
     'recently-checked': 0,
@@ -117,7 +136,11 @@ function coverageRows(db, options) {
   const queueHasError = columnExists(db, 'canonical_refresh_queue', 'error')
   const queueHasLastAttempt = columnExists(db, 'canonical_refresh_queue', 'last_attempt_at')
   const queueHasLastSuccess = columnExists(db, 'canonical_refresh_queue', 'last_success_at')
-  const sourceFilter = options.source === 'waxpackhero' && hasSourceSheet ? "AND c.source_sheet = 'Wax Pack Hero First Bowman'" : ''
+  const sourceFilter = hasSourceSheet
+    ? options.source === 'waxpackhero'
+      ? "AND c.source_sheet = 'Wax Pack Hero First Bowman'"
+      : "AND (c.source_sheet = 'Wax Pack Hero First Bowman' OR c.is_auto = 1)"
+    : ''
   const playerNames = options.players.length ? options.players.map((player) => player.toLowerCase()) : []
   const playerFilter = playerNames.length ? `AND lower(c.player_name) IN (${playerNames.map(() => '?').join(', ')})` : ''
   const queueSelect = hasQueue
@@ -137,10 +160,12 @@ function coverageRows(db, options) {
         r.release_year,
         r.release_name,
         c.player_key,
-        MAX(c.player_name) AS player_name
+        MAX(c.player_name) AS player_name,
+        MAX(CASE WHEN c.source_sheet = 'Wax Pack Hero First Bowman' THEN 1 ELSE 0 END) AS historical_first,
+        MAX(CASE WHEN c.is_auto = 1 THEN 1 ELSE 0 END) AS listed_auto
       FROM checklist_cards c
       JOIN checklist_releases r ON r.release_key = c.release_key
-      WHERE r.release_year >= ?
+      WHERE r.release_year BETWEEN ? AND ?
         ${sourceFilter}
         ${playerFilter}
       GROUP BY r.release_year, r.release_name, c.player_key
@@ -148,19 +173,19 @@ function coverageRows(db, options) {
     base_candidates AS (
       SELECT
         cc.release_year,
-        lower(cc.player_name) AS player_lookup,
+        normalize_player_lookup(cc.player_name) AS player_lookup,
         s.sale_count,
         s.sales_30,
         s.sales_90,
         COALESCE(NULLIF(s.twma_30, 0), NULLIF(s.recent_5_avg, 0), NULLIF(s.twma_90, 0), NULLIF(s.median_price, 0), NULLIF(s.avg_price, 0), 0) AS base_price,
         s.latest_sold_at,
         ROW_NUMBER() OVER (
-          PARTITION BY cc.release_year, lower(cc.player_name)
+          PARTITION BY cc.release_year, normalize_player_lookup(cc.player_name)
           ORDER BY CASE WHEN lower(cc.product_family) LIKE '%chrome%' THEN 0 ELSE 1 END, s.sale_count DESC, s.sales_30 DESC, s.latest_sold_at DESC
         ) AS rn
       FROM canonical_cards cc
       JOIN canonical_comp_summary s ON s.canonical_card_key = cc.canonical_card_key
-      WHERE cc.release_year >= ?
+      WHERE cc.release_year BETWEEN ? AND ?
         AND cc.grade_bucket = 'Raw'
         AND cc.card_class IN ('auto', 'paper-auto')
         AND cc.variation_label IN ('Base Auto', 'Base', '')
@@ -170,6 +195,8 @@ function coverageRows(db, options) {
       p.player_name AS playerName,
       p.release_year AS releaseYear,
       p.release_name AS releaseName,
+      p.historical_first AS historicalFirst,
+      p.listed_auto AS listedAuto,
       COALESCE(b.base_price, 0) AS basePrice,
       COALESCE(b.sale_count, 0) AS baseSaleCount,
       COALESCE(b.sales_30, 0) AS baseSales30,
@@ -178,9 +205,9 @@ function coverageRows(db, options) {
       ${queueSelect}
     FROM checklist_players p
     LEFT JOIN base_candidates b
-      ON b.release_year = p.release_year AND b.player_lookup = lower(p.player_name) AND b.rn = 1
+      ON b.release_year = p.release_year AND b.player_lookup = normalize_player_lookup(p.player_name) AND b.rn = 1
     ${queueJoin}
-  `).all(options.minYear, ...playerNames, options.minYear)
+  `).all(options.minYear, options.maxYear, ...playerNames, options.minYear, options.maxYear)
 }
 
 function setQueueStatus(db, task, status, fields = {}) {
@@ -218,10 +245,10 @@ function resetRunningTasks(db, options) {
     SET status = 'queued',
       error = '',
       updated_at = ?
-    WHERE release_year >= ?
+    WHERE release_year BETWEEN ? AND ?
       AND status = 'running'
       ${playerFilter}
-  `).run(nowIso, options.minYear, ...playerNames)
+  `).run(nowIso, options.minYear, options.maxYear, ...playerNames)
   return Number(result.changes) || 0
 }
 
@@ -235,11 +262,14 @@ function runCommand(args, options = {}) {
 }
 
 const options = {
-  minYear: numberOption('min-year', 2020, 1900, 9999),
+  minYear: numberOption('min-year', 2016, 1900, 9999),
+  maxYear: numberOption('max-year', 9999, 1900, 9999),
   staleDays: numberOption('stale-days', 60, 7, 730),
   retryCooldownDays: numberOption('retry-cooldown-days', 7, 0, 90),
   limit: numberOption('limit', 20, 1, 500),
-  source: compact(textOption('source', 'waxpackhero')),
+  // Coverage is a product invariant, so the default must include every
+  // canonical checklist source. Use --source=waxpackhero only for a scoped run.
+  source: compact(textOption('source', 'all')),
   players: textOption('players', '')
     .split(/[|\n,]+/)
     .map(compact)
@@ -258,6 +288,7 @@ const options = {
 }
 
 const db = new DatabaseSync(dbFile)
+db.function('normalize_player_lookup', { deterministic: true }, normalizePlayerLookup)
 if (!tableExists(db, 'checklist_cards') || !tableExists(db, 'canonical_cards') || !tableExists(db, 'canonical_comp_summary')) {
   db.close()
   throw new Error('Coverage sync requires checklist and canonical market tables.')
@@ -299,6 +330,11 @@ for (const row of rows) {
     priorityScore: Number(row.priorityScore) || 0,
   }
   const attemptAt = new Date().toISOString()
+  const taskCardScope = Number(row.historicalFirst) > 0
+    ? 'base-auto-first'
+    : options.cardScope === 'base-auto-first'
+      ? 'auto'
+      : options.cardScope
   if (!options.dryRun) setQueueStatus(db, task, 'running', { lastAttemptAt: attemptAt, error: '' })
   const result = runCommand([
     'scripts/card-hedge-player-sync.mjs',
@@ -306,6 +342,8 @@ for (const row of rows) {
     task.playerName,
     '--year',
     String(task.releaseYear),
+    '--search',
+    `${task.playerName} ${releaseSearchLabel(row.releaseName, task.releaseYear)}`,
     '--grades',
     options.grades,
     '--count',
@@ -317,7 +355,7 @@ for (const row of rows) {
     '--comp-scope',
     options.compScope,
     '--card-scope',
-    options.cardScope,
+    taskCardScope,
     '--skip-canonical',
   ], { dryRun: options.dryRun, timeoutMs: options.timeoutMs })
 
