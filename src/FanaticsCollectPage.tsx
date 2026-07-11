@@ -50,6 +50,7 @@ function valueLabel(opportunity: Opportunity) {
   if (ratio <= 0.8) return 'Strong value'
   if (ratio <= 1) return 'Fair or better'
   if (ratio <= 1.15) return 'Near model'
+  if (ratio <= 1.5) return 'Within 50%'
   return 'Above model'
 }
 
@@ -69,7 +70,7 @@ export function FanaticsCollectPage({
   onRunScan: () => void
 }) {
   const [query, setQuery] = useState('')
-  const [valueBand, setValueBand] = useState<FanaticsValueBand>('fair-or-better')
+  const [valueBand, setValueBand] = useState<FanaticsValueBand>('within-50')
   const [grade, setGrade] = useState<FanaticsGradeFilter>('all')
   const [sort, setSort] = useState<FanaticsDealSort>('edge')
   const [maxPrice, setMaxPrice] = useState(0)
@@ -94,8 +95,8 @@ export function FanaticsCollectPage({
     [fanaticsOpportunities, grade, holdTargets, holdsOnly, maxPrice, query, sort, valueBand],
   )
   const holdKeys = useMemo(() => new Set(holdTargets.map(fanaticsPlayerKey)), [holdTargets])
-  const fairlyPricedCount = fanaticsOpportunities.filter(
-    (opportunity) => opportunity.listing.allInPrice <= opportunity.fairValue,
+  const withinModelWindowCount = fanaticsOpportunities.filter(
+    (opportunity) => opportunity.listing.allInPrice <= opportunity.fairValue * 1.5,
   ).length
   const latestLabel = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleString() : 'No authorized scan yet'
 
@@ -118,7 +119,7 @@ export function FanaticsCollectPage({
             Fanatics Collect · Bowman prospect autos
           </span>
           <h2>Collect finds, without the clunky hunt.</h2>
-          <p>Search the full authorized feed, keep fairly priced cards in view, and save the players you want to hold.</p>
+          <p>See every matched card within 50% of model, then narrow the board or save the players you want to hold.</p>
         </div>
         <button className="fanatics-scan-button" type="button" onClick={onRunScan} disabled={!authorized || loading}>
           <RefreshCw size={17} className={loading ? 'spin' : undefined} />
@@ -128,7 +129,7 @@ export function FanaticsCollectPage({
 
       <div className="fanatics-summary" aria-label="Fanatics scan summary">
         <span><strong>{fanaticsOpportunities.length.toLocaleString()}</strong> modeled listings</span>
-        <span><strong>{fairlyPricedCount.toLocaleString()}</strong> fair or better</span>
+        <span><strong>{withinModelWindowCount.toLocaleString()}</strong> within 50% of model</span>
         <span><strong>{holdTargets.length.toLocaleString()}</strong> hold targets</span>
         <span><strong>{scan?.stats.upstreamPagesFetched.toLocaleString() ?? '0'}</strong> feed pages</span>
         <span>{latestLabel}</span>
@@ -158,6 +159,7 @@ export function FanaticsCollectPage({
         <label>
           <span>Value</span>
           <select value={valueBand} onChange={(event) => setValueBand(event.target.value as FanaticsValueBand)}>
+            <option value="within-50">Within 50% of model</option>
             <option value="fair-or-better">Fair or better</option>
             <option value="near-model">Within 15% of model</option>
             <option value="all">All modeled listings</option>
@@ -217,7 +219,7 @@ export function FanaticsCollectPage({
         <div className="fanatics-empty">
           <Target size={25} />
           <strong>{scan ? 'No cards match these filters.' : 'Run the authorized wide scan to build this board.'}</strong>
-          <span>{scan ? 'Try near-model, remove the price cap, or search another player.' : 'Then star any player to create your personal hold-target view.'}</span>
+          <span>{scan ? 'Try the all-listings view, remove the price cap, or search another player.' : 'Then star any player to create your personal hold-target view.'}</span>
         </div>
       ) : (
         <div className="fanatics-card-grid">

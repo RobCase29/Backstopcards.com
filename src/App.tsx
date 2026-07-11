@@ -2575,10 +2575,10 @@ function WorkflowCommand({
     },
     {
       mode: 'fanatics' as const,
-      tier: 'secondary',
+      tier: 'primary',
       eyebrow: 'Collect',
       title: 'Fanatics Finds',
-      description: 'Prospect autos at model',
+      description: 'Cards within 50% of model',
       value: fanaticsDealCount.toLocaleString(),
       icon: <Store size={19} />,
     },
@@ -2611,10 +2611,10 @@ function WorkflowCommand({
     },
   ]
   const primaryMobileItems = navigationItems.filter((item) =>
-    ['lookup', 'deals', 'price'].includes(item.mode),
+    ['lookup', 'deals', 'fanatics', 'price'].includes(item.mode),
   )
   const secondaryMobileItems = navigationItems.filter((item) =>
-    ['fanatics', 'case-hits', 'wax', 'health'].includes(item.mode),
+    ['case-hits', 'wax', 'health'].includes(item.mode),
   )
   const secondaryModeActive = secondaryMobileItems.some((item) => item.mode === mode)
 
@@ -2700,7 +2700,7 @@ function WorkflowCommand({
             key={`mobile:${item.mode}`}
           >
             <span>{item.icon}</span>
-            <strong>{item.mode === 'lookup' ? 'Board' : item.mode === 'deals' ? 'Deals' : 'Price'}</strong>
+            <strong>{item.mode === 'lookup' ? 'Board' : item.mode === 'deals' ? 'Deals' : item.mode === 'fanatics' ? 'Fanatics' : 'Price'}</strong>
           </button>
         ))}
         <button

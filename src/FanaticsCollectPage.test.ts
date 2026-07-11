@@ -88,7 +88,7 @@ function opportunity(options: {
 
 const defaults: FanaticsDealFilters = {
   query: '',
-  valueBand: 'fair-or-better',
+  valueBand: 'within-50',
   grade: 'all',
   sort: 'edge',
   maxPrice: 0,
@@ -97,18 +97,19 @@ const defaults: FanaticsDealFilters = {
 }
 
 describe('Fanatics Collect dedicated-page filters', () => {
-  it('defaults to Fanatics listings at or below model and sorts by dollar edge', () => {
+  it('defaults to Fanatics listings within 50% of model and sorts by dollar edge', () => {
     const results = filterFanaticsDealOpportunities(
       [
         opportunity({ id: 'small', player: 'Player Small', ask: 80, fair: 100 }),
         opportunity({ id: 'large', player: 'Player Large', ask: 150, fair: 250 }),
         opportunity({ id: 'rich', player: 'Player Rich', ask: 120, fair: 100 }),
+        opportunity({ id: 'outside', player: 'Player Outside', ask: 151, fair: 100 }),
         opportunity({ id: 'ebay', player: 'Player Ebay', ask: 10, fair: 200, marketplace: 'ebay' }),
       ],
       defaults,
     )
 
-    expect(results.map((result) => result.listing.id)).toEqual(['large', 'small'])
+    expect(results.map((result) => result.listing.id)).toEqual(['large', 'small', 'rich'])
   })
 
   it('supports near-model, player search, grade, max-price, and hold-target filters', () => {

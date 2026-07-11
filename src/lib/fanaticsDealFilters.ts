@@ -1,6 +1,6 @@
 import type { Opportunity } from '../types'
 
-export type FanaticsValueBand = 'fair-or-better' | 'near-model' | 'all'
+export type FanaticsValueBand = 'within-50' | 'fair-or-better' | 'near-model' | 'all'
 export type FanaticsGradeFilter = 'all' | 'raw' | 'graded'
 export type FanaticsDealSort = 'edge' | 'discount' | 'price' | 'confidence'
 
@@ -39,6 +39,7 @@ export function filterFanaticsDealOpportunities(opportunities: Opportunity[], fi
     }
     if (filters.valueBand === 'fair-or-better' && ask > fairValue) return false
     if (filters.valueBand === 'near-model' && ask > fairValue * 1.15) return false
+    if (filters.valueBand === 'within-50' && ask > fairValue * 1.5) return false
     if (filters.grade === 'raw' && opportunity.listing.isGraded) return false
     if (filters.grade === 'graded' && !opportunity.listing.isGraded) return false
     if (filters.maxPrice > 0 && ask > filters.maxPrice) return false
