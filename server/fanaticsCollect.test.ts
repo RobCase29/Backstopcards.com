@@ -1,14 +1,17 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { handleFanaticsCollectRoute } from './proxy'
 
-function postJson(body: unknown, route = 'search') {
+function postJson(body: unknown, route = 'search', includeScope = true) {
+  const scopedBody = route === 'search' && includeScope && body && typeof body === 'object'
+    ? { scope: { type: 'player', value: 'Aiva Arquette' }, ...body }
+    : body
   return new Request(`http://localhost/api/fanatics-collect/${route}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Origin: 'http://localhost',
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(scopedBody),
   })
 }
 
@@ -29,20 +32,20 @@ afterEach(() => {
 })
 
 describe('Fanatics Collect proxy', () => {
-  it('fails closed without a written-access authorization reference', async () => {
+  it('fails closed when the user does not provide a search scope', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     const response = await handleFanaticsCollectRoute(
       'search',
-      postJson({ queries: ['2026 Bowman Chrome Auto'] }),
+      postJson({ queries: ['2026 Bowman Chrome Auto'] }, 'search', false),
       fanaticsEnv({ FANATICS_COLLECT_SEARCH_AUTHORIZED: undefined, FANATICS_COLLECT_AUTHORIZATION_ID: undefined }),
     )
     const payload = (await response.json()) as { error: string }
 
-    expect(response.status).toBe(503)
-    expect(payload.error).toMatch(/written data-access permission/i)
+    expect(response.status).toBe(400)
+    expect(payload.error).toMatch(/player, team, or set/i)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -149,13 +152,22 @@ describe('Fanatics Collect proxy', () => {
     const response = await handleFanaticsCollectRoute(
       'search',
       postJson({ queries: ['Aiva Arquette 2026 Bowman Chrome Auto'], minPrice: 25 }),
-      fanaticsEnv(),
+      fanaticsEnv({ FANATICS_COLLECT_SEARCH_AUTHORIZED: undefined, FANATICS_COLLECT_AUTHORIZATION_ID: undefined }),
     )
-    const payload = (await response.json()) as { items: unknown[]; stats: { queriesRun: number } }
+    const payload = (await response.json()) as {
+      items: unknown[]
+      stats: { queriesRun: number }
+      provenance: { mode: string; scopeType: string; scopeValue: string }
+    }
 
     expect(response.status).toBe(200)
     expect(payload.items).toHaveLength(1)
     expect(payload.stats.queriesRun).toBe(1)
+    expect(payload.provenance).toEqual({
+      mode: 'user-scoped-search',
+      scopeType: 'player',
+      scopeValue: 'Aiva Arquette',
+    })
   })
 
   it('paginates an authorized wide feed, deduplicates UUIDs, and reports complete coverage', async () => {

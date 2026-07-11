@@ -44,9 +44,9 @@ Official checklists + Wax Pack Hero 1st lists
   -> opportunity board, live chart, reject/cleanup loop
 ```
 
-Card Hedge and the canonical comp cache are the pricing core. Production models live in Neon and refresh independently of deployments; the local SQLite database is an offline research and taxonomy workbench. Live marketplace providers only answer "what is active right now?" and raw query pages/snapshots are cached before scoring so multiple users do not repeat the same external calls. eBay Browse powers active BINs and auctions. Fanatics Collect access fails closed unless a written authorization reference and approved data path are configured. The legacy checklist feed is no longer part of normal startup when local checklist data exists.
+Card Hedge and the canonical comp cache are the pricing core. Production models live in Neon and refresh independently of deployments; the local SQLite database is an offline research and taxonomy workbench. Live marketplace providers only answer "what is active right now?" and raw query pages/snapshots are cached before scoring so multiple users do not repeat the same external calls. eBay Browse powers active BINs and auctions. Fanatics Collect requires a user-entered player, team, or set for targeted searches; marketplace-wide retrieval remains disabled unless a written authorization reference and approved data path are configured. The legacy checklist feed is no longer part of normal startup when local checklist data exists.
 
-Subscription read: keep Card Hedge and eBay active. Market Movers is now a validation/taxonomy backup unless Card Hedge coverage proves weaker than expected. Fanatics Collect requires written data-access permission or a licensed export/feed before enabling automated retrieval. The legacy checklist feed can be cancelled after local checklists and multipliers cover the releases you care about.
+Subscription read: keep Card Hedge and eBay active. Market Movers is now a validation/taxonomy backup unless Card Hedge coverage proves weaker than expected. Fanatics Collect wide retrieval requires written data-access permission or a licensed export/feed; user-entered scoped searches are handled separately. The legacy checklist feed can be cancelled after local checklists and multipliers cover the releases you care about.
 
 ## Hosted Storage
 
@@ -179,7 +179,7 @@ The `/api/ebay/search` proxy caches raw eBay query pages before the app maps and
 
 ## Fanatics Collect Wide Scan (Authorized Data Only)
 
-The dedicated `/fanatics` page turns an authorized Fanatics inventory feed into a clean Bowman prospect-auto board: player/set search, fair-or-better and near-model bands, raw/graded and max-price filters, several deal sorts, and persistent personal hold targets. The Deals page also includes a Fanatics-only wide-scan action. Both paths fail closed until a written authorization reference and approved cursor feed are configured; they do not crawl Fanatics pages or undocumented endpoints.
+The dedicated `/fanatics` page turns a user-entered player, team, or set into a clean Bowman prospect-auto deal board. Each scoped search is bounded, cached with provenance, matched against loaded checklists, and ranked against model. The page also provides value bands, raw/graded and max-price filters, deal sorts, recent scopes, and persistent personal hold targets. The Deals page retains a separate Fanatics-only wide-feed action that stays disabled until an approved cursor feed is configured.
 
 See [the Fanatics wide-scan plan and feed contract](docs/FANATICS_COLLECT_WIDE_SCAN.md) for configuration, legal/operational guardrails, response schema, matching rules, and acceptance criteria.
 
