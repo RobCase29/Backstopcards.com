@@ -20,6 +20,7 @@
     "checklist:import:2026": "node scripts/import-bowman-checklist.mjs --workbook=/Users/rc3/Downloads/2026-Bowman-Baseball-Checklist.xlsx --year=2026 --name=\"2026 Bowman\" --release-key=2026-bowman --seed-queue",
     "checklist:firsts:2026": "node scripts/import-first-bowman-source.mjs --release-key=2026-bowman --year=2026 --seed-queue",
     "checklist:firsts:waxpackhero": "node scripts/import-waxpackhero-first-bowman.mjs --seed-queue",
+    "checklist:corrections": "node scripts/apply-checklist-corrections.mjs",
     "checklist:firsts:projection": "node scripts/first-bowman-base-auto-projection.mjs",
     "checklist:static-snapshot": "node scripts/export-static-checklist-snapshot.mjs",
     "comps:hosted-bootstrap": "node scripts/export-hosted-comp-bootstrap.mjs",
