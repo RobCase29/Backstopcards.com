@@ -471,40 +471,109 @@
 }
 
 @media (max-width: 720px) {
+  .fanatics-desk {
+    gap: 14px;
+  }
+
   .fanatics-hero {
     align-items: stretch;
+    border-radius: 15px;
     flex-direction: column;
-    padding: 21px;
+    gap: 18px;
+    padding: 18px;
+  }
+
+  .fanatics-hero h2 {
+    font-size: clamp(1.45rem, 8vw, 1.9rem);
+    line-height: 1.14;
+    margin: 9px 0 7px;
+  }
+
+  .fanatics-hero p {
+    font-size: 0.84rem;
+    line-height: 1.48;
   }
 
   .fanatics-scan-button {
+    grid-column: 1 / -1;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .fanatics-scope-panel {
+    flex-basis: auto;
     width: 100%;
   }
 
   .fanatics-scope-search {
     flex-basis: auto;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(92px, 0.72fr) minmax(0, 1.65fr);
+  }
+
+  .fanatics-scope-search input,
+  .fanatics-scope-search select {
+    font-size: 0.86rem;
+    height: 48px;
   }
 
   .fanatics-scope-count {
+    font-size: 0.68rem;
     padding-left: 0;
   }
 
-  .fanatics-permission-note {
-    grid-template-columns: auto 1fr;
+  .fanatics-recent-scopes,
+  .fanatics-summary {
+    flex-wrap: nowrap;
+    margin-inline: -2px;
+    overflow-x: auto;
+    padding: 2px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
 
-  .fanatics-permission-note a {
-    grid-column: 2;
+  .fanatics-recent-scopes::-webkit-scrollbar,
+  .fanatics-summary::-webkit-scrollbar {
+    display: none;
   }
 
-  .fanatics-filter-bar,
+  .fanatics-recent-scopes > span,
+  .fanatics-recent-scopes button,
+  .fanatics-summary span {
+    flex: 0 0 auto;
+  }
+
+  .fanatics-recent-scopes button {
+    min-height: 34px;
+  }
+
+  .fanatics-summary span {
+    padding: 8px 11px;
+  }
+
+  .fanatics-filter-bar {
+    border-radius: 14px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px;
+  }
+
   .fanatics-card-grid {
     grid-template-columns: 1fr;
   }
 
   .fanatics-search {
-    grid-column: auto;
+    grid-column: 1 / -1;
+    height: 46px;
+  }
+
+  .fanatics-filter-bar input,
+  .fanatics-filter-bar select,
+  .hold-filter {
+    font-size: 0.8rem;
+    height: 46px;
+  }
+
+  .hold-filter {
+    grid-column: 1 / -1;
   }
 
   .fanatics-result-head {
@@ -514,6 +583,43 @@
   }
 
   .fanatics-result-head small {
+    font-size: 0.72rem;
+    line-height: 1.4;
     text-align: left;
+  }
+
+  .fanatics-card {
+    gap: 13px;
+    padding: 14px;
+  }
+
+  .fanatics-card-copy p {
+    min-height: 0;
+  }
+
+  .fanatics-price-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fanatics-price-grid span {
+    padding: 9px 10px;
+  }
+
+  .fanatics-price-grid strong {
+    font-size: 0.9rem;
+  }
+
+  .fanatics-card-footer {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .fanatics-card-footer > span {
+    flex: 1 1 160px;
+    white-space: normal;
+  }
+
+  .fanatics-card-footer a {
+    min-height: 32px;
   }
 }
