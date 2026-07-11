@@ -1,6 +1,21 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { handleFanaticsCollectRoute } from './proxy'
 
+const redisMemory = vi.hoisted(() => new Map<string, unknown>())
+
+vi.mock('@upstash/redis', () => ({
+  Redis: class {
+    async get<T>(key: string) {
+      return (redisMemory.get(key) ?? null) as T | null
+    }
+
+    async set(key: string, value: unknown) {
+      redisMemory.set(key, value)
+      return 'OK'
+    }
+  },
+}))
+
 function postJson(body: unknown, route = 'search', includeScope = true) {
   const scopedBody = route === 'search' && includeScope && body && typeof body === 'object'
     ? { scope: { type: 'player', value: 'Aiva Arquette' }, ...body }
@@ -27,6 +42,7 @@ function fanaticsEnv(overrides: Record<string, string | undefined> = {}) {
 }
 
 afterEach(() => {
+  redisMemory.clear()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -168,6 +184,90 @@ describe('Fanatics Collect proxy', () => {
       scopeType: 'player',
       scopeValue: 'Aiva Arquette',
     })
+  })
+
+  it('keeps a stale rescue snapshot and serves it when a live refresh fails', async () => {
+    const env = fanaticsEnv({
+      FANATICS_COLLECT_GRAPHQL_URL: 'https://fanatics-stale.test/graphql',
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'redis-token',
+      FANATICS_QUERY_CACHE_FRESH_TTL_SECONDS: '60',
+      FANATICS_QUERY_CACHE_STALE_TTL_SECONDS: '3600',
+    })
+    const requestBody = {
+      queries: ['Aiva Arquette 2026 Bowman Chrome Auto'],
+      scope: { type: 'player', value: 'Aiva Arquette' },
+      minPrice: 25,
+    }
+    const liveFetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url) === 'https://fanatics-stale.test/graphql') {
+        return Response.json({ data: { collectSearchKey: 'stale-test-key' } })
+      }
+      return Response.json({
+        results: [{
+          nbHits: 1,
+          hits: [{ objectID: 'aiva-stale', listingUuid: 'aiva-stale', title: 'Aiva Arquette 2026 Bowman Chrome Auto', askingPrice: 50 }],
+        }],
+      })
+    })
+    vi.stubGlobal('fetch', liveFetch)
+
+    const liveResponse = await handleFanaticsCollectRoute('search', postJson(requestBody), env)
+    expect(liveResponse.status).toBe(200)
+    expect(redisMemory.size).toBe(1)
+
+    const [cacheKey, cachedRaw] = [...redisMemory.entries()][0]
+    const cached = JSON.parse(String(cachedRaw)) as { fetchedAt: string }
+    cached.fetchedAt = new Date(Date.now() - 2 * 60 * 1_000).toISOString()
+    redisMemory.set(cacheKey, JSON.stringify(cached))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('unavailable', { status: 503 })))
+
+    const fallbackResponse = await handleFanaticsCollectRoute('search', postJson(requestBody), env)
+    const fallback = (await fallbackResponse.json()) as {
+      items: unknown[]
+      errors: Array<{ error: string }>
+      cache: { state: string; ageSeconds: number; freshTtlSeconds: number; staleTtlSeconds: number }
+      stats: { upstreamPagesFetched: number; redisCacheHits: number }
+    }
+
+    expect(fallbackResponse.status).toBe(200)
+    expect(fallback.items).toHaveLength(1)
+    expect(fallback.cache).toMatchObject({ state: 'stale-fallback', freshTtlSeconds: 60, staleTtlSeconds: 3600 })
+    expect(fallback.cache.ageSeconds).toBeGreaterThanOrEqual(120)
+    expect(fallback.errors.at(-1)?.error).toMatch(/cached Fanatics results because the live refresh failed/i)
+    expect(fallback.stats).toMatchObject({ upstreamPagesFetched: 0, redisCacheHits: 1 })
+  })
+
+  it('coalesces simultaneous identical searches into one upstream request', async () => {
+    let algoliaCalls = 0
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      if (String(url) === 'https://fanatics-coalesce.test/graphql') {
+        return Response.json({ data: { collectSearchKey: 'coalesce-test-key' } })
+      }
+      algoliaCalls += 1
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return Response.json({
+        results: [{
+          nbHits: 1,
+          hits: [{ objectID: 'aiva-coalesced', listingUuid: 'aiva-coalesced', title: 'Aiva Arquette 2026 Bowman Chrome Auto', askingPrice: 50 }],
+        }],
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const env = fanaticsEnv({ FANATICS_COLLECT_GRAPHQL_URL: 'https://fanatics-coalesce.test/graphql' })
+    const body = {
+      queries: ['Aiva Arquette 2026 Bowman Chrome Auto'],
+      scope: { type: 'player', value: 'Aiva Arquette' },
+    }
+
+    const [left, right] = await Promise.all([
+      handleFanaticsCollectRoute('search', postJson(body), env),
+      handleFanaticsCollectRoute('search', postJson(body), env),
+    ])
+
+    expect(left.status).toBe(200)
+    expect(right.status).toBe(200)
+    expect(algoliaCalls).toBe(1)
   })
 
   it('paginates an authorized wide feed, deduplicates UUIDs, and reports complete coverage', async () => {

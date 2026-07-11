@@ -6472,6 +6472,11 @@ function BinRadar({
       : ebayStatus?.cache?.enabled
         ? 'Browse cache on'
         : 'Browse cache off'
+  const fanaticsFreshHours = Math.round((fanaticsStatus?.cache?.freshTtlSeconds ?? 0) / 3_600)
+  const fanaticsRescueHours = Math.round((fanaticsStatus?.cache?.staleTtlSeconds ?? 0) / 3_600)
+  const fanaticsCacheLabel = fanaticsFreshHours > 0
+    ? `${fanaticsFreshHours}h fresh${fanaticsRescueHours > fanaticsFreshHours ? ` · ${fanaticsRescueHours}h outage rescue` : ''}`
+    : 'shared scan cache'
   const busy = loading || auctionLoading
   const canScan = targetedConfigured && setCount > 0 && hasPlayerUniverse && hasFocus && hasTargetQueue && !busy && !modelLoading
   const canScanBaseAutos = targetedConfigured && setCount > 0 && hasPlayerUniverse && hasTargetQueue && !busy && !modelLoading
@@ -6613,7 +6618,7 @@ function BinRadar({
           <ScanSearch size={17} />
           <span>
             <strong>Wide Fanatics sweep</strong>
-            <small>{fanaticsWideConfigured ? `${playerCount.toLocaleString()} loaded player lanes · cached 24h` : 'Requires approved Fanatics data access'}</small>
+            <small>{fanaticsWideConfigured ? `${playerCount.toLocaleString()} loaded player lanes · ${fanaticsCacheLabel}` : 'Requires approved Fanatics data access'}</small>
           </span>
         </button>
         <button className="preset-scan-card primary-preset" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>

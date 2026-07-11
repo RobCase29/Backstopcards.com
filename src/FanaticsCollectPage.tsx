@@ -30,6 +30,12 @@ function percent(value: number) {
   return `${Math.round(value * 100)}%`
 }
 
+function cacheWindowLabel(seconds?: number) {
+  if (!seconds || seconds <= 0) return null
+  const hours = Math.round(seconds / 3_600)
+  return hours >= 48 && hours % 24 === 0 ? `${hours / 24}d` : `${hours}h`
+}
+
 function readHoldTargets() {
   if (typeof window === 'undefined') return [] as string[]
   try {
@@ -133,6 +139,8 @@ export function FanaticsCollectPage({
     (opportunity) => opportunity.listing.allInPrice <= opportunity.fairValue * 1.5,
   ).length
   const latestLabel = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleString() : 'Enter a scope to search'
+  const freshCacheLabel = cacheWindowLabel(status?.cache?.freshTtlSeconds)
+  const rescueCacheLabel = cacheWindowLabel(status?.cache?.staleTtlSeconds)
   const activeScopeOptions = scopeOptions[scopeType]
   const scopeListId = `fanatics-${scopeType}-options`
   const scopeOptionNodes = useMemo(
@@ -226,6 +234,9 @@ export function FanaticsCollectPage({
         <span><strong>{withinModelWindowCount.toLocaleString()}</strong> within 50% of model</span>
         <span><strong>{holdTargets.length.toLocaleString()}</strong> hold targets</span>
         <span><strong>{scan?.stats.upstreamPagesFetched.toLocaleString() ?? '0'}</strong> source batches</span>
+        {status?.cache?.configured && freshCacheLabel ? (
+          <span><strong>{freshCacheLabel}</strong> fresh{rescueCacheLabel ? ` · ${rescueCacheLabel} outage rescue` : ''}</span>
+        ) : null}
         <span>{latestLabel}</span>
       </div>
 
