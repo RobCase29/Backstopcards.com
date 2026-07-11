@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChecklistModel } from '../types'
-import { mapAuthorizedFanaticsCollectInventory } from './fanaticsCollect'
+import { fetchFanaticsCollectBinListings, mapAuthorizedFanaticsCollectInventory } from './fanaticsCollect'
 
 function model(
   release: string,
@@ -27,6 +27,11 @@ function model(
 const bowman2026 = model('2026-Bowman', 2026, 'bowman', ['Aiva Arquette', 'Luis Arana'])
 const chrome2025 = model('2025-Bowman-Chrome', 2025, 'chrome', ['Aiva Arquette', 'Jesus Made'])
 const draft2025 = model('2025-Bowman-Draft', 2025, 'draft', ['Eli Willits'])
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 describe('authorized Fanatics Collect inventory matcher', () => {
   it('maps an active fixed-price Bowman auto to one checklist model with a namespaced identity', () => {
@@ -125,5 +130,58 @@ describe('authorized Fanatics Collect inventory matcher', () => {
       'fanatics-collect:copy-one',
       'fanatics-collect:copy-two',
     ])
+  })
+})
+
+describe('Fanatics Collect checklist retrieval', () => {
+  it('batches beyond the server query ceiling without dropping players', async () => {
+    const players = Array.from({ length: 125 }, (_, index) => `Test Player ${index + 1}`)
+    const largeModel = model('2026-Bowman', 2026, 'bowman', players)
+    const batchSizes: number[] = []
+    const scopes: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { queries: Array<{ playerName: string }>; scope?: unknown }
+      batchSizes.push(body.queries.length)
+      scopes.push(body.scope)
+      return Response.json({
+        items: body.queries.map((query, index) => ({
+          listingUuid: `${query.playerName}-${index}`,
+          title: `2026 Bowman Chrome ${query.playerName} 1st Auto`,
+          askingPrice: 25,
+          status: 'Live',
+          marketplace: 'FIXED',
+          year: 2026,
+          _backstopQuery: { ...query, release: largeModel.release, releaseYear: 2026, category: 'bowman' },
+        })),
+        fetchedAt: '2026-07-11T12:00:00.000Z',
+        stats: {
+          queriesRun: body.queries.length,
+          queriesSucceeded: body.queries.length,
+          queriesFailed: 0,
+          pagesFetched: body.queries.length,
+          upstreamTotal: body.queries.length,
+          dedupedItems: body.queries.length,
+          cacheHits: 0,
+          cacheMisses: 0,
+          cacheWrites: 1,
+          cacheSkips: 0,
+          redisCacheHits: 0,
+          runtimeCacheHits: 0,
+          sqliteCacheHits: 0,
+          upstreamPagesFetched: 1,
+        },
+      })
+    }))
+
+    const result = await fetchFanaticsCollectBinListings({ model: largeModel, playerLimit: null })
+
+    expect(batchSizes).toEqual([120, 5])
+    expect(scopes).toEqual([
+      { type: 'set', value: '2026 Bowman' },
+      { type: 'set', value: '2026 Bowman' },
+    ])
+    expect(result.stats.queriesRun).toBe(125)
+    expect(result.listings).toHaveLength(125)
+    expect(new Set(result.listings.map((listing) => listing.player_name)).size).toBe(125)
   })
 })

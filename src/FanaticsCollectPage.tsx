@@ -88,6 +88,7 @@ export function FanaticsCollectPage({
   error,
   scopeOptions,
   onSearch,
+  onRunWideScan,
 }: {
   opportunities: Opportunity[]
   scan: EbayBinScanResult | null
@@ -96,6 +97,7 @@ export function FanaticsCollectPage({
   error: string | null
   scopeOptions: FanaticsScopeOptions
   onSearch: (scopeType: FanaticsCollectScopeType, scopeValue: string) => void
+  onRunWideScan: () => void
 }) {
   const [filterQuery, setFilterQuery] = useState('')
   const [scopeType, setScopeType] = useState<FanaticsCollectScopeType>('player')
@@ -108,6 +110,7 @@ export function FanaticsCollectPage({
   const [holdsOnly, setHoldsOnly] = useState(false)
   const [holdTargets, setHoldTargets] = useState<string[]>(readHoldTargets)
   const searchReady = Boolean(status?.targetedSearch?.configured)
+  const wideSearchReady = searchReady || Boolean(status?.wideScan?.configured)
   const fanaticsOpportunities = useMemo(
     () => opportunities.filter((opportunity) => opportunity.listing.marketplace === 'fanatics-collect'),
     [opportunities],
@@ -166,9 +169,13 @@ export function FanaticsCollectPage({
             Fanatics Collect · Bowman prospect autos
           </span>
           <h2>Collect finds, without the clunky hunt.</h2>
-          <p>See every matched card within 50% of model, then narrow the board or save the players you want to hold.</p>
+          <p>Scan every loaded Bowman checklist, or focus on one player, team, or set. Every matched listing is ranked against model value.</p>
         </div>
         <div className="fanatics-scope-panel">
+        <button className="fanatics-scan-button" type="button" onClick={onRunWideScan} disabled={!wideSearchReady || loading}>
+          <RefreshCw size={17} className={loading ? 'spin' : undefined} />
+          {loading ? 'Scanning all checklists' : 'Scan all Bowman checklists'}
+        </button>
         <form className="fanatics-scope-search" onSubmit={submitScope}>
           <select
             value={scopeType}
@@ -198,7 +205,7 @@ export function FanaticsCollectPage({
           </button>
         </form>
         <small className="fanatics-scope-count">
-          {activeScopeOptions.length.toLocaleString()} {scopeType === 'set' ? 'sets' : `${scopeType}s`} available
+          Or focus the search · {activeScopeOptions.length.toLocaleString()} {scopeType === 'set' ? 'sets' : `${scopeType}s`} available
         </small>
         </div>
       </header>
@@ -218,7 +225,7 @@ export function FanaticsCollectPage({
         <span><strong>{fanaticsOpportunities.length.toLocaleString()}</strong> modeled listings</span>
         <span><strong>{withinModelWindowCount.toLocaleString()}</strong> within 50% of model</span>
         <span><strong>{holdTargets.length.toLocaleString()}</strong> hold targets</span>
-        <span><strong>{scan?.stats.upstreamPagesFetched.toLocaleString() ?? '0'}</strong> feed pages</span>
+        <span><strong>{scan?.stats.upstreamPagesFetched.toLocaleString() ?? '0'}</strong> source batches</span>
         <span>{latestLabel}</span>
       </div>
 
@@ -294,7 +301,7 @@ export function FanaticsCollectPage({
       {filtered.length === 0 ? (
         <div className="fanatics-empty">
           <Target size={25} />
-          <strong>{scan ? 'No cards match these filters.' : 'Search a player, team, or set to build this board.'}</strong>
+          <strong>{scan ? 'No cards match these filters.' : 'Scan all checklists or choose a focused search.'}</strong>
           <span>{scan ? 'Try the all-listings view, remove the price cap, or enter another scope.' : 'We’ll rank every matched result against the Backstop model.'}</span>
         </div>
       ) : (

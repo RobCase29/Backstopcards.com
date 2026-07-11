@@ -47,6 +47,7 @@ import {
 } from './lib/ebay'
 import {
   fetchFanaticsCollectBinListings,
+  fetchFanaticsCollectChecklistListings,
   fetchFanaticsCollectStatus,
   fetchFanaticsCollectWideListings,
   type FanaticsCollectScopeType,
@@ -624,7 +625,7 @@ const FALLBACK_RELEASE_OPTIONS: ReleaseOption[] = [
 ]
 
 const CHECKLIST_CATEGORIES: ChecklistModel['category'][] = ['bowman', 'chrome', 'draft']
-const CHECKLIST_MIN_YEAR = 2020
+const CHECKLIST_MIN_YEAR = 2016
 const CHECKLIST_LOAD_CONCURRENCY = 6
 const BIN_SCAN_CONCURRENCY = 2
 const LEADERBOARD_RENDER_LIMIT = 25
@@ -6420,7 +6421,8 @@ function BinRadar({
 }) {
   const ebayConfigured = Boolean(ebayStatus?.configured)
   const fanaticsTargetedConfigured = Boolean(fanaticsStatus?.targetedSearch?.configured)
-  const fanaticsWideConfigured = Boolean(fanaticsStatus?.wideScan?.configured)
+  const fanaticsFeedConfigured = Boolean(fanaticsStatus?.wideScan?.configured)
+  const fanaticsWideConfigured = fanaticsFeedConfigured || fanaticsTargetedConfigured
   const targetedConfigured = ebayConfigured || fanaticsTargetedConfigured
   const configured = targetedConfigured || fanaticsWideConfigured
   const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
@@ -6552,10 +6554,10 @@ function BinRadar({
               ? 'eBay + Fanatics'
               : ebayConfigured
                 ? 'eBay live'
-                : fanaticsWideConfigured
-                  ? 'Fanatics authorized feed'
+                : fanaticsFeedConfigured
+                  ? 'Fanatics full inventory'
                   : fanaticsTargetedConfigured
-                    ? 'Fanatics targeted search'
+                    ? 'Fanatics full checklist search'
                     : 'Marketplace unavailable'}
           </span>
           {configured ? <span className={ebayStatus?.cache?.enabled ? 'connected' : 'offline'}>{browseCacheLabel}</span> : null}
@@ -6600,12 +6602,18 @@ function BinRadar({
           type="button"
           onClick={onScanFanaticsWide}
           disabled={!canScanFanaticsWide}
-          title={fanaticsStatus?.wideScan?.message}
+          title={
+            fanaticsFeedConfigured
+              ? fanaticsStatus?.wideScan?.message
+              : fanaticsTargetedConfigured
+                ? 'Search every loaded checklist through the authorized Fanatics search connection.'
+                : fanaticsStatus?.message
+          }
         >
           <ScanSearch size={17} />
           <span>
             <strong>Wide Fanatics sweep</strong>
-            <small>{fanaticsWideConfigured ? `All ${playerCount.toLocaleString()} loaded player lanes` : 'Requires approved Fanatics data access'}</small>
+            <small>{fanaticsWideConfigured ? `${playerCount.toLocaleString()} loaded player lanes · cached 24h` : 'Requires approved Fanatics data access'}</small>
           </span>
         </button>
         <button className="preset-scan-card primary-preset" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
@@ -10417,10 +10425,11 @@ function App() {
       setBinError('No checklist models are loaded for the Fanatics wide scan.')
       return
     }
-    if (!fanaticsStatus?.wideScan?.configured) {
+    const feedConfigured = Boolean(fanaticsStatus?.wideScan?.configured)
+    const checklistSearchConfigured = Boolean(fanaticsStatus?.targetedSearch?.configured)
+    if (!feedConfigured && !checklistSearchConfigured) {
       setBinError(
-        fanaticsStatus?.wideScan?.message ??
-          'Fanatics Collect wide scan requires an approved data feed and written data-access permission.',
+        fanaticsStatus?.message ?? 'Fanatics Collect search is not configured.',
       )
       return
     }
@@ -10441,12 +10450,19 @@ function App() {
     setLastRejectedListing(null)
 
     try {
-      const scanResult = await fetchFanaticsCollectWideListings({
-        models: scanModels,
-        minPrice: binMinPrice,
-        maxPages: fanaticsStatus.wideScan.maxPages,
-        signal: controller.signal,
-      })
+      const scanResult = feedConfigured
+        ? await fetchFanaticsCollectWideListings({
+            models: scanModels,
+            minPrice: binMinPrice,
+            maxPages: fanaticsStatus?.wideScan?.maxPages,
+            signal: controller.signal,
+          })
+        : await fetchFanaticsCollectChecklistListings({
+            models: scanModels,
+            minPrice: binMinPrice,
+            limitPerPlayer: 16,
+            signal: controller.signal,
+          })
       if (controller.signal.aborted) return
       const visibleScanResult = filterRejectedScanResult(scanResult, rejectedListingKeys)
       setBinListings(scanResult.listings)
@@ -10469,7 +10485,7 @@ function App() {
         playerScope: 'all',
         playerNames: [],
         searchMode: 'checklist',
-        searchTerm: 'authorized-fanatics-wide-feed',
+        searchTerm: feedConfigured ? 'authorized-fanatics-wide-feed' : 'authorized-fanatics-checklist-sweep',
         salesCacheModels: scanSalesCacheModels,
       })
     } catch (scanError) {
@@ -11411,6 +11427,7 @@ function App() {
           error={binError}
           scopeOptions={fanaticsScopeOptions}
           onSearch={(scopeType, scopeValue) => void searchFanaticsCollectScope(scopeType, scopeValue)}
+          onRunWideScan={() => void scanFanaticsCollectWide('fanatics')}
         />
       ) : workMode === 'price' ? (
         <section className="price-workflow" aria-label="Price my card">
