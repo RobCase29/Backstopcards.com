@@ -38,6 +38,7 @@ const FANATICS_COLLECT_QUERY_CACHE_NAMESPACE = 'backstop-fanatics-collect-query-
 const FANATICS_COLLECT_SEARCH_KEY_TTL_MS = 10 * 60 * 1000
 const FANATICS_COLLECT_QUERY_BATCH_SIZE = 25
 const FANATICS_COLLECT_QUERY_CACHE_TTL_SECONDS = 24 * 60 * 60
+const FANATICS_COLLECT_QUERY_CACHE_STALE_TTL_SECONDS = 3 * 24 * 60 * 60
 const FANATICS_COLLECT_TERMS_URL = 'https://support.fanaticscollect.com/en_us/terms-of-use-r11C70QTge'
 const FANATICS_COLLECT_WIDE_DEFAULT_PAGE_SIZE = 250
 const FANATICS_COLLECT_WIDE_DEFAULT_MAX_PAGES = 40
@@ -4383,12 +4384,20 @@ type FanaticsCollectSearchResult = {
   errors: Array<{ query?: string; error: string }>
   fetchedAt: string
   stats: EbayQueryCacheStats
+  cache?: {
+    state: 'live' | 'fresh' | 'stale-fallback'
+    ageSeconds: number
+    freshTtlSeconds: number
+    staleTtlSeconds: number
+  }
   provenance?: {
     mode: 'authorized-targeted-search' | 'user-scoped-search'
     scopeType: string
     scopeValue: string
   }
 }
+
+const fanaticsCollectInFlightSearches = new Map<string, Promise<FanaticsCollectSearchResult>>()
 
 type FanaticsCollectWideScanPayload = {
   minPrice?: number | string
@@ -4602,6 +4611,28 @@ function dedupeFanaticsCollectHits(items: Array<Record<string, unknown>>) {
   return deduped
 }
 
+function fanaticsCollectCachePolicy(env: ServerEnv) {
+  const freshTtlSeconds = clampInt(
+    env.FANATICS_QUERY_CACHE_FRESH_TTL_SECONDS ?? env.FANATICS_QUERY_CACHE_TTL_SECONDS,
+    FANATICS_COLLECT_QUERY_CACHE_TTL_SECONDS,
+    0,
+    24 * 60 * 60,
+  )
+  const staleTtlSeconds = clampInt(
+    env.FANATICS_QUERY_CACHE_STALE_TTL_SECONDS,
+    FANATICS_COLLECT_QUERY_CACHE_STALE_TTL_SECONDS,
+    freshTtlSeconds,
+    7 * 24 * 60 * 60,
+  )
+  return { freshTtlSeconds, staleTtlSeconds }
+}
+
+function fanaticsCollectCacheAgeSeconds(payload: Pick<FanaticsCollectSearchResult, 'fetchedAt'>) {
+  const fetchedAt = Date.parse(payload.fetchedAt)
+  if (!Number.isFinite(fetchedAt)) return Number.POSITIVE_INFINITY
+  return Math.max(0, Math.floor((Date.now() - fetchedAt) / 1_000))
+}
+
 async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env: ServerEnv): Promise<FanaticsCollectSearchResult> {
   const searchAccess = requireFanaticsCollectSearchAuthorization(env, payload)
   const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
@@ -4648,19 +4679,17 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
   }))
 
   const redis = await getUpstashRedis(env)
-  const cacheTtlSeconds = clampInt(
-    env.FANATICS_QUERY_CACHE_TTL_SECONDS,
-    FANATICS_COLLECT_QUERY_CACHE_TTL_SECONDS,
-    0,
-    24 * 60 * 60,
-  )
+  const cachePolicy = fanaticsCollectCachePolicy(env)
   const cacheKey =
-    redis && cacheTtlSeconds > 0
+    redis && cachePolicy.staleTtlSeconds > 0
       ? redisQueryCacheKey(
           FANATICS_COLLECT_QUERY_CACHE_NAMESPACE,
-          sha256(stableJson({ appId, indexName, requests, version: 1 })),
+          sha256(stableJson({ appId, indexName, requests, scope: searchAccess.scope, version: 2 })),
         )
       : ''
+  const inFlightKey = cacheKey || sha256(stableJson({ appId, indexName, requests, scope: searchAccess.scope, version: 2 }))
+  let staleCachedPayload: FanaticsCollectSearchResult | null = null
+  let staleCacheAgeSeconds = 0
   if (redis && cacheKey) {
     try {
       const cached = await redis.get<string>(cacheKey)
@@ -4670,14 +4699,31 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
           : ((cached ?? null) as Partial<FanaticsCollectSearchResult> | null)
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.items) && parsed.stats) {
         const cachedPayload = parsed as FanaticsCollectSearchResult
-        return {
-          ...cachedPayload,
-          stats: {
-            ...cachedPayload.stats,
-            cacheHits: Math.max(queries.length, cachedPayload.stats.cacheHits ?? 0),
-            redisCacheHits: Math.max(queries.length, cachedPayload.stats.redisCacheHits ?? 0),
-            upstreamPagesFetched: 0,
-          },
+        const ageSeconds = fanaticsCollectCacheAgeSeconds(cachedPayload)
+        if (ageSeconds <= cachePolicy.freshTtlSeconds) {
+          return {
+            ...cachedPayload,
+            cache: {
+              state: 'fresh',
+              ageSeconds,
+              ...cachePolicy,
+            },
+            provenance: {
+              mode: searchAccess.mode,
+              scopeType: searchAccess.scope.type,
+              scopeValue: searchAccess.scope.value,
+            },
+            stats: {
+              ...cachedPayload.stats,
+              cacheHits: Math.max(queries.length, cachedPayload.stats.cacheHits ?? 0),
+              redisCacheHits: Math.max(queries.length, cachedPayload.stats.redisCacheHits ?? 0),
+              upstreamPagesFetched: 0,
+            },
+          }
+        }
+        if (ageSeconds <= cachePolicy.staleTtlSeconds) {
+          staleCachedPayload = cachedPayload
+          staleCacheAgeSeconds = ageSeconds
         }
       }
     } catch {
@@ -4685,6 +4731,11 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
     }
   }
 
+  const existingSearch = fanaticsCollectInFlightSearches.get(inFlightKey)
+  if (existingSearch) return existingSearch
+
+  const liveSearch = (async () => {
+  try {
   const searchKey = await fetchFanaticsCollectSearchKey(graphqlUrl)
   const resultBatches: Array<{ hits?: Array<Record<string, unknown>>; nbHits?: number; error?: string }> = []
   for (let index = 0; index < requests.length; index += FANATICS_COLLECT_QUERY_BATCH_SIZE) {
@@ -4733,6 +4784,11 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
     items,
     errors,
     fetchedAt: new Date().toISOString(),
+    cache: {
+      state: 'live' as const,
+      ageSeconds: 0,
+      ...cachePolicy,
+    },
     provenance: {
       mode: searchAccess.mode,
       scopeType: searchAccess.scope.type,
@@ -4746,7 +4802,7 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
       upstreamTotal: results.reduce((total, result) => total + fanaticsCollectNumber(result?.nbHits, 0), 0),
       dedupedItems: items.length,
       cacheHits: 0,
-      cacheMisses: 0,
+      cacheMisses: redis && cacheKey ? queries.length : 0,
       cacheWrites: 0,
       cacheSkips: 0,
       redisCacheHits: 0,
@@ -4758,7 +4814,7 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
 
   if (redis && cacheKey) {
     try {
-      await redis.set(cacheKey, jsonText(response), { ex: cacheTtlSeconds })
+      await redis.set(cacheKey, jsonText(response), { ex: cachePolicy.staleTtlSeconds })
       response.stats.cacheWrites = 1
     } catch {
       response.stats.cacheSkips = 1
@@ -4766,6 +4822,42 @@ async function searchFanaticsCollect(payload: FanaticsCollectSearchPayload, env:
   }
 
   return response
+  } catch (error) {
+    if (!staleCachedPayload) throw error
+    const upstreamMessage = routeErrorMessage(error, 'Fanatics Collect live refresh failed')
+    return {
+      ...staleCachedPayload,
+      errors: [
+        ...(staleCachedPayload.errors ?? []),
+        { error: `Showing ${Math.max(1, Math.round(staleCacheAgeSeconds / 3_600))}h cached Fanatics results because the live refresh failed: ${upstreamMessage}` },
+      ],
+      cache: {
+        state: 'stale-fallback' as const,
+        ageSeconds: staleCacheAgeSeconds,
+        ...cachePolicy,
+      },
+      provenance: {
+        mode: searchAccess.mode,
+        scopeType: searchAccess.scope.type,
+        scopeValue: searchAccess.scope.value,
+      },
+      stats: {
+        ...staleCachedPayload.stats,
+        cacheHits: Math.max(queries.length, staleCachedPayload.stats.cacheHits ?? 0),
+        redisCacheHits: Math.max(queries.length, staleCachedPayload.stats.redisCacheHits ?? 0),
+        upstreamPagesFetched: 0,
+      },
+    }
+  }
+  })()
+  fanaticsCollectInFlightSearches.set(inFlightKey, liveSearch)
+  try {
+    return await liveSearch
+  } finally {
+    if (fanaticsCollectInFlightSearches.get(inFlightKey) === liveSearch) {
+      fanaticsCollectInFlightSearches.delete(inFlightKey)
+    }
+  }
 }
 
 function fanaticsCollectWideItemIdentity(item: Record<string, unknown>) {
@@ -4997,6 +5089,8 @@ export async function handleFanaticsCollectRoute(route: string, request: Request
     }
 
     const authorization = fanaticsCollectAuthorization(env)
+    const cachePolicy = fanaticsCollectCachePolicy(env)
+    const redisConfigured = upstashRedisEnv(env).configured
     const graphqlUrl = env.FANATICS_COLLECT_GRAPHQL_URL?.trim() || FANATICS_COLLECT_GRAPHQL_URL
     let reachable = false
     let message = authorization.issue ?? 'Fanatics Collect search requires written data-access permission.'
@@ -5030,6 +5124,12 @@ export async function handleFanaticsCollectRoute(route: string, request: Request
         configured: reachable,
         reachable,
         mode: authorization.searchAuthorized ? 'authorized-targeted-search' : 'user-scoped-search',
+      },
+      cache: {
+        configured: redisConfigured,
+        backend: redisConfigured ? 'redis' : 'none',
+        freshTtlSeconds: cachePolicy.freshTtlSeconds,
+        staleTtlSeconds: cachePolicy.staleTtlSeconds,
       },
       wideScan: {
         configured: authorization.feedAuthorized,

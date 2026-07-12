@@ -88,6 +88,12 @@ type FanaticsCollectSearchResponse = {
   errors?: Array<{ query?: string; error: string }>
   fetchedAt?: string
   stats?: Omit<EbayBinScanResult['stats'], 'mappedListings' | 'rejectedPlayerMismatches'>
+  cache?: {
+    state?: 'live' | 'fresh' | 'stale-fallback'
+    ageSeconds?: number
+    freshTtlSeconds?: number
+    staleTtlSeconds?: number
+  }
   error?: string
 }
 
@@ -109,6 +115,12 @@ export type FanaticsCollectStatus = {
     configured: boolean
     reachable: boolean
     mode?: 'authorized-targeted-search' | 'user-scoped-search'
+  }
+  cache?: {
+    configured: boolean
+    backend: 'redis' | 'none'
+    freshTtlSeconds: number
+    staleTtlSeconds: number
   }
   wideScan?: {
     configured: boolean
