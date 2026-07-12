@@ -175,6 +175,28 @@ type FetchFanaticsCollectListingsOptions = {
   signal?: AbortSignal
 }
 
+const FANATICS_CLIENT_QUERY_BATCH_SIZE = 120
+const FANATICS_CLIENT_BATCH_CONCURRENCY = 3
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+) {
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex
+        nextIndex += 1
+        results[index] = await mapper(items[index], index)
+      }
+    }),
+  )
+  return results
+}
+
 function numberValue(value: unknown, fallback = 0) {
   const parsed =
     typeof value === 'number'
@@ -772,19 +794,75 @@ export async function fetchFanaticsCollectBinListings(options: FetchFanaticsColl
         ],
   )
 
-  const response = await fetch('/api/fanatics-collect/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal: options.signal,
-    body: JSON.stringify({
-      queries,
-      minPrice: options.minPrice ?? 0,
-      limit: options.limitPerPlayer ?? 40,
-    }),
-  })
-
-  const payload = (await response.json()) as FanaticsCollectSearchResponse
-  if (!response.ok) throw new Error(payload.error ?? 'Fanatics Collect search failed')
+  // The API route intentionally caps each request. Split on the client so a
+  // full checklist scan cannot silently discard players beyond that ceiling.
+  const queryBatches: FanaticsCollectQueryMeta[][] = []
+  for (let index = 0; index < queries.length; index += FANATICS_CLIENT_QUERY_BATCH_SIZE) {
+    queryBatches.push(queries.slice(index, index + FANATICS_CLIENT_QUERY_BATCH_SIZE))
+  }
+  const batchResults = await mapWithConcurrency(
+    queryBatches,
+    FANATICS_CLIENT_BATCH_CONCURRENCY,
+    async (batch) => {
+      try {
+        const response = await fetch('/api/fanatics-collect/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: options.signal,
+          body: JSON.stringify({
+            queries: batch,
+            minPrice: options.minPrice ?? 0,
+            limit: options.limitPerPlayer ?? 40,
+          }),
+        })
+        const payload = (await response.json()) as FanaticsCollectSearchResponse
+        if (!response.ok) throw new Error(payload.error ?? 'Fanatics Collect search failed')
+        return { payload, error: null as string | null }
+      } catch (error) {
+        if (options.signal?.aborted) throw error
+        return {
+          payload: null,
+          error: error instanceof Error ? error.message : 'Fanatics Collect search batch failed',
+        }
+      }
+    },
+  )
+  const successfulPayloads = batchResults.flatMap((result) => (result.payload ? [result.payload] : []))
+  if (successfulPayloads.length === 0) {
+    throw new Error(batchResults.find((result) => result.error)?.error ?? 'Fanatics Collect search failed')
+  }
+  const batchErrors = batchResults.flatMap((result, index) =>
+    result.error ? [{ query: `Fanatics batch ${index + 1}`, error: result.error }] : [],
+  )
+  const payload: FanaticsCollectSearchResponse = {
+    items: successfulPayloads.flatMap((result) => result.items ?? []),
+    errors: [...successfulPayloads.flatMap((result) => result.errors ?? []), ...batchErrors],
+    fetchedAt: successfulPayloads
+      .map((result) => result.fetchedAt ?? '')
+      .filter(Boolean)
+      .sort()
+      .at(-1) ?? new Date().toISOString(),
+    stats: {
+      queriesRun: successfulPayloads.reduce((total, result) => total + (result.stats?.queriesRun ?? 0), 0),
+      queriesSucceeded: successfulPayloads.reduce((total, result) => total + (result.stats?.queriesSucceeded ?? 0), 0),
+      queriesFailed:
+        successfulPayloads.reduce((total, result) => total + (result.stats?.queriesFailed ?? 0), 0) + batchErrors.length,
+      pagesFetched: successfulPayloads.reduce((total, result) => total + (result.stats?.pagesFetched ?? 0), 0),
+      upstreamTotal: successfulPayloads.reduce((total, result) => total + (result.stats?.upstreamTotal ?? 0), 0),
+      dedupedItems: successfulPayloads.reduce((total, result) => total + (result.stats?.dedupedItems ?? 0), 0),
+      cacheHits: successfulPayloads.reduce((total, result) => total + (result.stats?.cacheHits ?? 0), 0),
+      cacheMisses: successfulPayloads.reduce((total, result) => total + (result.stats?.cacheMisses ?? 0), 0),
+      cacheWrites: successfulPayloads.reduce((total, result) => total + (result.stats?.cacheWrites ?? 0), 0),
+      cacheSkips: successfulPayloads.reduce((total, result) => total + (result.stats?.cacheSkips ?? 0), 0),
+      redisCacheHits: successfulPayloads.reduce((total, result) => total + (result.stats?.redisCacheHits ?? 0), 0),
+      runtimeCacheHits: successfulPayloads.reduce((total, result) => total + (result.stats?.runtimeCacheHits ?? 0), 0),
+      sqliteCacheHits: successfulPayloads.reduce((total, result) => total + (result.stats?.sqliteCacheHits ?? 0), 0),
+      upstreamPagesFetched: successfulPayloads.reduce(
+        (total, result) => total + (result.stats?.upstreamPagesFetched ?? 0),
+        0,
+      ),
+    },
+  }
 
   const fallbackReleaseLabel = releaseProductLabel(options.model)
   let rejectedPlayerMismatches = 0
@@ -820,6 +898,73 @@ export async function fetchFanaticsCollectBinListings(options: FetchFanaticsColl
       runtimeCacheHits: payload.stats?.runtimeCacheHits ?? 0,
       sqliteCacheHits: payload.stats?.sqliteCacheHits ?? 0,
       upstreamPagesFetched: payload.stats?.upstreamPagesFetched ?? payload.stats?.pagesFetched ?? 0,
+    },
+  }
+}
+
+export async function fetchFanaticsCollectChecklistListings(options: {
+  models: ChecklistModel[]
+  minPrice?: number
+  limitPerPlayer?: number
+  signal?: AbortSignal
+}): Promise<EbayBinScanResult> {
+  const models = options.models.filter((model) => model.players.length > 0)
+  if (models.length === 0) throw new Error('No checklist models are loaded for the Fanatics scan.')
+
+  const results = await mapWithConcurrency(models, 3, async (model) => {
+    try {
+      return {
+        scan: await fetchFanaticsCollectBinListings({
+          model,
+          minPrice: options.minPrice,
+          playerLimit: null,
+          limitPerPlayer: options.limitPerPlayer ?? 16,
+          searchMode: 'checklist',
+          signal: options.signal,
+        }),
+        error: null as string | null,
+      }
+    } catch (error) {
+      if (options.signal?.aborted) throw error
+      return {
+        scan: null,
+        error: error instanceof Error ? error.message : `${model.release} Fanatics scan failed`,
+      }
+    }
+  })
+  const scans = results.flatMap((result) => (result.scan ? [result.scan] : []))
+  if (scans.length === 0) {
+    throw new Error(results.find((result) => result.error)?.error ?? 'Fanatics checklist scan failed')
+  }
+
+  const listings = dedupeListings(scans.flatMap((scan) => scan.listings))
+  const errors = [
+    ...scans.flatMap((scan) => scan.errors),
+    ...results.flatMap((result, index) =>
+      result.error ? [{ query: models[index]?.release, error: result.error }] : [],
+    ),
+  ]
+  return {
+    listings,
+    fetchedAt: scans.map((scan) => scan.fetchedAt).sort().at(-1) ?? new Date().toISOString(),
+    errors,
+    stats: {
+      queriesRun: scans.reduce((total, scan) => total + scan.stats.queriesRun, 0),
+      queriesSucceeded: scans.reduce((total, scan) => total + scan.stats.queriesSucceeded, 0),
+      queriesFailed: scans.reduce((total, scan) => total + scan.stats.queriesFailed, 0) + results.length - scans.length,
+      pagesFetched: scans.reduce((total, scan) => total + scan.stats.pagesFetched, 0),
+      upstreamTotal: scans.reduce((total, scan) => total + scan.stats.upstreamTotal, 0),
+      dedupedItems: listings.length,
+      mappedListings: listings.length,
+      rejectedPlayerMismatches: scans.reduce((total, scan) => total + scan.stats.rejectedPlayerMismatches, 0),
+      cacheHits: scans.reduce((total, scan) => total + scan.stats.cacheHits, 0),
+      cacheMisses: scans.reduce((total, scan) => total + scan.stats.cacheMisses, 0),
+      cacheWrites: scans.reduce((total, scan) => total + scan.stats.cacheWrites, 0),
+      cacheSkips: scans.reduce((total, scan) => total + scan.stats.cacheSkips, 0),
+      redisCacheHits: scans.reduce((total, scan) => total + scan.stats.redisCacheHits, 0),
+      runtimeCacheHits: scans.reduce((total, scan) => total + scan.stats.runtimeCacheHits, 0),
+      sqliteCacheHits: scans.reduce((total, scan) => total + scan.stats.sqliteCacheHits, 0),
+      upstreamPagesFetched: scans.reduce((total, scan) => total + scan.stats.upstreamPagesFetched, 0),
     },
   }
 }

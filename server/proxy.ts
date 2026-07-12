@@ -136,6 +136,7 @@ type SqliteStatement = {
 type SqliteDatabase = {
   exec: (sql: string) => void
   prepare: (sql: string) => SqliteStatement
+  function: (name: string, options: { deterministic?: boolean }, callback: (value: unknown) => string) => void
   close: () => void
 }
 type SqliteModule = {
@@ -447,13 +448,28 @@ function salesCacheDbPath(env: ServerEnv) {
   return resolve(env.BACKSTOP_SALES_DB?.trim() || 'local-data/backstop-sales.sqlite')
 }
 
+function normalizePlayerLookup(value: unknown) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function registerPlayerLookup(db: SqliteDatabase) {
+  db.function('normalize_player_lookup', { deterministic: true }, normalizePlayerLookup)
+  return db
+}
+
 async function openSalesCacheDb(env: ServerEnv) {
   const dbPath = salesCacheDbPath(env)
   if (!existsSync(dbPath)) return { db: null, dbPath }
 
   const sqliteSpecifier = 'node:sqlite'
   const sqlite = (await import(sqliteSpecifier)) as unknown as SqliteModule
-  return { db: new sqlite.DatabaseSync(dbPath), dbPath }
+  return { db: registerPlayerLookup(new sqlite.DatabaseSync(dbPath)), dbPath }
 }
 
 async function openWritableMarketDb(env: ServerEnv) {
@@ -462,7 +478,7 @@ async function openWritableMarketDb(env: ServerEnv) {
 
   const sqliteSpecifier = 'node:sqlite'
   const sqlite = (await import(sqliteSpecifier)) as unknown as SqliteModule
-  return { db: new sqlite.DatabaseSync(dbPath), dbPath }
+  return { db: registerPlayerLookup(new sqlite.DatabaseSync(dbPath)), dbPath }
 }
 
 async function openOptionalWritableMarketDb(env: ServerEnv) {
@@ -3484,7 +3500,7 @@ function localChecklistModelQuery(db: SqliteDatabase, releaseKey: string, source
       FROM players p
       JOIN canonical_cards cc
         ON cc.release_year = p.release_year
-       AND lower(cc.player_name) = lower(p.player_name)
+       AND normalize_player_lookup(cc.player_name) = normalize_player_lookup(p.player_name)
       JOIN canonical_comp_summary s
         ON s.canonical_card_key = cc.canonical_card_key
       WHERE cc.grade_bucket = 'Raw'
@@ -6554,7 +6570,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
     const params = new URL(request.url).searchParams
 
     if (route === 'coverage') {
-      const minYear = clampInt(params.get('minYear'), 2020, 1900, 9999)
+      const minYear = clampInt(params.get('minYear'), 2016, 1900, 9999)
       const staleDays = clampInt(params.has('staleDays') ? params.get('staleDays') : undefined, 60, 7, 730)
       const retryCooldownDays = clampInt(params.has('retryCooldownDays') ? params.get('retryCooldownDays') : undefined, 7, 0, 90)
       const requestedRelease = compactSqlText(String(params.get('release') ?? params.get('releaseKey') ?? ''))
@@ -6602,7 +6618,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
         base_candidates AS (
           SELECT
             cc.release_year,
-            lower(cc.player_name) AS player_lookup,
+            normalize_player_lookup(cc.player_name) AS player_lookup,
             cc.product_family,
             cc.variation_label,
             s.sale_count,
@@ -6611,7 +6627,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
             COALESCE(NULLIF(s.twma_30, 0), NULLIF(s.recent_5_avg, 0), NULLIF(s.twma_90, 0), NULLIF(s.median_price, 0), NULLIF(s.avg_price, 0), 0) AS base_price,
             s.latest_sold_at,
             ROW_NUMBER() OVER (
-              PARTITION BY cc.release_year, lower(cc.player_name)
+              PARTITION BY cc.release_year, normalize_player_lookup(cc.player_name)
               ORDER BY
                 CASE WHEN lower(cc.product_family) LIKE '%chrome%' THEN 0 ELSE 1 END,
                 s.sale_count DESC,
@@ -6646,7 +6662,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
         ? `
         LEFT JOIN base_candidates b
           ON b.release_year = cp.release_year
-         AND b.player_lookup = lower(cp.player_name)
+         AND b.player_lookup = normalize_player_lookup(cp.player_name)
          AND b.rn = 1`
         : ''
       const queueSelect = hasQueue
@@ -6748,7 +6764,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
         cadence: {
           hot: 'Hourly for players with fresh live-market hits and stale or missing price lanes.',
           priority: 'Nightly for ranked, team-page, and recently listed players.',
-          longTail: 'Weekly for the remaining 2020+ checklist backlog.',
+          longTail: 'Weekly for the remaining 2016+ checklist backlog.',
           retry: 'Timeout/error rows retry with smaller Card Hedge searches and alternate query wording.',
         },
         releases: [...releaseMap.values()].sort((left, right) => right.releaseYear - left.releaseYear || left.releaseName.localeCompare(right.releaseName)),
@@ -6775,7 +6791,7 @@ export async function handleChecklistRoute(route: string, request: Request, env:
           FROM checklist_cards c
           JOIN canonical_cards cc
             ON cc.release_year = c.release_year
-           AND lower(cc.player_name) = lower(c.player_name)
+           AND normalize_player_lookup(cc.player_name) = normalize_player_lookup(c.player_name)
           JOIN canonical_comp_summary s
             ON s.canonical_card_key = cc.canonical_card_key
           WHERE cc.grade_bucket = 'Raw'

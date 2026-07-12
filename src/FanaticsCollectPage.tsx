@@ -76,7 +76,8 @@ export function FanaticsCollectPage({
   const [maxPrice, setMaxPrice] = useState(0)
   const [holdsOnly, setHoldsOnly] = useState(false)
   const [holdTargets, setHoldTargets] = useState<string[]>(readHoldTargets)
-  const authorized = Boolean(status?.wideScan?.configured)
+  const feedConfigured = Boolean(status?.wideScan?.configured)
+  const authorized = feedConfigured || Boolean(status?.targetedSearch?.configured)
   const fanaticsOpportunities = useMemo(
     () => opportunities.filter((opportunity) => opportunity.listing.marketplace === 'fanatics-collect'),
     [opportunities],
@@ -119,11 +120,11 @@ export function FanaticsCollectPage({
             Fanatics Collect · Bowman prospect autos
           </span>
           <h2>Collect finds, without the clunky hunt.</h2>
-          <p>See every matched card within 50% of model, then narrow the board or save the players you want to hold.</p>
+          <p>Search every loaded Bowman player, compare matched listings with model value, then narrow the board or save players you follow.</p>
         </div>
         <button className="fanatics-scan-button" type="button" onClick={onRunScan} disabled={!authorized || loading}>
           <RefreshCw size={17} className={loading ? 'spin' : undefined} />
-          {loading ? 'Scanning Fanatics' : authorized ? 'Run wide Fanatics scan' : 'Approved feed required'}
+          {loading ? 'Scanning all checklists' : authorized ? 'Scan all Fanatics listings' : 'Approved access required'}
         </button>
       </header>
 
@@ -131,7 +132,7 @@ export function FanaticsCollectPage({
         <span><strong>{fanaticsOpportunities.length.toLocaleString()}</strong> modeled listings</span>
         <span><strong>{withinModelWindowCount.toLocaleString()}</strong> within 50% of model</span>
         <span><strong>{holdTargets.length.toLocaleString()}</strong> hold targets</span>
-        <span><strong>{scan?.stats.upstreamPagesFetched.toLocaleString() ?? '0'}</strong> feed pages</span>
+        <span><strong>{scan?.stats.upstreamPagesFetched.toLocaleString() ?? '0'}</strong> source batches</span>
         <span>{latestLabel}</span>
       </div>
 
@@ -139,8 +140,8 @@ export function FanaticsCollectPage({
         <div className="fanatics-permission-note">
           <ShieldCheck size={18} />
           <div>
-            <strong>Ready for an approved Fanatics feed.</strong>
-            <span>{status?.wideScan?.message ?? 'Written data-access permission is required before automated retrieval can run.'}</span>
+            <strong>Fanatics search access is not configured.</strong>
+            <span>{status?.message ?? 'Approved data access is required before automated retrieval can run.'}</span>
           </div>
           <a href={status?.termsUrl} target="_blank" rel="noreferrer">Review terms <ExternalLink size={13} /></a>
         </div>
@@ -218,7 +219,7 @@ export function FanaticsCollectPage({
       {filtered.length === 0 ? (
         <div className="fanatics-empty">
           <Target size={25} />
-          <strong>{scan ? 'No cards match these filters.' : 'Run the authorized wide scan to build this board.'}</strong>
+          <strong>{scan ? 'No cards match these filters.' : 'Scan the loaded Bowman checklists to build this board.'}</strong>
           <span>{scan ? 'Try the all-listings view, remove the price cap, or search another player.' : 'Then star any player to create your personal hold-target view.'}</span>
         </div>
       ) : (

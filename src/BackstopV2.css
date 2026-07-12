@@ -425,6 +425,137 @@
   overflow: visible;
 }
 
+.valuation-app .first-visit-guide {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.6fr);
+  gap: 14px 20px;
+  padding: 18px;
+  border: 1px solid rgba(8, 125, 120, 0.28);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 92% 8%, rgba(185, 236, 98, 0.2), transparent 28%),
+    linear-gradient(135deg, #f9fffc, #eff9f4);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.valuation-app .first-visit-guide::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(180deg, var(--accent), var(--lime));
+}
+
+.valuation-app .first-visit-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.valuation-app .first-visit-close:hover {
+  background: rgba(8, 125, 120, 0.09);
+  color: var(--forest);
+}
+
+.valuation-app .first-visit-heading {
+  align-self: center;
+  padding-right: 12px;
+}
+
+.valuation-app .first-visit-heading > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.valuation-app .first-visit-heading h2 {
+  margin: 0;
+  color: var(--forest);
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+  line-height: 1.08;
+}
+
+.valuation-app .first-visit-heading p,
+.valuation-app .first-visit-note {
+  margin: 7px 0 0;
+  color: #526562;
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.42;
+}
+
+.valuation-app .first-visit-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-right: 28px;
+}
+
+.valuation-app .first-visit-choice {
+  min-width: 0;
+  min-height: 88px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid rgba(8, 125, 120, 0.16);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--accent);
+  text-align: left;
+}
+
+.valuation-app .first-visit-choice:hover,
+.valuation-app .first-visit-choice.is-primary {
+  border-color: rgba(8, 125, 120, 0.34);
+  background: #ffffff;
+  box-shadow: 0 5px 14px rgba(5, 57, 52, 0.07);
+}
+
+.valuation-app .first-visit-choice > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.valuation-app .first-visit-choice span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.valuation-app .first-visit-choice strong {
+  color: var(--forest);
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.valuation-app .first-visit-choice small {
+  color: #647470;
+  font-size: 0.67rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.valuation-app .first-visit-note {
+  grid-column: 1 / -1;
+  margin: -4px 0 0;
+}
+
 .valuation-app .lookup-intent-bar::before,
 .valuation-app .price-workflow-intro::before,
 .valuation-app .price-page-calculator::before {
@@ -2761,5 +2892,824 @@
   .valuation-app .workflow-command,
   .valuation-app .bin-radar {
     border-color: rgba(152, 224, 208, 0.44);
+  }
+}
+
+/* New-user usability pass: clearer task navigation, readable evidence, and reliable keyboard focus. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 10px;
+  z-index: 200;
+  max-width: calc(100vw - 20px);
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #082a28;
+  font-weight: 850;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  transform: translateY(calc(-100% - 16px));
+  transition: transform 140ms ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.valuation-app :is(button, a[href], summary, input, select, textarea):focus-visible {
+  outline: 3px solid #c9f25f;
+  outline-offset: 3px;
+}
+
+.valuation-app .workflow-card-copy > span,
+.valuation-app .workflow-card-copy small {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.valuation-app .workflow-card-copy > span {
+  font-size: 0.58rem;
+}
+
+.valuation-app .workflow-card-copy strong {
+  font-size: 0.92rem;
+}
+
+.valuation-app .workflow-card-copy small {
+  font-size: 0.69rem;
+  line-height: 1.25;
+}
+
+.valuation-app .filter-select span {
+  color: #526562;
+  font-size: 0.58rem;
+}
+
+.valuation-app .lookup-primary-search input::placeholder,
+.valuation-app .price-workflow-search input::placeholder,
+.valuation-app input::placeholder,
+.valuation-app textarea::placeholder {
+  color: #5d706d;
+  opacity: 1;
+}
+
+@media (min-width: 721px) {
+  .valuation-app .workflow-command {
+    position: relative;
+    z-index: 70;
+    display: block;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .valuation-app .workflow-desktop-nav {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(176px, 0.28fr);
+    min-width: 0;
+  }
+
+  .valuation-app .workflow-mode-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .valuation-app .workflow-mode-card,
+  .valuation-app .workflow-mode-card.primary {
+    grid-column: auto;
+    min-height: 76px;
+    padding: 10px 14px;
+  }
+
+  .valuation-app .workflow-desktop-more {
+    position: relative;
+    min-width: 0;
+    border-left: 1px solid var(--dark-line);
+  }
+
+  .valuation-app .workflow-desktop-more > summary {
+    min-height: 76px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    color: rgba(255, 255, 255, 0.82);
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .valuation-app .workflow-desktop-more > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .valuation-app .workflow-desktop-more > summary > span {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .valuation-app .workflow-desktop-more > summary strong,
+  .valuation-app .workflow-desktop-more > summary small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .valuation-app .workflow-desktop-more > summary strong {
+    color: #ffffff;
+    font-size: 0.82rem;
+  }
+
+  .valuation-app .workflow-desktop-more > summary small {
+    color: rgba(255, 255, 255, 0.66);
+    font-size: 0.66rem;
+  }
+
+  .valuation-app .workflow-desktop-more:hover > summary,
+  .valuation-app .workflow-desktop-more[open] > summary {
+    background: rgba(152, 224, 208, 0.09);
+  }
+
+  .valuation-app .workflow-desktop-more-menu {
+    position: absolute;
+    top: calc(100% + 7px);
+    right: 0;
+    z-index: 120;
+    width: min(310px, calc(100vw - 32px));
+    display: grid;
+    gap: 5px;
+    padding: 8px;
+    border: 1px solid rgba(152, 224, 208, 0.22);
+    border-radius: 10px;
+    background: rgba(4, 24, 23, 0.98);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
+  }
+
+  .valuation-app .workflow-desktop-more-menu > button {
+    min-height: 58px;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: #ffffff;
+    text-align: left;
+  }
+
+  .valuation-app .workflow-desktop-more-menu > button:hover,
+  .valuation-app .workflow-desktop-more-menu > button.active {
+    border-color: rgba(152, 224, 208, 0.2);
+    background: rgba(152, 224, 208, 0.09);
+  }
+
+  .valuation-app .workflow-desktop-more-menu > button > span:last-child {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .valuation-app .workflow-desktop-more-menu > button strong {
+    font-size: 0.82rem;
+  }
+
+  .valuation-app .workflow-desktop-more-menu > button small {
+    color: rgba(255, 255, 255, 0.67);
+    font-size: 0.68rem;
+  }
+
+  .valuation-app .workflow-desktop-more-status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 9px 3px;
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 0.67rem;
+    font-weight: 720;
+  }
+
+  .valuation-app .workflow-desktop-more-status > span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #c58b56;
+  }
+
+  .valuation-app .workflow-desktop-more-status > span.ready {
+    background: var(--lime);
+  }
+}
+
+.valuation-app .lookup-intent-copy > small {
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.valuation-app .toolbar.valuation-toolbar {
+  grid-template-columns: repeat(4, minmax(132px, 1fr)) minmax(112px, 0.55fr) auto auto;
+}
+
+.valuation-app .clear-board-filters {
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid rgba(8, 125, 120, 0.22);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--accent);
+  font-size: 0.69rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.valuation-app .clear-board-filters:hover {
+  border-color: rgba(8, 125, 120, 0.45);
+  background: #ffffff;
+}
+
+.valuation-app .board-score-guide {
+  border: 1px solid rgba(8, 125, 120, 0.16);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.valuation-app .board-score-guide > summary {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 850;
+  list-style: none;
+}
+
+.valuation-app .board-score-guide > summary::-webkit-details-marker {
+  display: none;
+}
+
+.valuation-app .board-score-guide > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 11px 10px;
+}
+
+.valuation-app .reopen-first-visit {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.valuation-app .board-score-guide p {
+  margin: 0;
+  color: #526562;
+  font-size: 0.72rem;
+  line-height: 1.42;
+}
+
+.valuation-app .money-chip small,
+.valuation-app .value-signal-cell small,
+.valuation-app .model-trust-cell small,
+.valuation-app .player-chip > small,
+.valuation-app .sts-inline {
+  font-size: 0.67rem;
+  line-height: 1.3;
+}
+
+.valuation-app .leaderboard-row-action {
+  width: max-content;
+  max-width: 100%;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid rgba(8, 125, 120, 0.18);
+  border-radius: 999px;
+  background: rgba(152, 224, 208, 0.24);
+  color: #076c67;
+  font-size: 0.61rem;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.valuation-app .leaderboard-row-action:hover:not(:disabled) {
+  border-color: rgba(8, 125, 120, 0.4);
+  background: rgba(152, 224, 208, 0.38);
+}
+
+.valuation-app .leaderboard-row {
+  cursor: default;
+}
+
+.valuation-app .results-expand-button {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 12px;
+  border: 0;
+  border-top: 1px solid rgba(152, 224, 208, 0.16);
+  border-radius: 0;
+  background: rgba(152, 224, 208, 0.08);
+  color: var(--mint);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.valuation-app .results-expand-button:hover {
+  background: rgba(152, 224, 208, 0.14);
+  color: #ffffff;
+}
+
+.valuation-app .price-workflow-intro > h2 {
+  margin: 0;
+  color: var(--forest);
+  font-size: clamp(1.55rem, 2.3vw, 2.2rem);
+  line-height: 1.05;
+}
+
+.valuation-app .price-page-calculator.quick-price-card--start {
+  display: block;
+}
+
+.valuation-app .quick-price-start {
+  width: 100%;
+  min-height: 240px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.valuation-app .quick-price-start .quick-player-picker {
+  width: min(520px, 100%);
+  margin-top: 4px;
+  text-align: left;
+}
+
+@media (min-width: 981px) {
+  .valuation-app .price-workflow-shell {
+    grid-template-columns: minmax(300px, 0.36fr) minmax(0, 1fr);
+    align-items: stretch;
+  }
+}
+
+.valuation-app .quick-price-help {
+  display: block;
+  margin-top: 3px;
+  color: #61716f;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.valuation-app .quick-price-help.error {
+  color: var(--negative);
+}
+
+.valuation-app .price-page-calculator:not(.quick-price-card--start):not(.quick-price-card--missing-model) {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+}
+
+.valuation-app .price-page-calculator:not(.quick-price-card--start):not(.quick-price-card--missing-model)
+  > :is(.quick-price-title, .quick-player-picker, .quick-price-controls, .quick-price-grid, .quick-source-strip, .quick-edge-strip, .quick-scan-button) {
+  grid-column: 1;
+  grid-row: auto;
+}
+
+.valuation-app .price-page-calculator:not(.quick-price-card--start) .quick-price-title {
+  min-height: 82px;
+  align-items: center;
+  padding: 4px 2px;
+}
+
+.valuation-app .price-page-calculator:not(.quick-price-card--start) .quick-price-title h2 {
+  font-size: clamp(2.6rem, 5vw, 4rem);
+}
+
+.valuation-app .price-page-calculator:not(.quick-price-card--start) .quick-price-controls {
+  grid-template-columns: minmax(180px, 1.2fr) minmax(120px, 0.78fr) minmax(150px, 0.82fr);
+}
+
+.valuation-app .price-page-calculator:not(.quick-price-card--start) .quick-price-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.valuation-app .price-page-calculator:not(.quick-price-card--start) .quick-scan-button {
+  min-height: 50px;
+}
+
+.valuation-app .bin-preset-head > div,
+.valuation-app .bin-advanced-controls > summary {
+  gap: 4px;
+}
+
+.valuation-app .bin-preset-head span,
+.valuation-app .bin-preset-head strong,
+.valuation-app .bin-preset-head small,
+.valuation-app .bin-advanced-controls > summary > span,
+.valuation-app .bin-advanced-controls > summary > small {
+  display: block;
+}
+
+.valuation-app .bin-preset-head > div > span {
+  color: var(--mint);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.valuation-app .bin-advanced-controls > summary > span {
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.valuation-app .bin-radar-header .section-title span,
+.valuation-app .bin-preset-head small,
+.valuation-app .bin-advanced-controls > summary > small {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.valuation-app .bin-preset-head strong {
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.valuation-app .bin-preset-head small,
+.valuation-app .bin-advanced-controls > summary > small {
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.valuation-app .preset-scan-card:disabled {
+  opacity: 0.62;
+}
+
+.valuation-app .case-hit-evidence-note {
+  margin: 10px 16px 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(201, 242, 95, 0.18);
+  border-radius: 7px;
+  background: rgba(201, 242, 95, 0.06);
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 0.72rem;
+  line-height: 1.42;
+}
+
+@media (max-width: 980px) and (min-width: 721px) {
+  .valuation-app .workflow-desktop-nav {
+    grid-template-columns: minmax(0, 1fr) 158px;
+  }
+
+  .valuation-app .workflow-mode-card,
+  .valuation-app .workflow-mode-card.primary {
+    min-height: 70px;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 7px;
+    padding-inline: 10px;
+  }
+
+  .valuation-app .workflow-mode-card .workflow-card-copy small {
+    display: none;
+  }
+
+  .valuation-app .workflow-desktop-more > summary {
+    min-height: 70px;
+    padding-inline: 10px;
+  }
+
+  .valuation-app .leaderboard-head,
+  .valuation-app .leaderboard-row,
+  .valuation-app .lookup-board-market-grid .leaderboard-head,
+  .valuation-app .lookup-board-market-grid .leaderboard-row {
+    grid-template-columns: 40px minmax(190px, 1fr) 92px minmax(145px, 0.7fr) minmax(135px, 0.55fr);
+  }
+
+  .valuation-app .model-trust-cell {
+    display: grid;
+  }
+
+  .valuation-app .model-trust-cell small {
+    display: none;
+  }
+
+  .valuation-app .leaderboard-row > .rank-chip {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .valuation-app .leaderboard-row > .player-chip {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .valuation-app .leaderboard-row > .money-chip {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .valuation-app .leaderboard-row > .value-signal-cell {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .valuation-app .leaderboard-row > .model-trust-cell {
+    grid-column: 5;
+    grid-row: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .skip-link {
+    top: 6px;
+    left: 7px;
+  }
+
+  .valuation-app .lookup-intent-copy > small {
+    font-size: 0.72rem;
+  }
+
+  .valuation-app .first-visit-guide {
+    order: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 17px 14px 14px;
+  }
+
+  .valuation-app .first-visit-heading {
+    padding-right: 30px;
+  }
+
+  .valuation-app .first-visit-heading h2 {
+    font-size: 1.3rem;
+  }
+
+  .valuation-app .first-visit-heading p {
+    font-size: 0.76rem;
+  }
+
+  .valuation-app .first-visit-choices {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+    padding-right: 0;
+  }
+
+  .valuation-app .first-visit-choice {
+    min-height: 72px;
+    align-items: center;
+    padding: 10px 11px;
+  }
+
+  .valuation-app .first-visit-choice strong {
+    font-size: 0.82rem;
+  }
+
+  .valuation-app .first-visit-choice small {
+    font-size: 0.7rem;
+  }
+
+  .valuation-app .first-visit-note {
+    margin-top: 0;
+  }
+
+  .valuation-app .bin-preset-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+    scroll-snap-type: none;
+  }
+
+  .valuation-app .preset-scan-card,
+  .valuation-app .preset-scan-card.primary-preset {
+    min-width: 0;
+    min-height: 78px;
+  }
+
+  .valuation-app .preset-scan-card.primary-preset {
+    grid-column: 1 / -1;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar .clear-board-filters {
+    flex: 0 0 auto;
+    min-height: 46px;
+    border-radius: 12px;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar {
+    padding-bottom: 10px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(8, 125, 120, 0.38) transparent;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar::-webkit-scrollbar {
+    display: block;
+    height: 4px;
+  }
+
+  .valuation-app .toolbar.valuation-toolbar::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(8, 125, 120, 0.38);
+  }
+
+  .valuation-app .board-score-guide > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .valuation-app .board-score-guide {
+    order: 4;
+  }
+
+  .valuation-app .lookup-board-market-grid .leaderboard-shell {
+    order: 1;
+  }
+
+  .valuation-app .lookup-board-market-grid .live-market-map.compact,
+  .valuation-app .lookup-board-market-grid .live-market-map.compact.has-dots {
+    order: 2;
+  }
+
+  .valuation-app .leaderboard-row,
+  .valuation-app .lookup-board-market-grid .leaderboard-row {
+    grid-template-columns: 38px minmax(0, 1fr) 82px;
+    grid-template-rows: auto auto auto;
+    min-height: 132px;
+  }
+
+  .valuation-app .model-trust-cell,
+  .valuation-app .lookup-board-market-grid .leaderboard-row .model-trust-cell {
+    grid-column: 2 / 4;
+    grid-row: 3;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 8px;
+    border: 1px solid rgba(8, 125, 120, 0.12);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.58);
+  }
+
+  .valuation-app .model-trust-cell .mobile-cell-label,
+  .valuation-app .model-trust-cell small {
+    display: none;
+  }
+
+  .valuation-app .model-trust-cell strong {
+    font-size: 0.65rem;
+  }
+
+  .valuation-app .leaderboard-row-action {
+    min-height: 30px;
+    font-size: 0.61rem;
+  }
+
+  .valuation-app .bin-opportunity-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 9px 8px;
+    padding: 12px 10px;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-rank-cell {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-listing-cell {
+    grid-column: 2 / 5;
+    grid-row: 1;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-money-cell:nth-child(3) {
+    grid-column: 1 / 3;
+    grid-row: 2;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-money-cell:nth-child(4) {
+    grid-column: 3 / 5;
+    grid-row: 2;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-money-cell:nth-child(5) {
+    grid-column: 1 / 5;
+    grid-row: 3;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-money-cell {
+    min-height: 64px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: center;
+    justify-items: start;
+    gap: 4px;
+    padding: 9px 10px;
+    text-align: left;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-money-cell strong {
+    font-size: 0.85rem;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-money-cell span {
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 0.55rem;
+    line-height: 1.25;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-signal-cell {
+    grid-column: 1 / 5;
+    grid-row: 4;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+    padding: 7px 8px;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-signal-cell > span {
+    margin-right: auto;
+  }
+
+  .valuation-app .bin-opportunity-row > .bin-signal-cell a,
+  .valuation-app .bin-opportunity-row > .bin-signal-cell button {
+    min-height: 32px;
+  }
+
+  .valuation-app .bin-opportunity-list {
+    margin-inline: 8px;
+  }
+
+  .valuation-app .bin-radar-alert {
+    margin-inline: 8px;
+  }
+
+  .valuation-app .price-workflow-intro > h2 {
+    font-size: 1.12rem;
+  }
+
+  .valuation-app .quick-price-start {
+    min-height: 300px;
+    padding: 18px 8px;
+  }
+
+  .valuation-app .quick-price-start .quick-player-picker {
+    width: 100%;
+  }
+
+  .valuation-app .price-page-calculator:not(.quick-price-card--start) .quick-price-title h2 {
+    font-size: 2.55rem;
+  }
+
+  .valuation-app .price-page-calculator:not(.quick-price-card--start) .quick-price-controls,
+  .valuation-app .price-page-calculator:not(.quick-price-card--start) .quick-price-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .valuation-app .price-page-calculator:not(.quick-price-card--start) .quick-price-controls > :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .valuation-app .case-hit-evidence-note {
+    margin-inline: 12px;
   }
 }

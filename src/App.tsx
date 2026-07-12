@@ -34,6 +34,7 @@ import { FanaticsCollectPage } from './FanaticsCollectPage'
 import {
   fetchChecklistCatalog,
   fetchChecklistModel,
+  fetchStaticChecklistModels,
 } from './lib/prospectPulse'
 import {
   fetchEbayAuctionListings,
@@ -46,6 +47,7 @@ import {
 } from './lib/ebay'
 import {
   fetchFanaticsCollectBinListings,
+  fetchFanaticsCollectChecklistListings,
   fetchFanaticsCollectStatus,
   fetchFanaticsCollectWideListings,
   type FanaticsCollectStatus,
@@ -357,14 +359,14 @@ const SOURCE_LABELS: Record<BasePriceSource, string> = {
 }
 
 const BASE_FILTER_LABELS: Array<{ value: BaseSourceFilter; label: string }> = [
-  { value: 'decision-ready', label: 'Decision-ready' },
-  { value: 'all', label: 'All model quality' },
-  { value: 'research', label: 'Needs review' },
-  { value: 'weighted-sales', label: 'Recent weighted' },
+  { value: 'decision-ready', label: 'Reliable estimates (recommended)' },
+  { value: 'all', label: 'All estimates' },
+  { value: 'research', label: 'Needs more research' },
+  { value: 'weighted-sales', label: 'Recent sales' },
   { value: 'blended-sales', label: 'Blended sales' },
-  { value: 'variation-implied', label: 'Variation implied' },
-  { value: 'twma-fallback', label: 'Comp summary' },
-  { value: 'unpriced', label: 'Needs comps' },
+  { value: 'variation-implied', label: 'Parallel-based estimate' },
+  { value: 'twma-fallback', label: 'Saved sales summary' },
+  { value: 'unpriced', label: 'Needs sales data' },
 ]
 
 const SORT_LABELS: Record<SortMode, string> = {
@@ -372,7 +374,7 @@ const SORT_LABELS: Record<SortMode, string> = {
   'sts-rank': 'Dynasty Rank',
   'prospect-rank': 'Prospect / MLB Rank',
   'dynasty-score': 'Dynasty Score',
-  'dynasty-value': 'Undervalued',
+  'dynasty-value': 'Best value',
   'momentum-desc': 'Momentum',
   'riser-value': 'Riser Value',
   'bin-target': 'BIN Target',
@@ -622,7 +624,7 @@ const FALLBACK_RELEASE_OPTIONS: ReleaseOption[] = [
 ]
 
 const CHECKLIST_CATEGORIES: ChecklistModel['category'][] = ['bowman', 'chrome', 'draft']
-const CHECKLIST_MIN_YEAR = 2020
+const CHECKLIST_MIN_YEAR = 2016
 const CHECKLIST_LOAD_CONCURRENCY = 6
 const BIN_SCAN_CONCURRENCY = 2
 const LEADERBOARD_RENDER_LIMIT = 25
@@ -633,6 +635,8 @@ const BIN_RENDER_LIMIT = 40
 const AUCTION_RENDER_LIMIT = 30
 const LIVE_MODEL_WINDOW_PCT = 1
 const LIVE_MODEL_WINDOW_LABEL = `${Math.round(LIVE_MODEL_WINDOW_PCT * 100)}%`
+const PRICE_REVIEW_WINDOW_PCT = 0.15
+const PRICE_REVIEW_WINDOW_LABEL = `${Math.round(PRICE_REVIEW_WINDOW_PCT * 100)}%`
 const SHOW_LOOKUP_MODEL_LAB = false
 const SHOW_LOOKUP_SUPPORT_PANELS = false
 const AUCTION_MAX_HOURS_TO_CLOSE = 24
@@ -649,6 +653,16 @@ const WORK_MODE_PATHS: Record<WorkMode, string> = {
   health: '/health',
   'case-hits': '/case-hits',
   wax: '/sealed-wax',
+}
+
+const WORK_MODE_TITLES: Record<WorkMode, string> = {
+  lookup: 'Find Value',
+  deals: 'Live Deals',
+  fanatics: 'Fanatics Finds',
+  price: 'Price a Card',
+  health: 'Data Health',
+  'case-hits': 'Case Hits',
+  wax: 'Sealed Boxes',
 }
 
 function appRouteFromPath(pathname: string): AppRoute {
@@ -678,11 +692,11 @@ function scoreSettingsForSearchMode(settings: ScoreSettings, searchMode: BinSear
 }
 
 function pricingVerdict(spread: number | null, modelValue: number, askPrice: number | null) {
-  if (!askPrice) return { label: 'No Ask', tone: 'neutral' as const }
-  if (askPrice <= modelValue * 0.78) return { label: 'Target Price', tone: 'good' as const }
-  if (spread !== null && spread >= 0) return { label: 'Under Model', tone: 'good' as const }
-  if (askPrice <= modelValue * (1 + LIVE_MODEL_WINDOW_PCT)) return { label: 'Near Model', tone: 'watch' as const }
-  return { label: 'Rich', tone: 'risk' as const }
+  if (!askPrice) return { label: 'Enter a price', tone: 'neutral' as const }
+  if (askPrice <= modelValue * 0.78) return { label: 'Strong value', tone: 'good' as const }
+  if (spread !== null && spread >= 0) return { label: 'Below estimate', tone: 'good' as const }
+  if (askPrice <= modelValue * (1 + PRICE_REVIEW_WINDOW_PCT)) return { label: 'Near estimate', tone: 'watch' as const }
+  return { label: 'Above estimate', tone: 'risk' as const }
 }
 
 function ebayRateLimitMessage(message: string | null) {
@@ -964,19 +978,10 @@ function playerNamesFromListings(listings: MarketplaceListing[], limit = 160) {
 }
 
 function formatStsLine(row: PricingRow) {
-  const parts = []
+  const parts: string[] = []
   const rankLabel = primaryRankLabel(row)
   if (rankLabel) parts.push(rankLabel)
   if (row.stsProspectRank && row.stsRank) parts.push(`Overall #${row.stsRank.toLocaleString()}`)
-  if (row.stsDynastyScore !== null || row.stsRank !== null || row.stsProspectRank !== null) {
-    const impliedBase = impliedDynastyBasePrice(row)
-    const multiple = impliedBase > 0 && row.baseTwmaPrice > 0 ? impliedBase / row.baseTwmaPrice : 0
-    const valueScore = scoreDynastyBaseValue(row)
-    if (valueScore > 0) parts.push(`${valueScore.toFixed(0)} value`)
-    if (multiple > 0) parts.push(`${money(impliedBase)} implied / ${multiple.toFixed(multiple >= 10 ? 1 : 2)}x base`)
-    else if (impliedBase > 0 && !rowHasModel(row)) parts.push(`${money(impliedBase)} implied base`)
-  }
-  if (row.stsBinTargetScore !== null) parts.push(`${row.stsBinTargetScore.toFixed(1)} target`)
   return parts.join(' / ')
 }
 
@@ -1068,26 +1073,26 @@ function modelTrustSignal(row: PricingRow) {
           : 'thin'
   const label =
     tone === 'strong'
-      ? 'Strong comps'
+      ? 'Strong sales data'
       : tone === 'solid'
-        ? 'Comp backed'
+        ? 'Sales-backed'
         : row.basePriceSource === 'variation-implied'
-          ? 'Implied base'
+          ? 'Parallel estimate'
           : row.basePriceSource === 'twma-fallback' && row.rawBaseSales >= 5
-            ? 'Comp summary'
-          : 'Thin base'
+            ? 'Sales summary'
+          : 'Limited data'
   const sourceLabel =
     source === 'sold-comp'
-      ? 'sold lane'
+      ? 'recent sold sales'
       : row.basePriceSource === 'weighted-sales'
         ? 'recent sales'
         : row.basePriceSource === 'blended-sales'
           ? 'blended sales'
       : row.basePriceSource === 'variation-implied'
-            ? 'variation anchors'
+            ? 'parallel-based estimate'
             : row.basePriceSource === 'twma-fallback' && row.rawBaseSales >= 5
-              ? 'cached summary'
-              : 'baseline'
+              ? 'saved sales summary'
+              : 'starting estimate'
   const salesLabel =
     row.rawBaseSales > 0
       ? `${row.rawBaseSales.toLocaleString()} comp${row.rawBaseSales === 1 ? '' : 's'}`
@@ -1098,16 +1103,16 @@ function modelTrustSignal(row: PricingRow) {
     numericTimestamp(row.latestBaseSaleAt) !== null
       ? ageLabel(row.latestBaseSaleAt)
       : row.basePriceSource === 'twma-fallback' && row.rawBaseSales >= 5
-        ? 'aggregate snapshot'
+        ? 'saved snapshot'
         : 'no dated comps'
   const rankLabel = primaryRankLabel(row) ?? (row.stsRank !== null ? `Rank #${row.stsRank.toLocaleString()}` : 'no rank')
   const action =
     valueScore >= 45 && (tone === 'strong' || tone === 'solid')
-      ? 'Scan now'
+      ? 'Scan listings'
       : valueScore >= 25 && tone !== 'thin'
-        ? 'Scan next'
+        ? 'Review next'
         : tone === 'thin'
-          ? 'Verify base'
+          ? 'Check estimate'
           : 'Watch'
 
   return {
@@ -1436,7 +1441,7 @@ function buildStaticChecklistCoverage(
     cadence: {
       hot: 'Hourly for live-hit gaps once the local comp worker is connected.',
       priority: 'Nightly for ranked, team-page, and recently listed players.',
-      longTail: 'Weekly for the remaining 2020+ checklist backlog.',
+      longTail: 'Weekly for the remaining 2016+ checklist backlog.',
       retry: 'Timeout/error rows retry with smaller Card Hedge searches and alternate query wording.',
     },
     releases: coverageReleases(rows),
@@ -1550,6 +1555,18 @@ function modelsContainingPlayerNames(models: ChecklistModel[], playerNames: stri
   if (playerNames.length === 0) return models
   const queuedNames = new Set(playerNames.map(scanNameKey))
   return models.filter((model) => model.players.some((player) => queuedNames.has(scanNameKey(player.playerName))))
+}
+
+function modelsMatchingPlayerSearch(models: ChecklistModel[], searchTerm: string) {
+  const searchKey = scanNameKey(searchTerm)
+  if (!searchKey) return []
+  const searchWords = searchKey.split(' ').filter(Boolean)
+  return models.filter((model) =>
+    model.players.some((player) => {
+      const playerKey = scanNameKey(player.playerName)
+      return playerKey.includes(searchKey) || searchWords.every((word) => playerKey.includes(word))
+    }),
+  )
 }
 
 function flattenPricingRowGroups(groups: Map<string, PricingRow[]>) {
@@ -2543,15 +2560,16 @@ function WorkflowCommand({
   modelReady: boolean
 }) {
   const [moreOpen, setMoreOpen] = useState(false)
+  const desktopMoreRef = useRef<HTMLDetailsElement | null>(null)
   const moreButtonRef = useRef<HTMLButtonElement | null>(null)
   const moreCloseButtonRef = useRef<HTMLButtonElement | null>(null)
   const navigationItems = [
     {
       mode: 'lookup' as const,
       tier: 'primary',
-      eyebrow: 'Discover',
-      title: 'Value Board',
-      description: 'Best rank-to-price gaps',
+      eyebrow: 'Find',
+      title: 'Find Value',
+      description: 'Browse undervalued players',
       value: totalRows.toLocaleString(),
       icon: <Search size={19} />,
     },
@@ -2560,16 +2578,16 @@ function WorkflowCommand({
       tier: 'primary',
       eyebrow: 'Shop',
       title: 'Live Deals',
-      description: `${listingCount.toLocaleString()} listings checked`,
+      description: listingCount > 0 ? `${listingCount.toLocaleString()} listings checked` : 'Compare live listings',
       value: dealCount.toLocaleString(),
       icon: <Radio size={19} />,
     },
     {
       mode: 'price' as const,
       tier: 'primary',
-      eyebrow: 'Value',
+      eyebrow: 'Estimate',
       title: 'Price a Card',
-      description: 'Player, parallel, grade',
+      description: 'Choose player, parallel, and grade',
       value: money(topBase),
       icon: <Calculator size={19} />,
     },
@@ -2595,7 +2613,7 @@ function WorkflowCommand({
       mode: 'wax' as const,
       tier: 'secondary',
       eyebrow: 'Sealed',
-      title: 'Sealed Wax',
+      title: 'Sealed Boxes',
       description: 'Hobby and Jumbo boxes',
       value: 'New',
       icon: <Package size={19} />,
@@ -2640,43 +2658,20 @@ function WorkflowCommand({
 
   const selectMode = (nextMode: WorkMode) => {
     setMoreOpen(false)
+    if (desktopMoreRef.current) desktopMoreRef.current.open = false
     onModeChange(nextMode)
   }
 
   return (
     <section className="workflow-command" aria-label="Primary navigation">
-      <div className="workflow-command-copy">
-        <span className="workflow-kicker">
-          <Activity size={14} />
-          Market Desk
-        </span>
-        <h2>Backstop Market Desk</h2>
-        <p>Find a player worth buying, check the live market, or price a card.</p>
-        <div className="workflow-mini-tape">
-          <span>{modelReady ? 'Model live' : 'Model loading'}</span>
-          <span>{totalRows.toLocaleString()} players</span>
-          <span>{pricedRows.toLocaleString()} priced lanes</span>
-          <span>
-            {mode === 'lookup'
-              ? 'Value first'
-              : mode === 'price'
-                ? 'Calculator'
-                : mode === 'health'
-                  ? 'Freshness'
-                  : mode === 'wax'
-                    ? 'Hobby + Jumbo'
-                    : `Top base ${money(topBase)}`}
-          </span>
-        </div>
-      </div>
-
-      <div className="workflow-mode-grid workflow-desktop-nav">
-        {navigationItems.map((item) => (
+      <div className="workflow-desktop-nav">
+        <nav className="workflow-mode-grid" aria-label="Main tools">
+        {primaryMobileItems.map((item) => (
           <button
             className={`workflow-mode-card ${item.tier} ${mode === item.mode ? 'active' : ''}`}
             type="button"
             onClick={() => selectMode(item.mode)}
-            aria-pressed={mode === item.mode}
+            aria-current={mode === item.mode ? 'page' : undefined}
             key={item.mode}
           >
             <span className="workflow-icon">{item.icon}</span>
@@ -2688,6 +2683,39 @@ function WorkflowCommand({
             <span className="workflow-value">{item.value}</span>
           </button>
         ))}
+        </nav>
+        <details className="workflow-desktop-more" ref={desktopMoreRef}>
+          <summary>
+            <MoreHorizontal size={19} />
+            <span>
+              <strong>{secondaryModeActive ? navigationItems.find((item) => item.mode === mode)?.title : 'More tools'}</strong>
+              <small>Rare cards, boxes, and data</small>
+            </span>
+          </summary>
+          <div className="workflow-desktop-more-menu">
+            {secondaryMobileItems.map((item) => (
+              <button
+                className={mode === item.mode ? 'active' : ''}
+                type="button"
+                onClick={() => selectMode(item.mode)}
+                aria-current={mode === item.mode ? 'page' : undefined}
+                key={`desktop-more:${item.mode}`}
+              >
+                <span className="workflow-mobile-more-icon">{item.icon}</span>
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.description}</small>
+                </span>
+              </button>
+            ))}
+            <div className="workflow-desktop-more-status" role="status">
+              <span className={modelReady ? 'ready' : ''} />
+              {modelReady
+                ? `${pricedRows.toLocaleString()} priced players ready`
+                : 'Price data is still loading'}
+            </div>
+          </div>
+        </details>
       </div>
 
       <nav className="workflow-mobile-nav" aria-label="Mobile navigation">
@@ -2756,11 +2784,11 @@ function WorkflowCommand({
                 </button>
               ))}
             </div>
-            <div className="workflow-mobile-more-status">
+            <div className="workflow-mobile-more-status" role="status">
               <span className={modelReady ? 'ready' : ''} />
               {modelReady
                 ? `${pricedRows.toLocaleString()} priced players ready`
-                : 'Market model is still loading'}
+                : 'Price data is still loading'}
             </div>
           </section>
         </div>
@@ -3017,6 +3045,7 @@ function Leaderboard({
   onScanPlayer,
   onRefreshPlayer,
   refreshingPlayerId,
+  selectionLabel = 'Select card',
   emptyTitle = 'No priced players loaded.',
   emptyText = 'Connect market data to load player base prices.',
 }: {
@@ -3027,6 +3056,7 @@ function Leaderboard({
   onScanPlayer: (row: PricingRow) => void
   onRefreshPlayer?: (row: PricingRow) => void
   refreshingPlayerId?: string | null
+  selectionLabel?: string
   emptyTitle?: string
   emptyText?: string
 }) {
@@ -3042,12 +3072,12 @@ function Leaderboard({
 
   return (
     <div className="leaderboard-shell">
-      <div className="leaderboard-head">
+      <div className="leaderboard-head" aria-hidden="true">
         <span>#</span>
         <span>Player</span>
-        <span>Base Auto</span>
-        <span>Value Signal</span>
-        <span>Model Trust</span>
+        <span title="Estimated value of the player's unnumbered Bowman Chrome autograph">Base-auto estimate</span>
+        <span title="A 0–100 opportunity score comparing player ranking with the current price estimate">Value score</span>
+        <span title="How much recent sold-sales evidence supports the estimate">Price confidence</span>
       </div>
       <div className="leaderboard-list">
         {rows.map((row, index) => {
@@ -3059,47 +3089,29 @@ function Leaderboard({
           const valueGapPct = impliedBase > 0 && row.baseTwmaPrice > 0 ? impliedBase / row.baseTwmaPrice - 1 : null
           const valueMultiple = dynastyValueMultiple(row)
           const valueDetails = [
-            impliedBase > 0 ? `${money(impliedBase)} implied` : 'no rank base',
-            valueMultiple > 0 ? `${valueMultiple.toFixed(valueMultiple >= 10 ? 1 : 2)}x` : null,
-            valueGapPct !== null ? `${valueGapPct >= 0 ? '+' : ''}${Math.round(valueGapPct * 100)}% gap` : null,
+            impliedBase > 0 ? `${money(impliedBase)} rank-based estimate` : 'ranking estimate unavailable',
+            valueMultiple > 0 ? `${valueMultiple.toFixed(valueMultiple >= 10 ? 1 : 2)}× current estimate` : null,
+            valueGapPct !== null ? `${valueGapPct >= 0 ? '+' : ''}${Math.round(valueGapPct * 100)}% difference` : null,
           ].filter(Boolean)
           const trustSignal = modelTrustSignal(row)
           return (
             <article
               className={`leaderboard-row ${selectedId === row.id ? 'selected' : ''}`}
               key={row.id}
-              onClick={() => onSelect(row.id)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' && event.key !== ' ') return
-                event.preventDefault()
-                onSelect(row.id)
-              }}
-              tabIndex={0}
-              aria-selected={selectedId === row.id}
-              aria-label={`Select ${row.playerName}`}
             >
               <span className="rank-chip">{displayRank}</span>
               <span className="player-chip">
                 <button
                   className={`leaderboard-player-button ${hasModel ? '' : 'needs-model'}`}
                   type="button"
-                  disabled={refreshingModel || (!hasModel && !onRefreshPlayer)}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onSelect(row.id)
-                    if (hasModel) onScanPlayer(row)
-                    else onRefreshPlayer?.(row)
-                  }}
-                  aria-label={
-                    hasModel
-                      ? `Scan live listings for ${row.playerName}`
-                      : `Build a sold comp model for ${row.playerName}`
-                  }
+                  onClick={() => onSelect(row.id)}
+                  aria-pressed={selectedId === row.id}
+                  aria-label={`${selectionLabel} for ${row.playerName}`}
                 >
                   <strong>{row.playerName}</strong>
                   <span>
-                    {refreshingModel ? <RefreshCw size={12} className="spin" /> : hasModel ? <Radio size={12} /> : <Database size={12} />}
-                    {refreshingModel ? 'Building model' : hasModel ? 'Scan deals' : 'Build comps'}
+                    {hasModel ? <Calculator size={12} /> : <Database size={12} />}
+                    {hasModel ? selectionLabel : 'Needs sales data'}
                   </span>
                 </button>
                 <small>
@@ -3118,22 +3130,35 @@ function Leaderboard({
                 )}
               </span>
               <span className="money-chip">
-                <span className="mobile-cell-label">Base auto</span>
+                <span className="mobile-cell-label">Base-auto estimate</span>
                 <strong>{formatBasePrice(row)}</strong>
                 <small>{formatBaseMethod(row.baseMethod)}</small>
               </span>
               <span className="value-signal-cell">
-                <span className="mobile-cell-label">Value</span>
-                <strong>{valueScore > 0 ? `${valueScore.toFixed(0)} value` : '--'}</strong>
+                <span className="mobile-cell-label">Value score</span>
+                <strong>{valueScore > 0 ? `${valueScore.toFixed(0)} / 100` : '--'}</strong>
                 <small>{valueDetails.length > 0 ? valueDetails.join(' / ') : 'ranking unavailable'}</small>
               </span>
               <span className={`model-trust-cell ${trustSignal.tone}`}>
+                <span className="mobile-cell-label">Price confidence</span>
                 <strong>
                   <ShieldCheck size={13} />
                   {trustSignal.label}
                 </strong>
                 <small>{trustSignal.detail}</small>
-                <em>{trustSignal.action}</em>
+                <button
+                  className="leaderboard-row-action"
+                  type="button"
+                  disabled={refreshingModel || (!hasModel && !onRefreshPlayer)}
+                  onClick={() => {
+                    onSelect(row.id)
+                    if (hasModel) onScanPlayer(row)
+                    else onRefreshPlayer?.(row)
+                  }}
+                >
+                  {refreshingModel ? <RefreshCw size={12} className="spin" /> : hasModel ? <Radio size={12} /> : <Database size={12} />}
+                  {refreshingModel ? 'Finding sales…' : hasModel ? 'Find listings' : 'Find sold sales'}
+                </button>
               </span>
             </article>
           )
@@ -3230,7 +3255,7 @@ function TeamOpportunityQueue({
         <div className="bin-radar-alert bin-radar-alert-success">
           <Ban size={16} />
           <span>
-            Rejected: {lastRejectedListing.playerName || 'listing'}
+            Hidden from future searches: {lastRejectedListing.playerName || 'listing'}
             {lastRejectedListing.title ? ` / ${lastRejectedListing.title}` : ''}
           </span>
           <button className="inline-undo-button" type="button" onClick={onUndoRejectListing}>
@@ -3269,10 +3294,10 @@ function TeamOpportunityQueue({
           <div className="bin-opportunity-head">
             <span>Rank</span>
             <span>Listing</span>
-            <span>All In</span>
-            <span>Model</span>
-            <span>Spread</span>
-            <span>Signal</span>
+            <span>Total cost</span>
+            <span>Estimate</span>
+            <span>Difference</span>
+            <span>Next step</span>
           </div>
           {visibleEntries.map(({ opportunity, type, sts, modelRow, dealScore, dynastyValueScore, momentumScore, rankLabel }, index) => {
             const gradingLabel = listingGradingLabel(opportunity.listing)
@@ -3312,7 +3337,7 @@ function TeamOpportunityQueue({
                 </div>
                 <div className="bin-money-cell">
                   <strong>{money(opportunity.listing.allInPrice)}</strong>
-                  <span>{type === 'Auction' ? auctionBidShipLabel(opportunity.listing) : 'BIN + ship'}</span>
+                  <span>{type === 'Auction' ? auctionBidShipLabel(opportunity.listing) : 'Total cost'}</span>
                 </div>
                 <div className="bin-money-cell">
                   <strong>{money(opportunity.fairValue)}</strong>
@@ -3320,7 +3345,7 @@ function TeamOpportunityQueue({
                 </div>
                 <div className={`bin-money-cell ${opportunity.edgeDollars >= 0 ? 'edge' : 'near-model'}`}>
                   <strong>{money(opportunity.edgeDollars)}</strong>
-                  <span>{percent(opportunity.expectedRoiPct)} model edge</span>
+                  <span>{percent(opportunity.expectedRoiPct)} estimated margin</span>
                 </div>
                 <div className="bin-signal-cell">
                   <span>{signal}</span>
@@ -3337,7 +3362,7 @@ function TeamOpportunityQueue({
                     title="Hide this incorrect listing from future Miami runs"
                   >
                     <Ban size={14} />
-                    Reject
+                    Hide as incorrect
                   </button>
                 </div>
               </article>
@@ -4826,10 +4851,26 @@ function QuickPriceModule({
 
   if (!row) {
     return (
-      <section className={`detail-card quick-price-card ${className ?? ''}`.trim()}>
-        <div className="empty-state compact">
+      <section className={`detail-card quick-price-card quick-price-card--start ${className ?? ''}`.trim()}>
+        <div className="empty-state compact quick-price-start">
           <Calculator size={24} />
-          <strong>No player selected.</strong>
+          <strong>Choose a player to start.</strong>
+          <span>Search above, then pick a player from the list.</span>
+          {pickerRows && pickerRows.length > 0 && onPickRow ? (
+            <label className="quick-player-picker">
+              <span>Player</span>
+              <select defaultValue="" onChange={(event) => onPickRow(event.target.value)} aria-label="Choose a player to price">
+                <option value="" disabled>Choose a player</option>
+                {pickerRows.map((candidate) => (
+                  <option value={candidate.id} key={`quick-start:${candidate.id}`}>
+                    {candidate.playerName} / {candidate.release.replaceAll('-', ' ')}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <small>{pickerRows ? 'No players match this search.' : 'Price data is still loading.'}</small>
+          )}
         </div>
       </section>
     )
@@ -4926,9 +4967,10 @@ function QuickPriceModule({
   const askPrice = parseMoneyInput(askInput)
   const spread = askPrice ? modelValue - askPrice : null
   const rawFloorSpread = askPrice ? rawValue - askPrice : null
-  const roi = askPrice && spread !== null ? spread / askPrice : null
   const buyZone = modelValue * (1 - DEFAULT_SETTINGS.targetMarginPct / 100)
-  const watchCeiling = modelValue * (1 + LIVE_MODEL_WINDOW_PCT)
+  const watchCeiling = modelValue * (1 + PRICE_REVIEW_WINDOW_PCT)
+  const askVsModelPct = askPrice && modelValue > 0 ? (askPrice - modelValue) / modelValue : null
+  const askInputInvalid = askInput.trim().length > 0 && askPrice === null
   const verdict = pricingVerdict(spread, modelValue, askPrice)
   const gradeLabel = gradeModel.option.label
 
@@ -4937,7 +4979,7 @@ function QuickPriceModule({
       <div className="detail-title quick-price-title">
         <Calculator size={18} />
         <div>
-          <span>Card Price Calculator</span>
+          <span>Estimated market value</span>
           <h2>{money(modelValue)}</h2>
           <small>{activeRow.playerName}</small>
         </div>
@@ -4979,22 +5021,27 @@ function QuickPriceModule({
           </select>
         </label>
         <label>
-          <span>All In</span>
+          <span>Total cost</span>
           <input
             inputMode="decimal"
-            placeholder="$0"
+            placeholder="$0.00"
             value={askInput}
             onChange={(event) => updateCardInput({ askInput: event.target.value })}
-            aria-label="All-in price"
+            aria-label="Total cost including shipping"
+            aria-describedby="quick-total-cost-help"
+            aria-invalid={askInputInvalid || undefined}
           />
+          <small className={`quick-price-help ${askInputInvalid ? 'error' : ''}`} id="quick-total-cost-help">
+            {askInputInvalid ? 'Enter a valid dollar amount.' : 'Include shipping and fees.'}
+          </small>
         </label>
       </div>
 
       <div className="quick-price-grid">
         <div>
-          <span>Raw Model</span>
+          <span>Raw-card estimate</span>
           <strong>{money(rawValue)}</strong>
-          <small>{formatMultiplier(quote?.multiplier ?? 1)} multiple</small>
+          <small>{formatMultiplier(quote?.multiplier ?? 1)} base-card multiple</small>
         </div>
         <div>
           <span>{gradeLabel}</span>
@@ -5002,26 +5049,29 @@ function QuickPriceModule({
           <small>{gradeModel.note}</small>
         </div>
         <div>
-          <span>Target Price</span>
+          <span>Strong buy at or below</span>
           <strong>{money(buyZone)}</strong>
-          <small>{DEFAULT_SETTINGS.targetMarginPct}% margin</small>
+          <small>{DEFAULT_SETTINGS.targetMarginPct}% below the estimate</small>
         </div>
         <div>
-          <span>Review Up To</span>
+          <span>Near estimate up to</span>
           <strong>{money(watchCeiling)}</strong>
-          <small>{LIVE_MODEL_WINDOW_LABEL} window</small>
+          <small>{PRICE_REVIEW_WINDOW_LABEL} above the estimate</small>
         </div>
       </div>
 
       {askPrice ? (
         <div className="quick-edge-strip">
           <span className={spread !== null && spread >= 0 ? 'good' : 'risk'}>
-            Model {spread !== null ? money(spread) : '--'}
+            {spread !== null && spread >= 0 ? 'Below estimate' : 'Above estimate'} {spread !== null ? money(Math.abs(spread)) : '--'}
           </span>
           <span className={rawFloorSpread !== null && rawFloorSpread >= 0 ? 'good' : 'neutral'}>
-            Raw floor {rawFloorSpread !== null ? money(rawFloorSpread) : '--'}
+            {rawFloorSpread !== null && rawFloorSpread >= 0 ? 'Below raw estimate' : 'Above raw estimate'}{' '}
+            {rawFloorSpread !== null ? money(Math.abs(rawFloorSpread)) : '--'}
           </span>
-          <span className={roi !== null && roi >= 0 ? 'good' : 'risk'}>{roi !== null ? percent(roi) : '--'} edge</span>
+          <span className={askVsModelPct !== null && askVsModelPct <= 0 ? 'good' : 'risk'}>
+            {askVsModelPct !== null ? percent(Math.abs(askVsModelPct)) : '--'} {askVsModelPct !== null && askVsModelPct <= 0 ? 'under' : 'over'} estimate
+          </span>
         </div>
       ) : null}
 
@@ -5033,7 +5083,7 @@ function QuickPriceModule({
 
       <button className="ghost-button quick-scan-button" type="button" onClick={() => onScanPlayer(activeRow)}>
         <Radio size={15} />
-        Scan now
+        Find live listings
       </button>
     </section>
   )
@@ -6337,6 +6387,7 @@ function BinRadar({
   lastRejectedListing,
   scan,
   auctionScan,
+  savedResults,
   ebayStatus,
   fanaticsStatus,
   loading,
@@ -6382,6 +6433,7 @@ function BinRadar({
   lastRejectedListing: ListingRejection | null
   scan: EbayBinScanResult | null
   auctionScan: EbayBinScanResult | null
+  savedResults: { observedAt: string; listingCount: number } | null
   ebayStatus: EbayStatus | null
   fanaticsStatus: FanaticsCollectStatus | null
   loading: boolean
@@ -6416,12 +6468,34 @@ function BinRadar({
   onScanFanaticsWide: () => void
   resultsRef: RefObject<HTMLDivElement | null>
 }) {
+  const [showAllBinResults, setShowAllBinResults] = useState(false)
+  const [showAllAuctionResults, setShowAllAuctionResults] = useState(false)
+  const [compactResultPreview, setCompactResultPreview] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 720px)').matches : false,
+  )
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 720px)')
+    const sync = () => setCompactResultPreview(media.matches)
+    sync()
+    media.addEventListener('change', sync)
+    return () => media.removeEventListener('change', sync)
+  }, [])
   const ebayConfigured = Boolean(ebayStatus?.configured)
   const fanaticsTargetedConfigured = Boolean(fanaticsStatus?.targetedSearch?.configured)
-  const fanaticsWideConfigured = Boolean(fanaticsStatus?.wideScan?.configured)
+  const fanaticsFeedConfigured = Boolean(fanaticsStatus?.wideScan?.configured)
+  const fanaticsWideConfigured = fanaticsFeedConfigured || fanaticsTargetedConfigured
   const targetedConfigured = ebayConfigured || fanaticsTargetedConfigured
-  const configured = targetedConfigured || fanaticsWideConfigured
-  const latestFetchedAt = scan?.fetchedAt ? new Date(scan.fetchedAt).toLocaleTimeString() : null
+  const configured = ebayConfigured || fanaticsTargetedConfigured || fanaticsWideConfigured
+  const latestFetchedAt = scan?.fetchedAt
+    ? new Date(scan.fetchedAt).toLocaleTimeString()
+    : savedResults?.observedAt
+      ? new Date(savedResults.observedAt).toLocaleString()
+      : null
+  const hasBinResults = Boolean(scan || savedResults)
+  const hasAuctionResults = Boolean(auctionScan || savedResults)
+  const resultPreviewLimit = compactResultPreview ? 5 : 12
+  const renderedBinOpportunities = showAllBinResults ? opportunities : opportunities.slice(0, resultPreviewLimit)
+  const renderedAuctionOpportunities = showAllAuctionResults ? auctionOpportunities : auctionOpportunities.slice(0, resultPreviewLimit)
   const listingMarketplaceCounts = scan ? marketplaceCountsFromListings(scan.listings) : []
   const opportunityMarketplaceCounts = opportunities.length ? marketplaceCountsFromOpportunities(opportunities) : []
   const visibleMarketplaceCounts = opportunityMarketplaceCounts.length ? opportunityMarketplaceCounts : listingMarketplaceCounts
@@ -6461,13 +6535,6 @@ function BinRadar({
     searchMode === 'player' ||
     scopedPlayerCount > 0
   const rateLimited = ebayRateLimitMessage(error)
-  const browseCacheHours = Math.round((ebayStatus?.cache?.fixedPriceTtlSeconds ?? 0) / 3600)
-  const browseCacheLabel =
-    ebayStatus?.cache?.enabled && browseCacheHours > 0
-      ? `${browseCacheHours}h Browse cache`
-      : ebayStatus?.cache?.enabled
-        ? 'Browse cache on'
-        : 'Browse cache off'
   const busy = loading || auctionLoading
   const canScan = targetedConfigured && setCount > 0 && hasPlayerUniverse && hasFocus && hasTargetQueue && !busy && !modelLoading
   const canScanBaseAutos = targetedConfigured && setCount > 0 && hasPlayerUniverse && hasTargetQueue && !busy && !modelLoading
@@ -6478,25 +6545,25 @@ function BinRadar({
   const canScanFanaticsWide = fanaticsWideConfigured && setCount > 0 && hasPlayerUniverse && !busy && !modelLoading
   const queueWaitingLabel =
     playerScope === 'value-25' ? 'Value board waiting' : playerScope === 'prospect-100' ? 'Top 100 waiting' : 'Target 50 waiting'
-  let readinessLabel = 'Ready'
-  if (!configured) readinessLabel = 'eBay offline'
-  else if (setCount === 0) readinessLabel = 'Model pending'
-  else if (!hasPlayerUniverse) readinessLabel = 'Player list needed'
+  let readinessLabel = 'Ready to search'
+  if (!configured) readinessLabel = 'Marketplace unavailable'
+  else if (setCount === 0) readinessLabel = 'Prices loading'
+  else if (!hasPlayerUniverse) readinessLabel = 'Players loading'
   else if (!hasTargetQueue) readinessLabel = queueWaitingLabel
   else if (!hasFocus) readinessLabel = searchMode === 'player' ? 'Enter player' : 'Enter variation'
 
-  let scanButtonLabel = 'Scan Live Market'
-  if (loading || auctionLoading) scanButtonLabel = 'Scanning'
-  else if (isBaseAutoMode) scanButtonLabel = 'Scan Base Market'
-  else if (isLowSerialMode) scanButtonLabel = 'Scan Low Serial'
-  else if (isSuperfractorMode) scanButtonLabel = 'Scan Superfractors'
-  else if (modelLoading) scanButtonLabel = 'Model loading'
-  else if (rateLimited && !scan) scanButtonLabel = 'Retry Scan'
-  else if (!configured) scanButtonLabel = 'eBay offline'
-  else if (setCount === 0 || !hasPlayerUniverse) scanButtonLabel = 'Player list needed'
+  let scanButtonLabel = 'Search live listings'
+  if (loading || auctionLoading) scanButtonLabel = 'Searching'
+  else if (isBaseAutoMode) scanButtonLabel = 'Search base autographs'
+  else if (isLowSerialMode) scanButtonLabel = 'Search low-numbered cards'
+  else if (isSuperfractorMode) scanButtonLabel = 'Search Superfractors'
+  else if (modelLoading) scanButtonLabel = 'Prices loading'
+  else if (rateLimited && !scan) scanButtonLabel = 'Try search again'
+  else if (!configured) scanButtonLabel = 'Marketplace unavailable'
+  else if (setCount === 0 || !hasPlayerUniverse) scanButtonLabel = 'Players loading'
   else if (!hasTargetQueue) scanButtonLabel = queueWaitingLabel
   else if (!hasFocus) scanButtonLabel = searchMode === 'player' ? 'Enter player' : 'Enter variation'
-  const auctionButtonLabel = auctionLoading ? 'Scanning auctions' : modelLoading ? 'Model loading' : ebayConfigured ? 'Auctions only' : 'eBay offline'
+  const auctionButtonLabel = auctionLoading ? 'Searching auctions' : modelLoading ? 'Prices loading' : ebayConfigured ? 'Search auctions only' : 'eBay unavailable'
   const focusPlaceholder = searchMode === 'player' ? 'Eli Willits' : 'Select variation'
   const scopeLabel =
     playerScope === 'value-25'
@@ -6540,7 +6607,7 @@ function BinRadar({
           <Radio size={18} />
           <div>
             <h2>Live Deal Scanner</h2>
-            <span>{selectedSetLabel} active listings compared against modeled value</span>
+            <span>Active marketplace listings compared with Backstop price estimates</span>
           </div>
         </div>
         <div className="bin-radar-pills">
@@ -6550,29 +6617,20 @@ function BinRadar({
               ? 'eBay + Fanatics'
               : ebayConfigured
                 ? 'eBay live'
-                : fanaticsWideConfigured
-                  ? 'Fanatics authorized feed'
+                : fanaticsFeedConfigured
+                  ? 'Fanatics full inventory'
                   : fanaticsTargetedConfigured
-                    ? 'Fanatics targeted search'
+                    ? 'Fanatics full checklist search'
                     : 'Marketplace unavailable'}
           </span>
-          {configured ? <span className={ebayStatus?.cache?.enabled ? 'connected' : 'offline'}>{browseCacheLabel}</span> : null}
           <span className={hasPlayerUniverse ? 'connected' : 'offline'}>{readinessLabel}</span>
-          <span>Raw + 9+ slabs</span>
           <span>{selectedSetPill}</span>
           <span>{playerCount.toLocaleString()} players</span>
           <span>
-            {searchMode === 'checklist'
-              ? 'Checklist scan'
-              : isBaseAutoMode
-                ? 'Base auto scan'
-                : isLowSerialMode
-                  ? 'Low serial scan'
-                  : isSuperfractorMode
-                    ? 'Superfractor scan'
-                    : `${searchMode}: ${trimmedSearchTerm || 'focus needed'}`}
+            {savedResults && !scan
+              ? `${savedResults.listingCount.toLocaleString()} saved listings`
+              : `${listingCount.toLocaleString()} BINs`}
           </span>
-          <span>{listingCount.toLocaleString()} BINs</span>
           {visibleMarketplaceCounts.map((provider) => (
             <span key={provider.label}>
               {provider.label}: {provider.count.toLocaleString()}
@@ -6580,16 +6638,16 @@ function BinRadar({
           ))}
           <span>{auctionListingCount.toLocaleString()} auctions</span>
           {hiddenListingCount > 0 ? <span>{hiddenListingCount.toLocaleString()} hidden rejects</span> : null}
-          <span>{scan ? `${opportunities.length.toLocaleString()} candidates` : 'No scan yet'}</span>
-          {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
+          <span>{hasBinResults ? `${opportunities.length.toLocaleString()} candidates` : 'No search yet'}</span>
+          {latestFetchedAt ? <span>{savedResults && !scan ? 'Saved' : 'Searched'} {latestFetchedAt}</span> : null}
         </div>
       </div>
 
       <div className="bin-preset-head">
         <div>
-          <span>Recommended</span>
-          <strong>Scan the strongest value signals first</strong>
-          <small>Checks active BINs and auctions for the 25 best rank-to-price gaps.</small>
+          <span>Recommended first step</span>
+          <strong>Find listings for the strongest values</strong>
+          <small>Searches Buy It Now listings and auctions for the 25 highest-scoring players.</small>
         </div>
       </div>
       <div className="bin-preset-strip" aria-label="High value scan presets">
@@ -6598,47 +6656,57 @@ function BinRadar({
           type="button"
           onClick={onScanFanaticsWide}
           disabled={!canScanFanaticsWide}
-          title={fanaticsStatus?.wideScan?.message}
+          title={
+            fanaticsFeedConfigured
+              ? fanaticsStatus?.wideScan?.message
+              : fanaticsTargetedConfigured
+                ? 'Search every loaded checklist through the authorized Fanatics search connection.'
+                : fanaticsStatus?.message
+          }
         >
           <ScanSearch size={17} />
           <span>
             <strong>Wide Fanatics sweep</strong>
-            <small>{fanaticsWideConfigured ? `All ${playerCount.toLocaleString()} loaded player lanes` : 'Requires approved Fanatics data access'}</small>
+            <small>
+              {fanaticsWideConfigured
+                ? `${playerCount.toLocaleString()} loaded player lanes · cached 24h`
+                : 'Requires approved Fanatics data access'}
+            </small>
           </span>
         </button>
         <button className="preset-scan-card primary-preset" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
           <Brain size={17} />
           <span>
-            <strong>Scan top values</strong>
-            <small>{valuePlayerCount.toLocaleString()} ranked targets</small>
+            <strong>Find top value listings</strong>
+            <small>{valuePlayerCount.toLocaleString()} players ready</small>
           </span>
         </button>
         <button className="preset-scan-card" type="button" onClick={onScanTopProspects} disabled={!canScanTopProspects}>
           <BookOpenCheck size={17} />
           <span>
-            <strong>Top 100 prospects</strong>
-            <small>rank-first scan</small>
+            <strong>Top-ranked prospects</strong>
+            <small>Search up to 100 players</small>
           </span>
         </button>
         <button className="preset-scan-card" type="button" onClick={onScanBaseAutos} disabled={!canScanBaseAutos}>
           <Database size={17} />
           <span>
-            <strong>Base autos</strong>
-            <small>sharpest model lane</small>
+            <strong>Base autographs</strong>
+            <small>Unnumbered cards only</small>
           </span>
         </button>
         <button className="preset-scan-card" type="button" onClick={onScanLowSerial} disabled={!canScanLowSerial}>
           <Sigma size={17} />
           <span>
-            <strong>Low serial</strong>
-            <small>/99 and lower only</small>
+            <strong>Cards /99 or lower</strong>
+            <small>Numbered parallels only</small>
           </span>
         </button>
         <button className="preset-scan-card" type="button" onClick={onScanSuperfractors} disabled={!canScanSuperfractors}>
           <Gem size={17} />
           <span>
-            <strong>Superfractors</strong>
-            <small>Bowman /1 watch</small>
+            <strong>Superfractors /1</strong>
+            <small>One-of-one listings</small>
           </span>
         </button>
       </div>
@@ -6655,9 +6723,9 @@ function BinRadar({
         <summary>
           <span>
             <SlidersHorizontal size={16} />
-            Build a custom scan
+            Create a custom search
           </span>
-          <small>Choose a set, player, parallel, or price rule</small>
+          <small>Choose a set, player, parallel, or minimum price</small>
         </summary>
       <div className="bin-control-board" aria-label="Custom live-market scan setup">
         <div className="bin-control-group">
@@ -6826,17 +6894,32 @@ function BinRadar({
       </div>
       </details>
 
-      <div ref={resultsRef} className="bin-results-anchor" tabIndex={-1} aria-label="Scan results" />
+      <div
+        ref={resultsRef}
+        className="bin-results-anchor"
+        tabIndex={-1}
+        aria-label="Live listing results"
+        aria-busy={busy}
+        aria-live="polite"
+      >
+        <span className="sr-only">
+          {busy
+            ? 'Searching live listings.'
+            : hasBinResults
+              ? `${opportunities.length.toLocaleString()} Buy It Now candidates and ${auctionOpportunities.length.toLocaleString()} auction candidates ready.`
+              : 'No live listing search has run yet.'}
+        </span>
+      </div>
 
       {error ? (
-        <div className="bin-radar-alert">
+        <div className="bin-radar-alert" role="alert">
           <ShieldCheck size={16} />
           <span>{error}</span>
         </div>
       ) : null}
 
       {auctionError ? (
-        <div className="bin-radar-alert">
+        <div className="bin-radar-alert" role="alert">
           <ShieldCheck size={16} />
           <span>{auctionError}</span>
         </div>
@@ -6846,7 +6929,7 @@ function BinRadar({
         <div className="bin-radar-alert bin-radar-alert-success">
           <Ban size={16} />
           <span>
-            Rejected: {lastRejectedListing.playerName || 'listing'}{lastRejectedListing.title ? ` / ${lastRejectedListing.title}` : ''}
+            Hidden from future searches: {lastRejectedListing.playerName || 'listing'}{lastRejectedListing.title ? ` / ${lastRejectedListing.title}` : ''}
           </span>
           <button className="inline-undo-button" type="button" onClick={onUndoRejectListing}>
             <Undo2 size={14} />
@@ -6872,8 +6955,8 @@ function BinRadar({
         <div className="bin-empty-state">
           <KeyRound size={24} />
           <div>
-            <strong>eBay production keys are missing.</strong>
-            <span>Browse API access is required before live BINs can be priced.</span>
+            <strong>Live marketplace search is unavailable.</strong>
+            <span>Price estimates are still available. Connection details are in Data Health.</span>
           </div>
         </div>
       ) : !hasPlayerUniverse ? (
@@ -6884,7 +6967,7 @@ function BinRadar({
             <span>Public multiples are present, but BIN scanning needs checklist player names for the selected set scope.</span>
           </div>
         </div>
-      ) : error && !scan ? (
+      ) : error && !hasBinResults ? (
         <div className={`bin-empty-state ${rateLimited ? 'muted' : 'blocked'}`}>
           <ShieldCheck size={24} />
           <div>
@@ -6896,11 +6979,11 @@ function BinRadar({
             </span>
           </div>
         </div>
-      ) : !scan ? (
+      ) : !hasBinResults ? (
         <div className="bin-empty-state ready">
           <Radio size={24} />
           <div>
-            <strong>Ready to scan active BINs.</strong>
+            <strong>Ready to search live listings.</strong>
             <span>{scanCopy}</span>
           </div>
         </div>
@@ -6908,9 +6991,9 @@ function BinRadar({
         <div className="bin-empty-state muted">
           <Radio size={24} />
           <div>
-            <strong>No BINs cleared the model window.</strong>
+            <strong>No Buy It Now listings matched this range.</strong>
             <span>
-              {listingCount.toLocaleString()} active listings reviewed; none were priced at or within {LIVE_MODEL_WINDOW_LABEL} above modeled value.
+              {listingCount.toLocaleString()} active listings reviewed; none were at or below the search ceiling.
             </span>
           </div>
         </div>
@@ -6919,12 +7002,12 @@ function BinRadar({
           <div className="bin-opportunity-head">
             <span>Rank</span>
             <span>Listing</span>
-            <span>All In</span>
-            <span>Model</span>
-            <span>Spread</span>
-            <span>Signal</span>
+            <span>Total cost</span>
+            <span>Estimate</span>
+            <span>Difference</span>
+            <span>Next step</span>
           </div>
-          {opportunities.map((opportunity, index) => {
+          {renderedBinOpportunities.map((opportunity, index) => {
             const sts = opportunityStsContext(opportunity)
             const convictionScore = binConvictionScore(opportunity, sts)
             const gradingLabel = listingGradingLabel(opportunity.listing)
@@ -6982,7 +7065,7 @@ function BinRadar({
                 </div>
                 <div className="bin-money-cell">
                   <strong>{money(opportunity.listing.allInPrice)}</strong>
-                  <span>BIN + ship</span>
+                  <span>Total cost</span>
                 </div>
                 <div className="bin-money-cell">
                   <strong>{money(opportunity.fairValue)}</strong>
@@ -6993,7 +7076,7 @@ function BinRadar({
                 </div>
                 <div className={`bin-money-cell ${opportunity.edgeDollars >= 0 ? 'edge' : 'near-model'}`}>
                   <strong>{money(opportunity.edgeDollars)}</strong>
-                  <span>{percent(opportunity.expectedRoiPct)} model edge</span>
+                  <span>{percent(opportunity.expectedRoiPct)} estimated margin</span>
                 </div>
                 <div className="bin-signal-cell">
                   <span>{opportunity.action}</span>
@@ -7010,16 +7093,23 @@ function BinRadar({
                     title="Hide this incorrect listing from future BIN runs"
                   >
                     <Ban size={14} />
-                    Reject
+                    Hide as incorrect
                   </button>
                 </div>
               </article>
             )
           })}
+          {opportunities.length > resultPreviewLimit ? (
+            <button className="results-expand-button" type="button" onClick={() => setShowAllBinResults((current) => !current)}>
+              {showAllBinResults
+                ? 'Show fewer Buy It Now listings'
+                : `Show ${Math.min(opportunities.length - resultPreviewLimit, opportunities.length).toLocaleString()} more Buy It Now listings`}
+            </button>
+          ) : null}
         </div>
       )}
 
-      {auctionScan || auctionLoading || auctionError ? (
+      {hasAuctionResults || auctionLoading || auctionError ? (
         <div className="market-radar-subsection">
           <div className="market-radar-subsection-head">
             <div>
@@ -7029,8 +7119,8 @@ function BinRadar({
             </div>
             <div className="bin-radar-pills">
               <span>{auctionListingCount.toLocaleString()} auctions</span>
-              <span>{auctionScan ? `${auctionOpportunities.length.toLocaleString()} inside window` : auctionLoading ? 'Scanning' : 'No scan yet'}</span>
-              {auctionScan?.fetchedAt ? <span>Scanned {new Date(auctionScan.fetchedAt).toLocaleTimeString()}</span> : null}
+              <span>{hasAuctionResults ? `${auctionOpportunities.length.toLocaleString()} inside window` : auctionLoading ? 'Searching' : 'No search yet'}</span>
+              {auctionScan?.fetchedAt ? <span>Searched {new Date(auctionScan.fetchedAt).toLocaleTimeString()}</span> : null}
             </div>
           </div>
 
@@ -7063,7 +7153,7 @@ function BinRadar({
                 <span>Ends</span>
                 <span>Signal</span>
               </div>
-              {auctionOpportunities.map((opportunity, index) => {
+              {renderedAuctionOpportunities.map((opportunity, index) => {
                 const sts = opportunityStsContext(opportunity)
                 const convictionScore = binConvictionScore(opportunity, sts)
                 const gradingLabel = listingGradingLabel(opportunity.listing)
@@ -7124,12 +7214,19 @@ function BinRadar({
                         title="Hide this incorrect listing from future auction runs"
                       >
                         <Ban size={14} />
-                        Reject
+                        Hide as incorrect
                       </button>
                     </div>
                   </article>
                 )
               })}
+              {auctionOpportunities.length > resultPreviewLimit ? (
+                <button className="results-expand-button" type="button" onClick={() => setShowAllAuctionResults((current) => !current)}>
+                  {showAllAuctionResults
+                    ? 'Show fewer auctions'
+                    : `Show ${Math.min(auctionOpportunities.length - resultPreviewLimit, auctionOpportunities.length).toLocaleString()} more auctions`}
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -7293,27 +7390,25 @@ function LiveMarketMap({
   }
 
   return (
-    <section className={`live-market-map ${compact ? 'compact' : ''} ${dots.length ? 'has-dots' : 'no-dots'}`} aria-label="Live market opportunity map">
+    <section className={`live-market-map ${compact ? 'compact' : ''} ${dots.length ? 'has-dots' : 'no-dots'}`} aria-label="Live listing comparison">
       <div className="live-market-map-head">
         <div>
-          <span>{compact ? 'Scan Chart' : 'Live Market Map'}</span>
+          <span>{compact ? 'Listing chart' : 'Listing comparison'}</span>
           <h2>
-            {compact
-              ? activeBuyDots.length
-                ? `${activeBuyDots.length.toLocaleString()} buying windows`
-                : `${dots.length.toLocaleString()} live listings`
-              : `${dots.length.toLocaleString()} live dots vs model`}
+            {activeBuyDots.length
+              ? `${activeBuyDots.length.toLocaleString()} buying windows`
+              : `${dots.length.toLocaleString()} live listings compared`}
           </h2>
           <small>
             {compact
-              ? 'Ranked by all-in price against modeled value.'
-              : 'Green dots above the fair-value line are active buying opportunities; focus card checks the top dot against recent sold comps.'}
+              ? 'Ranked by total cost compared with the price estimate.'
+              : 'Green points above the estimate line cost less than their modeled value. Review recent sold sales before buying.'}
           </small>
         </div>
         <div className="live-market-map-kpis">
-          <span>{activeBuyDots.length.toLocaleString()} buy dots</span>
-          {activeBuyDots.length ? <span>Median edge {money(medianBuySpread)} / {percent(medianBuyRoi)}</span> : null}
-          <span>{binOpportunities.length.toLocaleString()} BINs</span>
+          <span>{activeBuyDots.length.toLocaleString()} below estimate</span>
+          {activeBuyDots.length ? <span>Median difference {money(medianBuySpread)} / {percent(medianBuyRoi)}</span> : null}
+          <span>{binOpportunities.length.toLocaleString()} Buy It Now</span>
           {liveMarketplaceCounts.map((provider) => (
             <span key={provider.label}>
               {provider.label}: {provider.count.toLocaleString()}
@@ -7329,8 +7424,8 @@ function LiveMarketMap({
         <div className="bin-empty-state ready live-map-empty">
           <Radio size={24} />
           <div>
-            <strong>Run a BIN or auction scan to light up the market map.</strong>
-            <span>Each fresh scan is cached briefly, scored against the model, and kept separate from permanent sold comps.</span>
+            <strong>Search Buy It Now listings or auctions to compare the market.</strong>
+            <span>Results are compared with price estimates and kept separate from completed sales.</span>
           </div>
         </div>
       ) : dots.length === 0 ? (
@@ -7366,15 +7461,15 @@ function LiveMarketMap({
                 </span>
                 <span className="live-mobile-money">
                   <strong>{money(opportunity.edgeDollars)}</strong>
-                  <small>edge</small>
+                  <small>difference</small>
                 </span>
                 <span className="live-mobile-metrics">
                   <b>{money(opportunity.listing.allInPrice)}</b>
                   <small>ask</small>
                   <b>{money(opportunity.fairValue)}</b>
-                  <small>model</small>
+                  <small>estimate</small>
                   <b>{percent(opportunity.expectedRoiPct)}</b>
-                  <small>Model edge</small>
+                  <small>Estimated margin</small>
                 </span>
               </a>
             ))}
@@ -7384,14 +7479,14 @@ function LiveMarketMap({
           <div className="live-map-chart-shell">
             <div className="live-map-chart-wrap">
               <div className="live-map-axis-copy">
-                <span>X: all-in listing price</span>
-                <span>Y: modeled value</span>
+                <span>X: total listing cost</span>
+                <span>Y: price estimate</span>
               </div>
               <svg
                 className="live-opportunity-chart"
                 viewBox={`0 0 ${chart.width} ${chart.height}`}
                 role="img"
-                aria-label="Live listings plotted by all-in price on the horizontal axis and model value on the vertical axis"
+                aria-label="Live listings plotted by total cost on the horizontal axis and price estimate on the vertical axis"
                 onPointerMove={handleChartPointerMove}
                 onMouseMove={handleChartMouseMove}
                 onPointerLeave={() => setHoveredDot(null)}
@@ -7420,10 +7515,10 @@ function LiveMarketMap({
               y2={yPrice(maxPrice)}
             />
             <text className="live-map-zone-label buy" x={chart.left + 12} y={chart.top + 18}>
-              under model
+              below estimate
             </text>
             <text className="live-map-zone-label rich" x={chart.width - chart.right - 12} y={chart.height - chart.bottom - 12}>
-              at / above model
+              at / above estimate
             </text>
             <text
               className="live-map-diagonal-label"
@@ -7824,24 +7919,28 @@ function CaseHitLab({
         <div className="section-title">
           <Gem size={18} />
           <div>
-            <h2>Case Hit Lab</h2>
-            <span>2026 Bowman rare inserts, compared against comps and Bowman 1st Auto peer pricing</span>
+            <h2>Rare Insert Finder</h2>
+            <span>2026 Bowman rare inserts compared with active asking prices and Bowman autograph tiers</span>
           </div>
         </div>
         <div className="bin-radar-pills">
           <span className={configured ? 'connected' : 'offline'}>
             {configured ? <Wifi size={14} /> : <WifiOff size={14} />}
-            {configured ? 'eBay only' : 'eBay keys needed'}
+            {configured ? 'eBay listings' : 'Marketplace unavailable'}
           </span>
           <span>{activeChecklistSize.toLocaleString()} cards</span>
           <span>{selectedFamily ? `${selectedFamily.printRun.toLocaleString()} est. run` : `${CASE_HIT_TOTAL_CARDS} total checklist`}</span>
           <span>{scan ? `${scan.listings.length.toLocaleString()} mapped` : 'No scan yet'}</span>
-          <span>{scan ? `${positiveEdges.toLocaleString()} ask edges` : 'Ask model pending'}</span>
-          <span>{scan ? `${relativeEdges.toLocaleString()} value tiers` : 'Relative value pending'}</span>
-          <span>{scan ? `${autoLensCount.toLocaleString()} auto lenses` : 'Auto ruler pending'}</span>
+          <span>{scan ? `${positiveEdges.toLocaleString()} below estimate` : 'Price comparison pending'}</span>
+          <span>{scan ? `${relativeEdges.toLocaleString()} value tiers` : 'Value range pending'}</span>
+          <span>{scan ? `${autoLensCount.toLocaleString()} autograph comparisons` : 'Autograph comparison pending'}</span>
           {latestFetchedAt ? <span>Scanned {latestFetchedAt}</span> : null}
         </div>
       </div>
+
+      <p className="case-hit-evidence-note">
+        These estimates use active listings, not completed sales. Treat them as a comparison range, not a confirmed market price.
+      </p>
 
       <div className="bin-radar-controls">
         <label className="bin-control">
@@ -7894,16 +7993,16 @@ function CaseHitLab({
 
       <div className="case-hit-lens-board">
         <div>
-          <span>Price-to-Tier Map</span>
-          <strong>List price maps to the player's Bowman auto ladder</strong>
+          <span>Compare with autographs</span>
+          <strong>See where the asking price sits against the player’s Bowman autograph range</strong>
         </div>
         <div>
-          <span>Family Lanes</span>
-          <strong>Patchwork, Anime, Kanji, Spotlights, Crystallized, and Final Draft price separately</strong>
+          <span>Compare like with like</span>
+          <strong>Patchwork, Anime, Kanji, Spotlights, Crystallized, and Final Draft are priced separately</strong>
         </div>
         <div>
-          <span>Scarcity Context</span>
-          <strong>Estimated print runs help orient value when direct comps are thin</strong>
+          <span>Use scarcity as context</span>
+          <strong>Estimated print runs help orient value when completed-sales evidence is thin</strong>
         </div>
       </div>
 
@@ -8186,6 +8285,7 @@ function SealedWaxDesk({
   error: string | null
   onScan: () => void
 }) {
+  const [evidenceOpen, setEvidenceOpen] = useState(model.marketPrice <= 0)
   const daveSearchUrl = `https://www.dacardworld.com/search?Search=${encodeURIComponent(query || 'sealed wax')}`
   const scannedListings = scan?.listings ?? []
   const topOpportunities = opportunities.slice(0, 48)
@@ -8207,7 +8307,7 @@ function SealedWaxDesk({
     !loading &&
     (includeEbay || includeFanatics || includeDaveAdams || daveAdamsText.trim().length > 0)
   const scanButtonText = !hasMarketAnchor
-    ? 'Add Target or Comps'
+    ? 'Add target or recent sales'
     : loading
       ? `Scanning ${selectedFormat}`
       : `Scan ${selectedFormat}`
@@ -8218,11 +8318,11 @@ function SealedWaxDesk({
         <div>
           <span className="workflow-kicker">
             <Package size={14} />
-            Sealed Wax Desk
+            Sealed Boxes
           </span>
-          <h2>Source Bowman wax against fresh comps.</h2>
+          <h2>Compare sealed-box listings with a price target.</h2>
           <p>
-            Paste recent Market Movers box sales, pick a Bowman wax product, then scan live marketplaces against a recency-weighted comp anchor.
+            Choose a Bowman box, enter what you would pay or add recent sales, then search live marketplaces.
           </p>
         </div>
         <div className="wax-command-metrics" aria-label="Sealed wax status">
@@ -8262,12 +8362,12 @@ function SealedWaxDesk({
         </div>
 
         <label className="wax-step wax-anchor-step">
-          <span>2 / Willing to pay</span>
+          <span>2 / Target price</span>
           <input
             value={manualMarketInput}
             onChange={(event) => onManualMarketInputChange(event.target.value)}
             inputMode="decimal"
-            placeholder="Optional target"
+            placeholder="Enter target price"
             aria-label="Price you are willing to pay"
           />
           <small>
@@ -8275,7 +8375,7 @@ function SealedWaxDesk({
               ? `Your target; comp anchor ${model.timeWeightedAverage ? money(model.timeWeightedAverage) : '--'}`
               : model.source === 'comps'
                 ? `${model.recentCompCount} recent / ${model.compCount.toLocaleString()} matching comps`
-                : 'Paste comps below or enter a target'}
+                : 'Enter a target or add recent sales below'}
           </small>
         </label>
 
@@ -8327,7 +8427,11 @@ function SealedWaxDesk({
         ) : null}
       </section>
 
-      <details className="wax-evidence-details" open={comps.length > 0 || daveAdamsText.trim().length > 0}>
+      <details
+        className="wax-evidence-details"
+        open={evidenceOpen}
+        onToggle={(event) => setEvidenceOpen(event.currentTarget.open)}
+      >
         <summary>
           <span>
             <BarChart3 size={16} />
@@ -8540,6 +8644,17 @@ function SealedWaxDesk({
   )
 }
 
+const FIRST_VISIT_GUIDE_KEY = 'backstop:first-visit-guide-dismissed:v1'
+
+function shouldShowFirstVisitGuide() {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(FIRST_VISIT_GUIDE_KEY) !== 'true'
+  } catch {
+    return true
+  }
+}
+
 function App() {
   const [releaseOptions, setReleaseOptions] = useState<ReleaseOption[]>(FALLBACK_RELEASE_OPTIONS)
   const [catalogLoading, setCatalogLoading] = useState(false)
@@ -8549,6 +8664,7 @@ function App() {
   const [checklistError, setChecklistError] = useState<string | null>(null)
   const [checklistProgress, setChecklistProgress] = useState<{ loaded: number; total: number } | null>(null)
   const [query, setQuery] = useState('')
+  const [priceQuery, setPriceQuery] = useState('')
   const [releaseFilter, setReleaseFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all')
   const [teamFilter, setTeamFilter] = useState<TeamFilter>('all')
@@ -8559,6 +8675,7 @@ function App() {
   const [workMode, setWorkMode] = useState<WorkMode>(() =>
     typeof window === 'undefined' ? 'lookup' : workModeFromPath(window.location.pathname),
   )
+  const [showFirstVisitGuide, setShowFirstVisitGuide] = useState(shouldShowFirstVisitGuide)
   const [appRoute, setAppRoute] = useState<AppRoute>(() =>
     typeof window === 'undefined' ? 'desk' : appRouteFromPath(window.location.pathname),
   )
@@ -8629,6 +8746,8 @@ function App() {
   const [marlinsSuperfractorAuctionScan, setMarlinsSuperfractorAuctionScan] = useState<EbayBinScanResult | null>(null)
   const [marlinsSuperfractorLoading, setMarlinsSuperfractorLoading] = useState(false)
   const [marlinsSuperfractorError, setMarlinsSuperfractorError] = useState<string | null>(null)
+  const [, setRankingsLoading] = useState(true)
+  const [rankingsSeeded, setRankingsSeeded] = useState(false)
   const [rankingsRefreshing, setRankingsRefreshing] = useState(false)
   const [compsRefreshing, setCompsRefreshing] = useState(false)
   const [compRefreshState, setCompRefreshState] = useState<{
@@ -8661,7 +8780,6 @@ function App() {
       const target = dealResultsRef.current
       if (!target) return
       target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      target.focus({ preventScroll: true })
     }, 120)
   }, [])
 
@@ -8686,6 +8804,20 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
+  const dismissFirstVisitGuide = useCallback(() => {
+    setShowFirstVisitGuide(false)
+    try {
+      window.localStorage.setItem(FIRST_VISIT_GUIDE_KEY, 'true')
+    } catch {
+      // The guide can still be dismissed for this session when storage is unavailable.
+    }
+  }, [])
+
+  const startFirstVisitTask = useCallback((mode: WorkMode) => {
+    dismissFirstVisitGuide()
+    if (mode !== 'lookup') navigateWorkMode(mode)
+  }, [dismissFirstVisitGuide, navigateWorkMode])
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     const syncRoute = () => {
@@ -8695,6 +8827,11 @@ function App() {
     window.addEventListener('popstate', syncRoute)
     return () => window.removeEventListener('popstate', syncRoute)
   }, [])
+
+  useEffect(() => {
+    const pageTitle = appRoute === 'marlins' ? 'Marlins Market' : WORK_MODE_TITLES[workMode]
+    document.title = `${pageTitle} · Backstop Card Finder`
+  }, [appRoute, workMode])
 
   const loadChecklistCatalog = useCallback(async (signal?: AbortSignal) => {
     setCatalogLoading(true)
@@ -8741,12 +8878,6 @@ function App() {
             activeChecklistPlayers: release.activeChecklistPlayers,
             signal: controller.signal,
           })
-          if (checklistRequestIdRef.current === requestId && !controller.signal.aborted) {
-            setChecklistModels((current) => {
-              const valueKey = checklistModelKey(value)
-              return sortChecklistModels([...current.filter((model) => checklistModelKey(model) !== valueKey), value])
-            })
-          }
           return { status: 'fulfilled' as const, value }
         } catch (reason) {
           return { status: 'rejected' as const, reason }
@@ -8766,7 +8897,12 @@ function App() {
         throw firstError?.status === 'rejected' ? firstError.reason : new Error('Model load failed')
       }
 
-      setChecklistModels(models)
+      setChecklistModels((current) => {
+        if (models.length >= releases.length || current.length === 0) return models
+        const merged = new Map(current.map((model) => [checklistModelKey(model), model]))
+        for (const model of models) merged.set(checklistModelKey(model), model)
+        return [...merged.values()]
+      })
       setChecklistError(models.length < releases.length ? `Loaded ${models.length} / ${releases.length} checklist models` : null)
     } catch (modelError) {
       if (checklistRequestIdRef.current !== requestId || controller.signal.aborted) return
@@ -8953,6 +9089,30 @@ function App() {
     const liveMarketController = new AbortController()
     const observabilityController = new AbortController()
     const rankingsController = new AbortController()
+    void fetchStaticChecklistModels({
+      minYear: CHECKLIST_MIN_YEAR,
+      categories: CHECKLIST_CATEGORIES,
+    })
+      .then((models) => {
+        if (active && models.length > 0) {
+          setChecklistModels((current) => (current.length > 0 ? current : models))
+        }
+      })
+      .catch(() => {
+        // Network checklist loading below remains the fallback.
+      })
+    void import('./lib/stsFallback')
+      .then(({ STS_FALLBACK_CSV_INPUTS }) => {
+        if (active && hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)) {
+          setRankingsDatasetVersion((version) => version + 1)
+        }
+      })
+      .catch(() => {
+        // Live rankings loading below remains the fallback.
+      })
+      .finally(() => {
+        if (active) setRankingsSeeded(true)
+      })
     fetchEbayStatus(ebayController.signal)
       .then((status) => {
         if (active) setEbayStatus(status)
@@ -9025,7 +9185,7 @@ function App() {
     fetchRankingsData(rankingsController.signal)
       .then((ranking) => {
         if (!active || rankingsController.signal.aborted) return
-        applyRankingsData(ranking)
+        if (applyRankingsData(ranking)) setRankingsSeeded(true)
         setObservability((current) =>
           current
             ? {
@@ -9036,16 +9196,11 @@ function App() {
             : current,
         )
       })
-      .catch(async () => {
-        if (!active || rankingsController.signal.aborted) return
-        try {
-          const { STS_FALLBACK_CSV_INPUTS } = await import('./lib/stsFallback')
-          if (hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)) {
-            setRankingsDatasetVersion((version) => version + 1)
-          }
-        } catch {
-          // The value board remains usable without ranking enrichment.
-        }
+      .catch(() => {
+        // Bundled rankings above keep the value board usable when the live refresh fails.
+      })
+      .finally(() => {
+        if (active && !rankingsController.signal.aborted) setRankingsLoading(false)
       })
     const modelTimer = window.setTimeout(() => {
       void (async () => {
@@ -9471,18 +9626,21 @@ function App() {
       ).slice(0, AUCTION_RENDER_LIMIT),
     [activeSalesCacheModels, binResultSort, binScoreSettings, selectedBinModels, visibleAuctionListings],
   )
+  const hasCurrentLiveMarketResults = Boolean(binScan || auctionScan)
   const displayedBinOpportunities = useMemo(
-    () => (binScan ? binOpportunities : (visibleCachedLiveMarket?.binOpportunities ?? [])),
-    [binOpportunities, binScan, visibleCachedLiveMarket],
+    () => (hasCurrentLiveMarketResults ? binOpportunities : (visibleCachedLiveMarket?.binOpportunities ?? [])),
+    [binOpportunities, hasCurrentLiveMarketResults, visibleCachedLiveMarket],
   )
   const displayedAuctionOpportunities = useMemo(
-    () => (auctionScan ? auctionOpportunities : (visibleCachedLiveMarket?.auctionOpportunities ?? [])),
-    [auctionOpportunities, auctionScan, visibleCachedLiveMarket],
+    () => (hasCurrentLiveMarketResults ? auctionOpportunities : (visibleCachedLiveMarket?.auctionOpportunities ?? [])),
+    [auctionOpportunities, hasCurrentLiveMarketResults, visibleCachedLiveMarket],
   )
-  const displayedLiveListingCount =
-    (binScan || auctionScan)
-      ? visibleBinListings.length + visibleAuctionListings.length
-      : (displayedBinOpportunities.length + displayedAuctionOpportunities.length)
+  const displayedLiveListingCount = hasCurrentLiveMarketResults
+    ? visibleBinListings.length + visibleAuctionListings.length
+    : (visibleCachedLiveMarket?.listingCount ?? 0)
+  const savedLiveMarketResults = !hasCurrentLiveMarketResults && visibleCachedLiveMarket
+    ? { observedAt: visibleCachedLiveMarket.observedAt, listingCount: visibleCachedLiveMarket.listingCount }
+    : null
   const marlinsRows = useMemo(
     () => sortRows(matrix.rows.filter((row) => rowMatchesTeam(row, MARLINS_TEAM_CODE)), 'dynasty-value'),
     [matrix.rows],
@@ -9594,18 +9752,38 @@ function App() {
     teamFilter !== 'all' ||
     baseSourceFilter !== 'decision-ready' ||
     stsFilter !== 'all'
+  const activeBoardFilterCount = [
+    trimmedQuery.length > 0,
+    releaseFilter !== 'all',
+    categoryFilter !== 'all',
+    teamFilter !== 'all',
+    baseSourceFilter !== 'decision-ready',
+    stsFilter !== 'all',
+    sortMode !== 'dynasty-value',
+  ].filter(Boolean).length
+  const resetBoardView = () => {
+    setQuery('')
+    setReleaseFilter('all')
+    setCategoryFilter('all')
+    setTeamFilter('all')
+    setBaseSourceFilter('decision-ready')
+    setStsFilter('all')
+    setSortMode('dynasty-value')
+    setSelectedRowId(undefined)
+  }
   const leaderboardRenderLimit = hasLeaderboardNarrowing ? FILTERED_LEADERBOARD_RENDER_LIMIT : LEADERBOARD_RENDER_LIMIT
   const renderedRows = useMemo(() => visibleRows.slice(0, leaderboardRenderLimit), [leaderboardRenderLimit, visibleRows])
   const visibleRowRankById = useMemo(
     () => new Map(visibleRows.map((row, index) => [row.id, index + 1] as const)),
     [visibleRows],
   )
-  const selectedRow = visibleRows.find((row) => row.id === selectedRowId) ?? renderedRows[0]
-  const quickPickerRows = useMemo(() => {
-    const rows = visibleRows.slice(0, 80)
-    if (!selectedRow || rows.some((row) => row.id === selectedRow.id)) return rows
-    return [selectedRow, ...rows]
-  }, [selectedRow, visibleRows])
+  const explicitlySelectedRow = hostedAdjustedRows.find((row) => row.id === selectedRowId)
+  const selectedRow = explicitlySelectedRow ?? (workMode === 'price' ? undefined : renderedRows[0])
+  const pricePickerRows = useMemo(() => {
+    const matches = sortRows(filterPricingRows(hostedAdjustedRows, priceQuery).filter(rowHasModel), 'player-asc')
+    if (!explicitlySelectedRow || matches.some((row) => row.id === explicitlySelectedRow.id)) return matches.slice(0, 160)
+    return [explicitlySelectedRow, ...matches.slice(0, 159)]
+  }, [explicitlySelectedRow, hostedAdjustedRows, priceQuery])
 
   useEffect(() => {
     salesCacheRequestRef.current?.abort()
@@ -9665,10 +9843,14 @@ function App() {
       effectiveSelectedRow && selectedRow && effectiveSelectedRow !== selectedRow
         ? renderedRows.map((row) => (row.id === effectiveSelectedRow.id ? effectiveSelectedRow : row))
         : renderedRows
-    if (!effectiveSelectedRow || adjustedRows.some((row) => row.id === effectiveSelectedRow.id)) return adjustedRows
+    if (
+      !effectiveSelectedRow ||
+      adjustedRows.some((row) => row.id === effectiveSelectedRow.id) ||
+      !visibleRows.some((row) => row.id === effectiveSelectedRow.id)
+    ) return adjustedRows
     if (adjustedRows.length < leaderboardRenderLimit) return [...adjustedRows, effectiveSelectedRow]
     return [...adjustedRows.slice(0, Math.max(leaderboardRenderLimit - 1, 0)), effectiveSelectedRow]
-  }, [effectiveSelectedRow, leaderboardRenderLimit, renderedRows, selectedRow])
+  }, [effectiveSelectedRow, leaderboardRenderLimit, renderedRows, selectedRow, visibleRows])
   const teamScanRows = useMemo(
     () => (selectedTeamOption ? visibleRowsForDisplay.filter(rowHasModel).slice(0, TEAM_DEAL_SCAN_LIMIT) : []),
     [selectedTeamOption, visibleRowsForDisplay],
@@ -9719,10 +9901,10 @@ function App() {
   const mathHealth = matrix.totalResolvedCells === 0 ? 'waiting' : openMathItems > 0 ? 'warning' : 'healthy'
   const mathHealthLabel =
     mathHealth === 'waiting'
-      ? 'Math waiting'
+      ? 'Estimates loading'
       : mathHealth === 'warning'
         ? `${matrix.missingBaseRows.toLocaleString()} base gaps / ${matrix.unresolvedMultipliers.toLocaleString()} multiplier gaps`
-        : 'Math clean'
+        : 'All estimates ready'
   const showModelHealth = Boolean(checklistProgress || catalogError || checklistError || matrix.totalResolvedCells === 0)
   const canonicalSourceReady = matrix.totalPricedPlayers > 0
 
@@ -10298,10 +10480,11 @@ function App() {
       setBinError('No checklist models are loaded for the Fanatics wide scan.')
       return
     }
-    if (!fanaticsStatus?.wideScan?.configured) {
+    const feedConfigured = Boolean(fanaticsStatus?.wideScan?.configured)
+    const checklistSearchConfigured = Boolean(fanaticsStatus?.targetedSearch?.configured)
+    if (!feedConfigured && !checklistSearchConfigured) {
       setBinError(
-        fanaticsStatus?.wideScan?.message ??
-          'Fanatics Collect wide scan requires an approved data feed and written data-access permission.',
+        fanaticsStatus?.message ?? 'Fanatics Collect search is not configured.',
       )
       return
     }
@@ -10322,13 +10505,21 @@ function App() {
     setLastRejectedListing(null)
 
     try {
-      const scanResult = await fetchFanaticsCollectWideListings({
-        models: scanModels,
-        minPrice: binMinPrice,
-        maxPages: fanaticsStatus.wideScan.maxPages,
-        signal: controller.signal,
-      })
+      const scanResult = feedConfigured
+        ? await fetchFanaticsCollectWideListings({
+            models: scanModels,
+            minPrice: binMinPrice,
+            maxPages: fanaticsStatus?.wideScan?.maxPages,
+            signal: controller.signal,
+          })
+        : await fetchFanaticsCollectChecklistListings({
+            models: scanModels,
+            minPrice: binMinPrice,
+            limitPerPlayer: 16,
+            signal: controller.signal,
+          })
       if (controller.signal.aborted) return
+
       const visibleScanResult = filterRejectedScanResult(scanResult, rejectedListingKeys)
       setBinListings(scanResult.listings)
       setBinScan(scanResult)
@@ -10342,6 +10533,7 @@ function App() {
         scanSalesCacheModels = activeSalesCacheModels
       }
       if (controller.signal.aborted) return
+
       void saveScoredLiveMarketSnapshot({
         scanType: 'bin',
         scanResult: visibleScanResult,
@@ -10350,7 +10542,7 @@ function App() {
         playerScope: 'all',
         playerNames: [],
         searchMode: 'checklist',
-        searchTerm: 'authorized-fanatics-wide-feed',
+        searchTerm: feedConfigured ? 'authorized-fanatics-wide-feed' : 'authorized-fanatics-checklist-sweep',
         salesCacheModels: scanSalesCacheModels,
       })
     } catch (scanError) {
@@ -10504,7 +10696,9 @@ function App() {
 
     const binProvidersConfigured = Boolean(ebayStatus?.configured || fanaticsStatus?.targetedSearch?.configured)
     if (!binProvidersConfigured) {
-      setBinError(fanaticsStatus?.message ?? ebayStatus?.message ?? 'No authorized live-listing provider is configured.')
+      setBinError(
+        fanaticsStatus?.message ?? ebayStatus?.message ?? 'No authorized live-listing provider is configured.',
+      )
       return
     }
 
@@ -10541,6 +10735,8 @@ function App() {
     const scanModels =
       activePlayerNames.length > 0
         ? modelsContainingPlayerNames(playerLoadedModels, activePlayerNames)
+        : activeSearchMode === 'player'
+          ? modelsMatchingPlayerSearch(playerLoadedModels, activeSearchTerm)
         : namedPlayerScope
         ? playerLoadedModels.filter((model) => (scopedRowsByScanModel.get(checklistModelKey(model))?.length ?? 0) > 0)
         : playerLoadedModels
@@ -10579,7 +10775,9 @@ function App() {
             signal: controller.signal,
           }
           const providers = [
-            ...(ebayStatus?.configured ? [{ label: 'eBay', run: () => fetchEbayBinListings(providerOptions) }] : []),
+            ...(ebayStatus?.configured
+              ? [{ label: 'eBay', run: () => fetchEbayBinListings(providerOptions) }]
+              : []),
             ...(fanaticsStatus?.targetedSearch?.configured
               ? [{ label: 'Fanatics Collect', run: () => fetchFanaticsCollectBinListings(providerOptions) }]
               : []),
@@ -10733,6 +10931,8 @@ function App() {
     const scanModels =
       activePlayerNames.length > 0
         ? modelsContainingPlayerNames(playerLoadedModels, activePlayerNames)
+        : activeSearchMode === 'player'
+          ? modelsMatchingPlayerSearch(playerLoadedModels, activeSearchTerm)
         : namedPlayerScope
         ? playerLoadedModels.filter((model) => (scopedRowsByScanModel.get(checklistModelKey(model))?.length ?? 0) > 0)
         : playerLoadedModels
@@ -10922,12 +11122,15 @@ function App() {
   }
 
   const visibleBoardScanCount = Math.min(BOARD_DEAL_SCAN_LIMIT, playerNamesForPricingRows(renderedRowsForDisplay).length)
+  const boardLoading = checklistModels.length === 0 || !rankingsSeeded
   const primaryBoardScanDisabled =
-    (selectedTeamOption ? teamScanRows.length === 0 : visibleBoardScanCount === 0) || binLoading || auctionLoading
-  const primaryBoardScanLabel = selectedTeamOption ? `Scan ${selectedTeamOption.label}` : 'Scan Top 25'
+    boardLoading || (selectedTeamOption ? teamScanRows.length === 0 : visibleBoardScanCount === 0) || binLoading || auctionLoading
+  const primaryBoardScanLabel = selectedTeamOption ? `Find ${selectedTeamOption.label} listings` : 'Find listings for Top 25'
   const runPrimaryBoardScan = selectedTeamOption ? scanSelectedTeamDeals : scanVisibleBoardDeals
   return (
-    <main className="app-shell valuation-app">
+    <>
+    <a className="skip-link" href="#main-content">Skip to main content</a>
+    <main className="app-shell valuation-app" id="main-content" tabIndex={-1}>
       <section className="workbench-topbar">
         <div className="brand-block">
           <div className="brand-lockup">
@@ -10947,14 +11150,14 @@ function App() {
           </div>
         </div>
 
-        <div className="top-actions">
+        {appRoute === 'desk' && workMode === 'lookup' ? <div className="top-actions">
           <button
             className="primary-button refresh-model-button"
             type="button"
             onClick={() => void refreshChecklistUniverse()}
             disabled={checklistLoading || catalogLoading}
-            aria-label="Refresh market data"
-            title="Refresh market data"
+            aria-label="Refresh price data"
+            title="Refresh price data"
           >
             <RefreshCw size={16} className={checklistLoading ? 'spin' : undefined} />
             {catalogLoading
@@ -10963,19 +11166,19 @@ function App() {
                 ? `Loading ${checklistProgress.loaded}/${checklistProgress.total}`
                 : checklistLoading
                   ? 'Refreshing'
-                  : 'Refresh'}
+                  : 'Update prices'}
           </button>
           <button
             className="ghost-button export-button"
             type="button"
             onClick={() => downloadMatrixCsv(visibleRows)}
-            aria-label="Export valuations"
-            title="Export valuations"
+            aria-label="Export the current value board as CSV"
+            title="Export the current value board as CSV"
           >
             <Download size={16} />
-            Export
+            Export board
           </button>
-        </div>
+        </div> : null}
       </section>
 
       {appRoute === 'desk' ? (
@@ -10985,7 +11188,10 @@ function App() {
           totalRows={matrix.totalPlayers}
           pricedRows={matrix.totalPricedPlayers}
           topBase={topBase}
-          dealCount={displayedBinOpportunities.length + displayedAuctionOpportunities.length}
+          dealCount={
+            displayedBinOpportunities.filter((opportunity) => opportunity.edgeDollars > 0).length +
+            displayedAuctionOpportunities.filter((opportunity) => opportunity.edgeDollars > 0).length
+          }
           fanaticsDealCount={displayedBinOpportunities.filter(
             (opportunity) => opportunity.listing.marketplace === 'fanatics-collect' && opportunity.listing.allInPrice <= opportunity.fairValue,
           ).length}
@@ -10998,16 +11204,15 @@ function App() {
         <section className="status-strip valuation-status" aria-label="Model health">
           <span className={`source-chip ${canonicalSourceReady ? 'connected' : 'offline'}`}>
             <Database size={14} />
-            {canonicalSourceReady ? 'Canonical model active' : 'Loading canonical model'}
+            {canonicalSourceReady ? 'Price data available' : 'Loading price data'}
           </span>
-          <span>{matrix.totalPricedPlayers.toLocaleString()} players priced</span>
-          <span>{matrix.totalResolvedCells.toLocaleString()} card values</span>
+          <span>{matrix.totalPricedPlayers.toLocaleString()} players ready</span>
           <span className={`model-health-chip ${mathHealth}`}>
             <Sigma size={14} />
-            {mathHealth === 'warning' ? `${openMathItems.toLocaleString()} open math items` : mathHealthLabel}
+            {mathHealth === 'warning' ? `${openMathItems.toLocaleString()} estimates need more data` : mathHealthLabel}
           </span>
-          {checklistProgress ? <span>Loading {checklistProgress.loaded.toLocaleString()} / {checklistProgress.total.toLocaleString()}</span> : null}
-          <span>{modelUpdatedAt ? `Updated ${new Date(modelUpdatedAt).toLocaleTimeString()}` : 'Awaiting player bases'}</span>
+          {checklistProgress ? <span>Loading sets {checklistProgress.loaded.toLocaleString()} of {checklistProgress.total.toLocaleString()}</span> : null}
+          <span>{modelUpdatedAt ? `Updated ${new Date(modelUpdatedAt).toLocaleTimeString()}` : 'Waiting for sold-sales data'}</span>
           {catalogError ? <strong>{catalogError}</strong> : null}
           {checklistError ? <strong>{checklistError}</strong> : null}
         </section>
@@ -11064,16 +11269,60 @@ function App() {
       ) : workMode === 'lookup' ? (
         <section className="workbench-layout lookup-workflow" aria-label="Value ranking">
           <div className="valuation-workspace">
+            {showFirstVisitGuide ? (
+              <section className="first-visit-guide" aria-labelledby="first-visit-title">
+                <button
+                  className="first-visit-close"
+                  type="button"
+                  onClick={dismissFirstVisitGuide}
+                  aria-label="Dismiss getting started guide"
+                >
+                  <X size={17} />
+                </button>
+                <div className="first-visit-heading">
+                  <span>New to Backstop?</span>
+                  <h2 id="first-visit-title">Start with what you want to do.</h2>
+                  <p>Backstop helps you spot players worth researching, price a specific card, and check live listings.</p>
+                </div>
+                <div className="first-visit-choices" aria-label="Getting started choices">
+                  <button className="first-visit-choice is-primary" type="button" onClick={() => startFirstVisitTask('lookup')}>
+                    <Search size={19} />
+                    <span>
+                      <strong>Find value</strong>
+                      <small>See players whose rank looks strong for their estimated card price.</small>
+                    </span>
+                  </button>
+                  <button className="first-visit-choice" type="button" onClick={() => startFirstVisitTask('price')}>
+                    <Calculator size={19} />
+                    <span>
+                      <strong>Price a card</strong>
+                      <small>Choose a player, parallel, and grade to build an estimate.</small>
+                    </span>
+                  </button>
+                  <button className="first-visit-choice" type="button" onClick={() => startFirstVisitTask('deals')}>
+                    <Radio size={19} />
+                    <span>
+                      <strong>Check live listings</strong>
+                      <small>Compare marketplace listings with Backstop estimates.</small>
+                    </span>
+                  </button>
+                </div>
+                <p className="first-visit-note">
+                  Scores are research signals, not predictions. You can always return here from <strong>Board</strong>.
+                </p>
+              </section>
+            ) : null}
+
             <div className="lookup-intent-bar">
               <div className="lookup-intent-copy">
-                <span>Top 25 Value Board</span>
+                <span>Value Board · Top 25</span>
                 <strong>
-                  {effectiveSelectedRow && (selectedRowId || trimmedQuery) ? effectiveSelectedRow.playerName : 'Best rank-to-price gaps'}
+                  {effectiveSelectedRow && (selectedRowId || trimmedQuery) ? effectiveSelectedRow.playerName : 'Find undervalued players'}
                 </strong>
                 <small>
                   {effectiveSelectedRow && (selectedRowId || trimmedQuery)
-                    ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} / ${effectiveSelectedRow.currentTeamName ?? 'team unknown'} / ${formatBasePrice(effectiveSelectedRow)} base auto / ${formatStsLine(effectiveSelectedRow) || 'no rank signal'}`
-                    : 'Consensus player rank compared with the latest modeled 1st Bowman base-auto price.'}
+                    ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} · ${effectiveSelectedRow.currentTeamName ?? 'Team unknown'} · ${formatBasePrice(effectiveSelectedRow)} base-auto estimate · ${formatStsLine(effectiveSelectedRow) || 'No ranking yet'}`
+                    : 'We compare player rankings with recent sold prices. A high score is a reason to research—not a guarantee.'}
                 </small>
               </div>
               <label className="lookup-primary-search">
@@ -11081,8 +11330,8 @@ function App() {
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search player, team, set, or variation"
-                  aria-label="Search player, current team, release, or variation"
+                  placeholder="Search player, team, set, or parallel"
+                  aria-label="Search player, current team, release, or parallel"
                 />
               </label>
               <div className="lookup-action-stack">
@@ -11138,7 +11387,7 @@ function App() {
                 </select>
               </label>
               <label className="filter-select">
-                <span>Player pool</span>
+                <span>Players</span>
                 <select value={stsFilter} onChange={(event) => setStsFilter(event.target.value as StsFilter)}>
                   {Object.entries(STS_FILTER_LABELS).map(([filter, label]) => (
                     <option value={filter} key={filter}>
@@ -11186,10 +11435,16 @@ function App() {
                   </label>
                 </div>
               </details>
+              {activeBoardFilterCount > 0 ? (
+                <button className="clear-board-filters" type="button" onClick={resetBoardView}>
+                  <X size={14} />
+                  Clear all ({activeBoardFilterCount})
+                </button>
+              ) : null}
               <div className="row-counts">
                 <div className="deal-count">
                   <strong>{visibleRows.length.toLocaleString()}</strong>
-                  <span>rows</span>
+                  <span>players</span>
                 </div>
                 {visibleRows.length > renderedRows.length ? (
                   <div className="deal-count">
@@ -11199,6 +11454,23 @@ function App() {
                 ) : null}
               </div>
             </div>
+
+            <details className="board-score-guide">
+              <summary>
+                <BookOpenCheck size={15} />
+                How to read the board
+              </summary>
+              <div>
+                <p><strong>Value score</strong> is a 0–100 opportunity signal, not a predicted return.</p>
+                <p><strong>Base-auto estimate</strong> is the modeled value of the unnumbered Bowman Chrome autograph.</p>
+                <p><strong>Price confidence</strong> shows how much recent sold-sales evidence supports that estimate.</p>
+                {!showFirstVisitGuide ? (
+                  <button className="reopen-first-visit" type="button" onClick={() => setShowFirstVisitGuide(true)}>
+                    New here? See how Backstop works
+                  </button>
+                ) : null}
+              </div>
+            </details>
 
             {rankRelaxedForSearch ? (
               <div className="search-filter-note">
@@ -11220,17 +11492,21 @@ function App() {
               }`}
             >
               <Leaderboard
-                rows={renderedRowsForDisplay}
+                rows={boardLoading ? [] : renderedRowsForDisplay}
                 rankById={visibleRowRankById}
-                selectedId={selectedRow?.id}
-                onSelect={setSelectedRowId}
+                selectedId={selectedRowId}
+                onSelect={(rowId) => {
+                  setSelectedRowId(rowId)
+                  navigateWorkMode('price')
+                }}
                 onScanPlayer={scanBinsForLookupRow}
                 onRefreshPlayer={(row) => void handleRefreshPlayerComp(row)}
                 refreshingPlayerId={compRefreshState?.status === 'loading' ? compRefreshState.rowId : null}
-                emptyTitle={checklistLoading ? 'Loading player models...' : trimmedQuery ? 'No modeled card match.' : undefined}
+                selectionLabel="Price card"
+                emptyTitle={boardLoading ? 'Preparing the Value Board…' : trimmedQuery ? 'No modeled card match.' : undefined}
                 emptyText={
-                  checklistLoading
-                    ? 'Building the value board from cached checklists and sold comp evidence.'
+                  boardLoading
+                    ? 'Loading player rankings and sold-price estimates so the board does not reorder under you.'
                     : trimmedQuery
                     ? rankingOnlyMatch
                       ? 'Ranking data exists for this player, but no loaded Bowman card lane has a model yet.'
@@ -11300,17 +11576,17 @@ function App() {
                 <Calculator size={14} />
                 Price My Card
               </span>
-              <strong>{effectiveSelectedRow ? effectiveSelectedRow.playerName : 'Choose a player'}</strong>
+              <h2>{effectiveSelectedRow ? effectiveSelectedRow.playerName : 'Choose a player'}</h2>
               <small>
-                Pick a player, variation, grade, and all-in price. The calculator shows the model, target price, and live-search path without leaving the app.
+                Pick a player, parallel, grade, and total cost. We’ll show the estimate, a safer buy range, and the difference from the seller’s price.
               </small>
               <label className="price-workflow-search">
                 <Search size={18} />
                 <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search player, team, set, or variation"
-                  aria-label="Search player, team, set, or variation for card pricing"
+                  value={priceQuery}
+                  onChange={(event) => setPriceQuery(event.target.value)}
+                  placeholder="Search player or set"
+                  aria-label="Search the full player list for card pricing"
                 />
               </label>
               <div className="price-workflow-actions">
@@ -11328,7 +11604,7 @@ function App() {
             <QuickPriceModule
               row={effectiveSelectedRow}
               onScanPlayer={scanBinsForLookupRow}
-              pickerRows={quickPickerRows}
+              pickerRows={pricePickerRows}
               onPickRow={setSelectedRowId}
               onRefreshPlayer={(row) => void handleRefreshPlayerComp(row)}
               refreshState={compRefreshState}
@@ -11342,14 +11618,15 @@ function App() {
             models={selectedBinModels}
             modelOptions={binModelOptions}
             selectedModelKey={effectiveBinModelKey}
-            opportunities={binOpportunities}
-            auctionOpportunities={auctionOpportunities}
-            listingCount={visibleBinListings.length}
-            auctionListingCount={visibleAuctionListings.length}
+            opportunities={displayedBinOpportunities}
+            auctionOpportunities={displayedAuctionOpportunities}
+            listingCount={savedLiveMarketResults ? savedLiveMarketResults.listingCount : visibleBinListings.length}
+            auctionListingCount={savedLiveMarketResults ? displayedAuctionOpportunities.length : visibleAuctionListings.length}
             hiddenListingCount={hiddenBinListingCount}
             lastRejectedListing={lastRejectedListing}
             scan={binScan}
             auctionScan={auctionScan}
+            savedResults={savedLiveMarketResults}
             ebayStatus={ebayStatus}
             fanaticsStatus={fanaticsStatus}
             loading={binLoading}
@@ -11483,7 +11760,7 @@ function App() {
       )}
 
       {appRoute === 'marlins' || workMode !== 'health' ? (
-        <details className="operations-drawer" open={Boolean(observabilityError) || undefined}>
+        <details className="operations-drawer">
           <summary>
             <span>
               <Activity size={15} />
@@ -11527,6 +11804,7 @@ function App() {
         </section>
       </details> : null}
     </main>
+    </>
   )
 }
 
