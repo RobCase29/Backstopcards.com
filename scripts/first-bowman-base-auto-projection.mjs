@@ -33,6 +33,28 @@ function tableExists(db, tableName) {
 }
 
 function baseAutoRows(db) {
+  if (tableExists(db, 'canonical_cards') && tableExists(db, 'canonical_comp_summary')) {
+    return db.prepare(`
+      SELECT
+        cc.player_name AS playerName,
+        cc.release_year AS releaseYear,
+        cc.product_family AS productFamily,
+        cc.variation_label AS variationLabel,
+        s.sale_count AS saleCount,
+        s.sales_30 AS sales30,
+        s.sales_90 AS sales90,
+        s.median_price AS medianPrice,
+        COALESCE(NULLIF(s.twma_30, 0), NULLIF(s.recent_5_avg, 0), NULLIF(s.twma_90, 0), NULLIF(s.median_price, 0), NULLIF(s.avg_price, 0), 0) AS modelPrice,
+        s.latest_sold_at AS latestSoldAt
+      FROM canonical_cards cc
+      JOIN canonical_comp_summary s ON s.canonical_card_key = cc.canonical_card_key
+      WHERE cc.grade_bucket = 'Raw'
+        AND cc.card_class IN ('auto', 'paper-auto')
+        AND cc.variation_label IN ('Base Auto', 'Base', '')
+        AND s.sale_count > 0
+      ORDER BY modelPrice DESC
+    `).all()
+  }
   if (!tableExists(db, 'market_movers_model_buckets')) return []
   return db.prepare(`
     SELECT

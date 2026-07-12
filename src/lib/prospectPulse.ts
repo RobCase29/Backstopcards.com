@@ -427,7 +427,10 @@ function mergeChecklistPlayers(primary: ChecklistPlayer[], localPlayers: Checkli
         ? localPlayer.baseSalesCount
         : existing.baseSalesCount,
       baseSales: localHasBase ? localPlayer.baseSales ?? existing.baseSales : existing.baseSales,
-      variations: existing.variations?.length ? existing.variations : localPlayer.variations,
+      variations:
+        (existing.variations?.length ?? 0) >= (localPlayer.variations?.length ?? 0)
+          ? existing.variations
+          : localPlayer.variations,
     })
   }
 
@@ -452,7 +455,10 @@ function mergeChecklistModels(remoteModel: ChecklistModel | null, localModel: Ch
       Math.max(remoteModel.activeChecklistPlayers ?? 0, localModel.activeChecklistPlayers ?? 0) ||
       remoteModel.activeChecklistPlayers ||
       localModel.activeChecklistPlayers,
-    multipliers: remoteModel.multipliers.length ? remoteModel.multipliers : localModel.multipliers,
+    multipliers:
+      remoteModel.multipliers.length >= localModel.multipliers.length
+        ? remoteModel.multipliers
+        : localModel.multipliers,
     players: mergeChecklistPlayers(remoteModel.players, localModel.players),
     fetchedAt: new Date().toISOString(),
     source: remoteModel.players.length ? remoteModel.source : localModel.source,
@@ -532,6 +538,17 @@ async function findStaticChecklistModel(options: {
     ...model,
     fetchedAt: STATIC_CHECKLIST_GENERATED_AT,
   }
+}
+
+export async function fetchStaticChecklistModels(options: {
+  minYear: number
+  categories: ChecklistModel['category'][]
+}) {
+  const { STATIC_CHECKLIST_MODELS } = await loadStaticChecklistSnapshot()
+  const categorySet = new Set(options.categories)
+  return STATIC_CHECKLIST_MODELS.filter(
+    (model) => model.releaseYear >= options.minYear && categorySet.has(model.category),
+  )
 }
 
 function binPriceBands(options: { minPrice?: number; maxPrice?: number | null; scanDepth?: FeedScanDepth }) {
@@ -881,13 +898,15 @@ export async function fetchChecklistModel(options: {
   const requestedRelease =
     options.release ??
     `${requestedReleaseYear}-${category === 'draft' ? 'Bowman-Draft' : category === 'chrome' ? 'Bowman-Chrome' : 'Bowman'}`
-  const localFirstModel = await fetchLocalChecklistModel(requestedRelease, options.signal).catch(() => null)
-  if (localFirstModel?.players?.length) return localFirstModel
   const staticFirstModel = await findStaticChecklistModel({
     category,
     year: requestedReleaseYear,
     release: requestedRelease,
   })
+  const localFirstModel = await fetchLocalChecklistModel(requestedRelease, options.signal).catch(() => null)
+  if (localFirstModel?.players?.length) {
+    return mergeChecklistModels(staticFirstModel, localFirstModel) ?? localFirstModel
+  }
 
   let remoteModel: ChecklistModel | null = null
   let remoteError: unknown = null
@@ -948,7 +967,8 @@ export async function fetchChecklistModel(options: {
       year: releaseYear,
       release: release || requestedRelease,
     }))
-  const merged = mergeChecklistModels(remoteModel, localModel ?? staticModel)
+  const baselineModel = mergeChecklistModels(staticModel, localModel)
+  const merged = mergeChecklistModels(remoteModel, baselineModel)
   if (merged) return merged
   if (remoteError) throw remoteError
   throw new Error('Checklist model load failed')

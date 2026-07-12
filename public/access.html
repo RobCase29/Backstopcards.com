@@ -118,17 +118,19 @@
       <img src="/backstop-logo.jpeg" alt="Backstop Cards" />
       <h1>Private Clubhouse</h1>
       <p>Backstop Card Finder is invite-only while the model is still being sharpened.</p>
-      <p class="error">That code did not match. Check it and try again.</p>
+      <p class="error" id="access-error" role="alert" aria-live="assertive">That code did not match. Check it and try again.</p>
       <form method="post" action="/api/access/login">
         <input id="next" name="next" type="hidden" value="/" />
         <label for="code">Access code</label>
-        <input id="code" name="code" type="password" autocomplete="current-password" autofocus required />
+        <input id="code" name="code" type="password" autocomplete="current-password" aria-describedby="access-error" autofocus required />
         <button type="submit">Enter Backstop</button>
       </form>
     </main>
     <script>
       const params = new URLSearchParams(window.location.search)
-      document.body.dataset.error = params.get('error') === '1' ? 'true' : 'false'
+      const hasError = params.get('error') === '1'
+      document.body.dataset.error = hasError ? 'true' : 'false'
+      document.querySelector('#code').setAttribute('aria-invalid', hasError ? 'true' : 'false')
       document.querySelector('#next').value = params.get('next') || '/'
     </script>
   </body>
