@@ -694,6 +694,7 @@ export function rebuildCanonicalMarket(db, options = {}) {
   let cardHedgeNativeMappings = 0
   let structuredMappings = 0
   const useNativeCardHedge = options.useNativeCardHedge ?? hasNativeCardHedgeSales(db)
+  const hasValidReleaseYear = (card) => Number.isInteger(card.releaseYear) && card.releaseYear >= 1900 && card.releaseYear <= 2100
 
   db.prepare(
     `DELETE FROM canonical_source_mappings WHERE source IN (${REBUILT_CANONICAL_SOURCES.map(() => '?').join(', ')})`,
@@ -710,7 +711,7 @@ export function rebuildCanonicalMarket(db, options = {}) {
       const normalized = normalizeCardHedgeNativeSale(row)
       if (!normalized.modelEligible) continue
       const card = canonicalFromNormalizedSale(normalized)
-      if (!card.playerName) continue
+      if (!card.playerName || !hasValidReleaseYear(card)) continue
       upsertCanonicalCard(db, card, nowIso)
       upsertSourceMapping(
         db,
@@ -747,7 +748,7 @@ export function rebuildCanonicalMarket(db, options = {}) {
 
   for (const row of normalizedSaleRows(db, { includeCardHedgeMirror: !useNativeCardHedge })) {
     const card = canonicalFromNormalizedSale(row)
-    if (!card.playerName || !row.itemId) continue
+    if (!card.playerName || !row.itemId || !hasValidReleaseYear(card)) continue
     const sourceName = String(row.source ?? '').startsWith('card-hedge') ? 'card_hedge_sale' : 'market_movers_sale'
     upsertCanonicalCard(db, card, nowIso)
     upsertSourceMapping(
@@ -778,7 +779,7 @@ export function rebuildCanonicalMarket(db, options = {}) {
   const structuredCardKeyToCanonical = new Map()
   for (const row of structuredCardRows(db)) {
     const card = canonicalFromStructuredCard(row)
-    if (!card.playerName || !row.cardKey) continue
+    if (!card.playerName || !row.cardKey || !hasValidReleaseYear(card)) continue
     upsertCanonicalCard(db, card, nowIso)
     upsertSourceMapping(db, 'market_movers_card', row.cardKey, card, parseJson(row.rawJson, {}), 0.82, nowIso)
     structuredCardKeyToCanonical.set(row.cardKey, card.canonicalCardKey)
