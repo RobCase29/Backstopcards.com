@@ -593,6 +593,30 @@ function sortRows(rows: PricingRow[], sortMode: SortMode) {
   return sorted.sort((left, right) => right.baseTwmaPrice - left.baseTwmaPrice || right.topVariationPrice - left.topVariationPrice)
 }
 
+function boardPlayerKey(playerName: string) {
+  return playerName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// The board is a player discovery tool. Keep one best release-specific row per
+// player here; release filters still expose every distinct 1st Bowman record.
+function dedupeBoardRows(rows: PricingRow[], sortMode: SortMode) {
+  const byPlayer = new Map<string, PricingRow[]>()
+  for (const row of rows) {
+    const key = boardPlayerKey(row.playerName)
+    const group = byPlayer.get(key)
+    if (group) group.push(row)
+    else byPlayer.set(key, [row])
+  }
+  return [...byPlayer.values()].map((group) => sortRows(group, sortMode)[0])
+}
+
 type ReleaseOption = {
   id: string
   label: string
@@ -9602,8 +9626,9 @@ function App() {
       trimmedQuery.length > 0 &&
       (stsFilter !== 'all' || baseSourceFilter !== 'all') &&
       filteredRows.some((row) => !rowMatchesStsFilter(row, stsFilter) || !rowMatchesBaseFilter(row, baseSourceFilter))
+    const boardRows = releaseFilter === 'all' ? dedupeBoardRows(filteredRows, sortMode) : filteredRows
     return {
-      rows: sortRows(filteredRows, sortMode),
+      rows: sortRows(boardRows, sortMode),
       rankRelaxedForSearch,
     }
   }, [baseSourceFilter, categoryFilter, hostedAdjustedRows, query, releaseFilter, sortMode, stsFilter, teamFilter, trimmedQuery])

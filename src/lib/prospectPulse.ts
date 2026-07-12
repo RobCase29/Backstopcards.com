@@ -9,6 +9,7 @@ import type {
   PulseScanStats,
   PulseSnapshot,
 } from '../types'
+import { variationKey } from './matrix'
 
 interface ListingFetchOptions {
   kind: Extract<ListingKind, 'live' | 'bin'>
@@ -401,43 +402,101 @@ function playerMergeKey(playerName: string) {
     .trim()
 }
 
-function mergeChecklistPlayers(primary: ChecklistPlayer[], localPlayers: ChecklistPlayer[]) {
-  const byPlayer = new Map(primary.map((player) => [playerMergeKey(player.playerName), player]))
+function evidenceScore(salesCount?: number, price?: number) {
+  return Math.max(0, salesCount ?? 0) * 10 + (price && price > 0 ? 1 : 0)
+}
 
-  for (const localPlayer of localPlayers) {
-    const key = playerMergeKey(localPlayer.playerName)
+function mergePlayerVariations(
+  primary: ChecklistPlayer['variations'] = [],
+  secondary: ChecklistPlayer['variations'] = [],
+) {
+  const byVariation = new Map<string, ChecklistPlayer['variations'][number]>()
+
+  for (const variation of [...primary, ...secondary]) {
+    const key = variationKey(variation.variation)
     if (!key) continue
-    const existing = byPlayer.get(key)
+    const existing = byVariation.get(key)
     if (!existing) {
-      byPlayer.set(key, localPlayer)
+      byVariation.set(key, variation)
       continue
     }
 
-    const localHasBase = (localPlayer.baseSalesCount ?? 0) > 0 && (localPlayer.baseAvgPrice ?? 0) > 0
+    const preferred =
+      evidenceScore(variation.salesCount, variation.avgPrice) > evidenceScore(existing.salesCount, existing.avgPrice)
+        ? variation
+        : existing
+    const alternate = preferred === variation ? existing : variation
+    byVariation.set(key, {
+      ...preferred,
+      salesCount: Math.max(preferred.salesCount ?? 0, alternate.salesCount ?? 0) || undefined,
+      multiplier: preferred.multiplier > 0 ? preferred.multiplier : alternate.multiplier,
+      avgPrice: preferred.avgPrice > 0 ? preferred.avgPrice : alternate.avgPrice,
+    })
+  }
+
+  return [...byVariation.values()]
+}
+
+function mergeChecklistMultipliers(primary: ChecklistVariation[], secondary: ChecklistVariation[]) {
+  const byVariation = new Map<string, ChecklistVariation>()
+
+  for (const variation of [...primary, ...secondary]) {
+    const key = variationKey(variation.variation)
+    if (!key) continue
+    const existing = byVariation.get(key)
+    if (!existing) {
+      byVariation.set(key, variation)
+      continue
+    }
+
+    const preferred =
+      evidenceScore(variation.totalSales ?? variation.playerCount, variation.avgPrice) >
+      evidenceScore(existing.totalSales ?? existing.playerCount, existing.avgPrice)
+        ? variation
+        : existing
+    const alternate = preferred === variation ? existing : variation
+    byVariation.set(key, {
+      ...preferred,
+      playerCount: Math.max(preferred.playerCount ?? 0, alternate.playerCount ?? 0) || undefined,
+      totalSales: Math.max(preferred.totalSales ?? 0, alternate.totalSales ?? 0) || undefined,
+      sortOrder: Math.min(preferred.sortOrder ?? Number.MAX_SAFE_INTEGER, alternate.sortOrder ?? Number.MAX_SAFE_INTEGER),
+    })
+  }
+
+  return [...byVariation.values()].sort((left, right) => (left.sortOrder ?? Number.MAX_SAFE_INTEGER) - (right.sortOrder ?? Number.MAX_SAFE_INTEGER))
+}
+
+export function mergeChecklistPlayers(primary: ChecklistPlayer[], localPlayers: ChecklistPlayer[]) {
+  const byPlayer = new Map<string, ChecklistPlayer>()
+
+  for (const player of [...primary, ...localPlayers]) {
+    const key = playerMergeKey(player.playerName)
+    if (!key) continue
+    const existing = byPlayer.get(key)
+    if (!existing) {
+      byPlayer.set(key, player)
+      continue
+    }
+
+    const playerHasBase = (player.baseSalesCount ?? 0) > 0 && (player.baseAvgPrice ?? 0) > 0
     const existingHasBase = (existing.baseSalesCount ?? 0) > 0 && (existing.baseAvgPrice ?? 0) > 0
+    const usePlayerBase = playerHasBase && (!existingHasBase || (player.baseSalesCount ?? 0) >= (existing.baseSalesCount ?? 0))
     byPlayer.set(key, {
       ...existing,
-      team: existing.team || localPlayer.team || null,
-      status: existing.status || localPlayer.status || null,
-      prospectId: existing.prospectId || localPlayer.prospectId || null,
-      baseAvgPrice: localHasBase && (!existingHasBase || localPlayer.baseSalesCount >= existing.baseSalesCount)
-        ? localPlayer.baseAvgPrice
-        : existing.baseAvgPrice,
-      baseSalesCount: localHasBase && (!existingHasBase || localPlayer.baseSalesCount >= existing.baseSalesCount)
-        ? localPlayer.baseSalesCount
-        : existing.baseSalesCount,
-      baseSales: localHasBase ? localPlayer.baseSales ?? existing.baseSales : existing.baseSales,
-      variations:
-        (existing.variations?.length ?? 0) >= (localPlayer.variations?.length ?? 0)
-          ? existing.variations
-          : localPlayer.variations,
+      team: existing.team || player.team || null,
+      status: existing.status || player.status || null,
+      prospectId: existing.prospectId || player.prospectId || null,
+      baseAvgPrice: usePlayerBase ? player.baseAvgPrice : existing.baseAvgPrice,
+      baseSalesCount: usePlayerBase ? player.baseSalesCount : existing.baseSalesCount,
+      baseSales: usePlayerBase ? player.baseSales ?? existing.baseSales : existing.baseSales,
+      variations: mergePlayerVariations(existing.variations, player.variations),
     })
   }
 
   return [...byPlayer.values()]
 }
 
-function mergeChecklistModels(remoteModel: ChecklistModel | null, localModel: ChecklistModel | null): ChecklistModel | null {
+export function mergeChecklistModels(remoteModel: ChecklistModel | null, localModel: ChecklistModel | null): ChecklistModel | null {
   if (!remoteModel) return localModel
   if (!localModel) return remoteModel
 
@@ -455,10 +514,7 @@ function mergeChecklistModels(remoteModel: ChecklistModel | null, localModel: Ch
       Math.max(remoteModel.activeChecklistPlayers ?? 0, localModel.activeChecklistPlayers ?? 0) ||
       remoteModel.activeChecklistPlayers ||
       localModel.activeChecklistPlayers,
-    multipliers:
-      remoteModel.multipliers.length >= localModel.multipliers.length
-        ? remoteModel.multipliers
-        : localModel.multipliers,
+    multipliers: mergeChecklistMultipliers(remoteModel.multipliers, localModel.multipliers),
     players: mergeChecklistPlayers(remoteModel.players, localModel.players),
     fetchedAt: new Date().toISOString(),
     source: remoteModel.players.length ? remoteModel.source : localModel.source,

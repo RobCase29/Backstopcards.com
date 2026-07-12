@@ -103,6 +103,12 @@ describe('pricing matrix', () => {
     expect(variationKey('Gum Ball /5')).toBe(variationKey('Gumball Snack Pack /5'))
   })
 
+  it('treats colored numbered refractor aliases as one lane without collapsing /499 refractors into base', () => {
+    expect(variationKey('Orange /25 Auto')).toBe(variationKey('Orange Refractor /25 Auto'))
+    expect(variationKey('Blue /150 Auto')).toBe(variationKey('Blue Refractor /150 Auto'))
+    expect(variationKey('Refractor /499 Auto')).not.toBe(variationKey('Base Auto'))
+  })
+
   it('uses a 30-day recency-weighted base when enough raw sales are available', () => {
     const estimate = estimateBasePrice(
       {

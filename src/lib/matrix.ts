@@ -153,7 +153,19 @@ export function modelKey(value: string) {
 }
 
 export function variationKey(value: string) {
-  return modelKey(value) || value.toLowerCase().trim()
+  const key = modelKey(value)
+    .replace(/\bx\s+fractor\b/g, 'xfractor')
+    .replace(/\bblack\s+(?:and|&)\s+white\b/g, 'bw')
+
+  // Sellers frequently omit "Refractor" from a colored, numbered parallel.
+  // Keep the /499 refractor distinct from base, but collapse equivalent color
+  // labels such as "Orange /25" and "Orange Refractor /25" into one lane.
+  const isColoredNumberedParallel =
+    /\b(?:aqua|black|blue|gold|green|orange|pink|purple|red|teal|yellow)\b/.test(key) && /\/\s*\d+\b/.test(key)
+
+  return (isColoredNumberedParallel ? key.replace(/\brefractor\b/g, ' ') : key)
+    .replace(/\s+/g, ' ')
+    .trim() || value.toLowerCase().trim()
 }
 
 export function variationMatches(left: string, right: string) {
