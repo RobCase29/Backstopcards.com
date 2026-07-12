@@ -50,7 +50,15 @@ FANATICS_COLLECT_AUTHORIZED_FEED_TOKEN=<server-side bearer token>
 FANATICS_COLLECT_WIDE_MAX_PAGES=40
 FANATICS_COLLECT_WIDE_TIME_BUDGET_MS=25000
 FANATICS_COLLECT_IMAGE_RIGHTS_AUTHORIZED=false
+FANATICS_QUERY_CACHE_FRESH_TTL_SECONDS=86400
+FANATICS_QUERY_CACHE_STALE_TTL_SECONDS=259200
 ```
+
+Targeted checklist searches use a two-window Redis policy: results are served
+normally during the fresh window, retained through the stale window, and used
+after the fresh window only when a live Fanatics refresh fails. The API labels
+that response `stale-fallback`; the client surfaces the upstream failure rather
+than presenting old inventory as live.
 
 The server sends a `GET` request with these query parameters:
 
