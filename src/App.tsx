@@ -9836,12 +9836,16 @@ function App() {
       if (!trimmedQuery && !rowMatchesBaseFilter(row, baseSourceFilter)) return false
       return true
     })
+    const rankedRowsAvailable = rowsBeforeRank.some(rowHasPublishedRank)
+    const rankFilterFallback = !showUnranked && rowsBeforeRank.length > 0 && !rankedRowsAvailable
     const filteredRows = trimmedQuery
       ? rowsBeforeRank
-      : rowsBeforeRank.filter((row) => (showUnranked || rowHasPublishedRank(row)) && rowMatchesStsFilter(row, stsFilter))
+      : rowsBeforeRank.filter(
+          (row) => (showUnranked || rankFilterFallback || rowHasPublishedRank(row)) && rowMatchesStsFilter(row, stsFilter),
+        )
     const rankRelaxedForSearch =
       trimmedQuery.length > 0 &&
-      (!showUnranked || stsFilter !== 'all' || baseSourceFilter !== 'all') &&
+      ((!showUnranked && rankedRowsAvailable) || stsFilter !== 'all' || baseSourceFilter !== 'all') &&
       filteredRows.some(
         (row) => (!showUnranked && !rowHasPublishedRank(row)) || !rowMatchesStsFilter(row, stsFilter) || !rowMatchesBaseFilter(row, baseSourceFilter),
       )
@@ -9849,10 +9853,12 @@ function App() {
     return {
       rows: sortRows(boardRows, sortMode),
       rankRelaxedForSearch,
+      rankFilterFallback,
     }
   }, [baseSourceFilter, categoryFilter, hostedAdjustedRows, query, releaseFilter, showUnranked, sortMode, stsFilter, teamFilter, trimmedQuery])
   const visibleRows = filteredBoard.rows
   const rankRelaxedForSearch = filteredBoard.rankRelaxedForSearch
+  const rankFilterFallback = filteredBoard.rankFilterFallback
   const hasLeaderboardNarrowing =
     trimmedQuery.length > 0 ||
     releaseFilter !== 'all' ||
@@ -11534,7 +11540,10 @@ function App() {
               </label>
               <label className="filter-select rank-visibility-filter">
                 <span>Rank visibility</span>
-                <select value={showUnranked ? 'all' : 'ranked'} onChange={(event) => setShowUnranked(event.target.value === 'all')}>
+                <select
+                  value={showUnranked || rankFilterFallback ? 'all' : 'ranked'}
+                  onChange={(event) => setShowUnranked(event.target.value === 'all')}
+                >
                   <option value="ranked">Hide unranked</option>
                   <option value="all">Show unranked</option>
                 </select>
