@@ -97,6 +97,7 @@ import {
   primaryStsRankLabel,
   scoreStsMomentum,
 } from './lib/stsRankings'
+import { STS_FALLBACK_CSV_INPUTS } from './lib/stsFallback'
 import { compareTeamLabels, normalizeTeamCode, teamDisplayName } from './lib/teams'
 import { fetchCardHedgeStatus, refreshHostedCardHedgeComps, type CardHedgeStatus } from './lib/cardHedge'
 import { fetchRankingsData, fetchRankingsStatus, refreshRankings, type RankingsData, type RankingsStatus } from './lib/rankings'
@@ -192,6 +193,10 @@ import {
 } from './lib/salesLab'
 import { summarizeProximityMultiplier } from './lib/proximityMultiples'
 import type { ChecklistModel, GradingCompany, NormalizedListing, Opportunity, MarketplaceListing, ScoreSettings } from './types'
+
+// Ranking context must exist before checklist rows are priced. The hosted API refreshes this
+// snapshot after startup, but the board should never render from an empty in-memory leaderboard.
+hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)
 
 type CategoryFilter = 'all' | ChecklistModel['category']
 type BaseSourceFilter = 'decision-ready' | 'all' | 'research' | BasePriceSource
@@ -9290,15 +9295,10 @@ function App() {
             : current,
         )
       })
-      .catch(async () => {
+      .catch(() => {
         if (!active || rankingsController.signal.aborted) return
-        try {
-          const { STS_FALLBACK_CSV_INPUTS } = await import('./lib/stsFallback')
-          if (hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)) {
-            setRankingsDatasetVersion((version) => version + 1)
-          }
-        } catch {
-          // The value board remains usable without ranking enrichment.
+        if (hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)) {
+          setRankingsDatasetVersion((version) => version + 1)
         }
       })
     const modelTimer = window.setTimeout(() => {
