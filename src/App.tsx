@@ -418,7 +418,7 @@ function rowMatchesTeam(row: PricingRow, teamFilter: TeamFilter) {
 }
 
 function rowMatchesStsFilter(row: PricingRow, stsFilter: StsFilter) {
-  if (stsFilter === 'ranked') return row.oracleStageRank !== null || row.stsProspectRank !== null || row.stsRank !== null
+  if (stsFilter === 'ranked') return rowHasPublishedRank(row)
   if (stsFilter === 'prospects') {
     if (row.rankingSource === 'baseball-oracle') return row.oracleRoute === 'milb' && row.oracleServedProspectRank !== null
     return row.stsProspectRank !== null
@@ -426,6 +426,10 @@ function rowMatchesStsFilter(row: PricingRow, stsFilter: StsFilter) {
   if (stsFilter === 'mlb') return row.oracleRoute === 'mlb' || row.stsLevel?.toUpperCase() === 'MLB'
   if (stsFilter === 'unmatched') return !row.stsName
   return true
+}
+
+function rowHasPublishedRank(row: PricingRow) {
+  return primaryRankLabel(row) !== null
 }
 
 const BIN_RESULT_SORT_LABELS: Record<BinResultSort, string> = {
@@ -8803,6 +8807,7 @@ function App() {
   const [teamFilter, setTeamFilter] = useState<TeamFilter>('all')
   const [baseSourceFilter, setBaseSourceFilter] = useState<BaseSourceFilter>('decision-ready')
   const [stsFilter, setStsFilter] = useState<StsFilter>('all')
+  const [showUnranked, setShowUnranked] = useState(false)
   const [sortMode, setSortMode] = useState<SortMode>('dynasty-value')
   const [selectedRowId, setSelectedRowId] = useState<string | undefined>()
   const [workMode, setWorkMode] = useState<WorkMode>(() =>
@@ -9831,17 +9836,21 @@ function App() {
       if (!trimmedQuery && !rowMatchesBaseFilter(row, baseSourceFilter)) return false
       return true
     })
-    const filteredRows = trimmedQuery ? rowsBeforeRank : rowsBeforeRank.filter((row) => rowMatchesStsFilter(row, stsFilter))
+    const filteredRows = trimmedQuery
+      ? rowsBeforeRank
+      : rowsBeforeRank.filter((row) => (showUnranked || rowHasPublishedRank(row)) && rowMatchesStsFilter(row, stsFilter))
     const rankRelaxedForSearch =
       trimmedQuery.length > 0 &&
-      (stsFilter !== 'all' || baseSourceFilter !== 'all') &&
-      filteredRows.some((row) => !rowMatchesStsFilter(row, stsFilter) || !rowMatchesBaseFilter(row, baseSourceFilter))
+      (!showUnranked || stsFilter !== 'all' || baseSourceFilter !== 'all') &&
+      filteredRows.some(
+        (row) => (!showUnranked && !rowHasPublishedRank(row)) || !rowMatchesStsFilter(row, stsFilter) || !rowMatchesBaseFilter(row, baseSourceFilter),
+      )
     const boardRows = releaseFilter === 'all' ? dedupeBoardRows(filteredRows, sortMode) : filteredRows
     return {
       rows: sortRows(boardRows, sortMode),
       rankRelaxedForSearch,
     }
-  }, [baseSourceFilter, categoryFilter, hostedAdjustedRows, query, releaseFilter, sortMode, stsFilter, teamFilter, trimmedQuery])
+  }, [baseSourceFilter, categoryFilter, hostedAdjustedRows, query, releaseFilter, showUnranked, sortMode, stsFilter, teamFilter, trimmedQuery])
   const visibleRows = filteredBoard.rows
   const rankRelaxedForSearch = filteredBoard.rankRelaxedForSearch
   const hasLeaderboardNarrowing =
@@ -9850,7 +9859,8 @@ function App() {
     categoryFilter !== 'all' ||
     teamFilter !== 'all' ||
     baseSourceFilter !== 'decision-ready' ||
-    stsFilter !== 'all'
+    stsFilter !== 'all' ||
+    !showUnranked
   const leaderboardRenderLimit = hasLeaderboardNarrowing ? FILTERED_LEADERBOARD_RENDER_LIMIT : LEADERBOARD_RENDER_LIMIT
   const renderedRows = useMemo(() => visibleRows.slice(0, leaderboardRenderLimit), [leaderboardRenderLimit, visibleRows])
   const visibleRowRankById = useMemo(
@@ -11520,6 +11530,13 @@ function App() {
                       {label}
                     </option>
                   ))}
+                </select>
+              </label>
+              <label className="filter-select rank-visibility-filter">
+                <span>Rank visibility</span>
+                <select value={showUnranked ? 'all' : 'ranked'} onChange={(event) => setShowUnranked(event.target.value === 'all')}>
+                  <option value="ranked">Hide unranked</option>
+                  <option value="all">Show unranked</option>
                 </select>
               </label>
               <label className="filter-select">

@@ -520,7 +520,7 @@
   top: 6px;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr)) minmax(112px, 0.54fr) auto;
+  grid-template-columns: repeat(5, minmax(132px, 1fr)) minmax(112px, 0.54fr) auto;
   gap: 6px;
   overflow: visible;
   padding: 7px;
