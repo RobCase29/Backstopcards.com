@@ -126,6 +126,7 @@ import {
   buildPricingMatrix,
   filterPricingRows,
   formatMultiplier,
+  releaseVariationCurve,
   variationKey,
   type BasePriceSource,
   type PricingRow,
@@ -149,6 +150,7 @@ import {
   titleLooksLikeSuperfractor,
 } from './lib/cardTitleGuards'
 import { listingGradingLabel, liveCompCheckForOpportunity, liveCompVerdict, normalizeLiveCompText } from './lib/liveComps'
+import { stableSalesCacheLaneValue } from './lib/variationFairValue'
 import {
   createListingRejection,
   isListingRejected,
@@ -437,7 +439,7 @@ const BIN_RESULT_SORT_LABELS: Record<BinResultSort, string> = {
 function binVariationOptionsForModels(models: ChecklistModel[]): BinVariationOption[] {
   const options = new Map<string, BinVariationOption>()
   for (const model of models) {
-    for (const variation of model.multipliers) {
+    for (const variation of releaseVariationCurve(model).variations) {
       const key = variationKey(variation.variation)
       if (!key || key === 'base' || key === 'base-auto') continue
       const current = options.get(key)
@@ -953,7 +955,16 @@ function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlay
     }
 
     const bucket = rawAutoBuckets.get(variationKey(quote.label || quote.key))
-    const price = bucket && positiveNumber(bucket.modelPrice) ? bucket.modelPrice : soldBase * quote.multiplier
+    const curvePrice = soldBase * quote.multiplier
+    const stableLane = bucket
+      ? stableSalesCacheLaneValue({
+          curvePrice,
+          curveConfidence: row.baseConfidence,
+          bucket,
+          model,
+        })
+      : null
+    const price = stableLane?.value ?? curvePrice
     return {
       ...quote,
       price: Number(price.toFixed(2)),
@@ -974,7 +985,7 @@ function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlay
     baseBinSales: baseAutoBucket.binCount ?? row.baseBinSales,
     baseEffectiveSales: baseAutoBucket.saleCount ?? row.baseEffectiveSales,
     latestBaseSaleAt: baseAutoBucket.latestSoldAt ?? row.latestBaseSaleAt,
-    baseMethod: 'Sold comp base',
+    baseMethod: 'Sold comp base / Backstop FV v2',
     topVariationPrice: ladder.reduce((best, quote) => Math.max(best, quote.price), soldBase),
     ladder,
   }

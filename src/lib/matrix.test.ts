@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChecklistModel } from '../types'
 import { buildPricingMatrix, estimateBasePrice, releaseVariationCurve, variationKey } from './matrix'
+import { BOWMAN_2026_CHROME_AUTO_VARIATIONS } from '../../shared/bowman2026Taxonomy.js'
 
 const asOf = Date.UTC(2026, 5, 21)
 
@@ -74,8 +75,8 @@ describe('pricing matrix', () => {
     expect(matrix.totalResolvedCells).toBe(6)
     expect(matrix.rows[0].ladder.map((quote) => [quote.label, quote.price])).toEqual([
       ['Base Auto', 100],
-      ['Blue /150 Auto', 300],
-      ['Gold /50 Auto', 700],
+      ['Blue /150 Auto', 195],
+      ['Gold /50 Auto', 400],
     ])
   })
 
@@ -84,7 +85,7 @@ describe('pricing matrix', () => {
     const bowmanBlue = matrix.rows.find((row) => row.release === '2026-Bowman')?.ladder.find((quote) => quote.label === 'Blue /150 Auto')
     const draftBlue = matrix.rows.find((row) => row.release === '2025-Bowman-Draft')?.ladder.find((quote) => quote.label === 'Blue /150 Auto')
 
-    expect(bowmanBlue).toMatchObject({ multiplier: 3, price: 300 })
+    expect(bowmanBlue).toMatchObject({ multiplier: 1.95, price: 195 })
     expect(draftBlue).toMatchObject({ multiplier: 4, price: 320 })
   })
 
@@ -93,9 +94,63 @@ describe('pricing matrix', () => {
     const blue = matrix.rows[0].ladder.find((quote) => quote.label === 'Blue /150 Auto')
 
     expect(blue).toMatchObject({
-      price: 300,
-      multiplier: 3,
+      price: 195,
+      multiplier: 1.95,
     })
+  })
+
+  it('passes proximity-calibrated release multipliers through unchanged', () => {
+    const { variations } = releaseVariationCurve({
+      ...bowmanModel,
+      multipliers: [
+        {
+          variation: 'Blue /150 Auto',
+          avgMultiplier: 2.37,
+          playerCount: 31,
+          totalSales: 84,
+          modelMethod: 'hierarchical-proximity-v2',
+          modelConfidence: 0.81,
+          proximitySales: 84,
+        },
+      ],
+    })
+
+    expect(variations.find((variation) => variationKey(variation.variation) === variationKey('Blue /150 Auto'))).toMatchObject({
+      variation: 'Blue /150',
+      avgMultiplier: 2.37,
+      modelMethod: 'hierarchical-proximity-v2',
+    })
+  })
+
+  it('exposes every official 2026 lane once, even before a clean direct comp exists', () => {
+    const { variations } = releaseVariationCurve({
+      ...bowmanModel,
+      multipliers: [],
+      modelVersion: 'backstop-fv-v2',
+    })
+
+    expect(variations).toHaveLength(BOWMAN_2026_CHROME_AUTO_VARIATIONS.length)
+    expect(new Set(variations.map((variation) => variationKey(variation.variation))).size).toBe(variations.length)
+    const superfractor = variations.find((variation) => variation.variation === 'Superfractor /1')
+    expect(superfractor).toMatchObject({
+      modelMethod: 'structural-prior-only',
+    })
+    expect(superfractor?.avgMultiplier).toBeCloseTo(80)
+  })
+
+  it('canonicalizes legacy aliases before aggregating the 2026 release curve', () => {
+    const { variations } = releaseVariationCurve({
+      ...bowmanModel,
+      modelVersion: 'backstop-fv-v2',
+      multipliers: [
+        { variation: 'Sunflower Seeds /5', avgMultiplier: 18, totalSales: 2 },
+        { variation: 'Sunflower Snack Pack /5', avgMultiplier: 22, totalSales: 3 },
+      ],
+    })
+    const sunflower = variations.filter((variation) => variation.variation === 'Sunflower Snack Pack /5')
+
+    expect(sunflower).toHaveLength(1)
+    expect(sunflower[0]?.totalSales).toBe(5)
   })
 
   it('treats snack-pack wording variants as one variation key', () => {
@@ -253,10 +308,11 @@ describe('pricing matrix', () => {
 
     expect(implied).toBeDefined()
     expect(implied?.basePriceSource).toBe('variation-implied')
-    expect(implied?.baseTwmaPrice).toBeGreaterThan(28)
-    expect(implied?.baseTwmaPrice).toBeLessThan(32)
+    expect(implied?.baseTwmaPrice).toBeGreaterThan(46)
+    expect(implied?.baseTwmaPrice).toBeLessThan(51)
     expect(implied?.baseMethod).toContain('implied from 2 variation anchors')
-    expect(implied?.ladder.find((quote) => quote.label === 'Blue /150 Auto')?.price).toBeCloseTo((implied?.baseTwmaPrice ?? 0) * 3, 0)
+    const blueQuote = implied?.ladder.find((quote) => quote.label === 'Blue /150 Auto')
+    expect(blueQuote?.price).toBeCloseTo((implied?.baseTwmaPrice ?? 0) * (blueQuote?.multiplier ?? 0), 0)
     expect(matrix.impliedBaseRows).toBe(1)
     expect(matrix.missingBaseRows).toBe(0)
   })

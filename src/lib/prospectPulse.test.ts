@@ -60,4 +60,30 @@ describe('checklist source merge', () => {
       'Orange Refractor /25 Auto',
     ])
   })
+
+  it('never lets a legacy aggregate replace a proximity-calibrated v2 multiplier', () => {
+    const merged = mergeChecklistModels(
+      model([], [{ variation: 'Gold /50 Auto', avgMultiplier: 8.7, totalSales: 900 }]),
+      {
+        ...model([], [
+          {
+            variation: 'Gold /50 Auto',
+            avgMultiplier: 4.25,
+            totalSales: 80,
+            modelMethod: 'hierarchical-proximity-v2',
+          },
+        ]),
+        modelVersion: 'backstop-fv-v2',
+      },
+    )
+
+    expect(merged?.multipliers).toEqual([
+      expect.objectContaining({
+        variation: 'Gold /50 Auto',
+        avgMultiplier: 4.25,
+        modelMethod: 'hierarchical-proximity-v2',
+      }),
+    ])
+    expect(merged?.modelVersion).toBe('backstop-fv-v2')
+  })
 })

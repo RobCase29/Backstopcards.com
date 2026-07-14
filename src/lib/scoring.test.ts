@@ -417,8 +417,50 @@ describe('normalizeListing', () => {
     expect(opportunities).toHaveLength(1)
     expect(opportunities[0]?.valuationSource).toBe('player-base-curve')
     expect(opportunities[0]?.matchedVariation).toBe('Sunflower Seeds /5')
-    expect(opportunities[0]?.modelPrice).toBeCloseTo(334.01, 1)
+    expect(opportunities[0]?.modelPrice).toBeGreaterThan(250)
+    expect(opportunities[0]?.modelPrice).toBeLessThan(300)
     expect(opportunities[0]?.variationPrice).toBe(650)
+  })
+
+  it('keeps active listing comps from overpowering a release-curve valuation', () => {
+    const releaseCurveOnlyModel: ChecklistModel = {
+      ...model,
+      modelVersion: 'backstop-fv-v2',
+      multipliers: [
+        {
+          variation: 'Blue Refractor /150',
+          avgMultiplier: 3,
+          playerCount: 40,
+          totalSales: 160,
+          modelMethod: 'hierarchical-proximity-v2',
+        },
+      ],
+      players: [
+        {
+          playerName: 'Eli Willits',
+          baseAvgPrice: 100,
+          baseSalesCount: 12,
+          variations: [],
+        },
+      ],
+    }
+
+    const opportunities = rankOpportunities(
+      [
+        listing({
+          item_id: 'extreme-listing-comps',
+          current_price: 100,
+          shipping_cost: 0,
+          comps: Array.from({ length: 20 }, () => ({ sale_price: 1_000 })),
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      releaseCurveOnlyModel,
+    )
+
+    expect(opportunities).toHaveLength(1)
+    expect(opportunities[0]?.valuationSource).toBe('player-base-curve')
+    expect(opportunities[0]?.modelPrice).toBeCloseTo(398)
   })
 
   it('does not treat a graded card below 9 as eligible for the raw-floor slab model', () => {
@@ -533,7 +575,8 @@ describe('rankOpportunities', () => {
 
     expect(opportunities).toHaveLength(1)
     expect(opportunities[0]?.valuationSource).toBe('player-base-curve')
-    expect(opportunities[0]?.baseTwmaPrice).toBeGreaterThan(275)
+    expect(opportunities[0]?.baseTwmaPrice).toBeGreaterThan(200)
+    expect(opportunities[0]?.baseTwmaPrice).toBeLessThan(240)
   })
 
   it('excludes Sapphire listings from regular Bowman model matching', () => {
@@ -680,7 +723,8 @@ describe('rankOpportunities', () => {
 
     expect(opportunities).toHaveLength(1)
     expect(opportunities[0]?.matchedVariation).toBe('Packfractor /89')
-    expect(opportunities[0]?.fairValue).toBeCloseTo(930)
+    expect(opportunities[0]?.fairValue).toBeGreaterThan(550)
+    expect(opportunities[0]?.fairValue).toBeLessThan(700)
   })
 
   it('prefers specific parallel variants over broader serial color matches', () => {

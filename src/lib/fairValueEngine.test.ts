@@ -55,7 +55,7 @@ describe('fair value engine', () => {
       playerBaseSales: [sale(100, 1), sale(105, 3)],
       asOf,
     })
-    expect(estimate.multiplier).toBeGreaterThan(1.5)
+    expect(estimate.multiplier).toBeGreaterThan(1.45)
     expect(estimate.multiplier).toBeLessThan(2.3)
     expect(estimate.sources).toContain('release-proximity')
   })
@@ -75,4 +75,3 @@ describe('fair value engine', () => {
     expect(estimate?.method).toBe('hierarchical-direct-blend')
   })
 })
-

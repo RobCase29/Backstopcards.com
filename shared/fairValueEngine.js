@@ -1,5 +1,7 @@
 const DAY_MS = 86_400_000
 
+export const FAIR_VALUE_MODEL_VERSION = 'backstop-fv-v2'
+
 function clamp(value, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value))
 }
@@ -198,21 +200,25 @@ export function estimateHierarchicalMultiplier(options) {
   const releaseEstimate = robustFairValueEstimate(groupedReleasePoints, { asOf, halfLifeDays: 28 })
   const playerRatioPoints = buildProximityRatioPoints(options.playerVariationSales ?? [], options.playerBaseSales ?? [])
   const playerRatioEstimate = robustFairValueEstimate(playerRatioPoints, { asOf, halfLifeDays: 30 })
-  const evidence = [{ value: priorMultiplier, weight: 4 * priorReliability, source: 'structural-prior' }]
+  // The release curve is the market backbone. Empirical ratios should refine it,
+  // not replace it after a handful of sales. A fixed floor keeps low-pop lanes
+  // stable while the reliability term lets well-established priors carry more
+  // of the estimate.
+  const evidence = [{ value: priorMultiplier, weight: 5 + 8 * priorReliability, source: 'structural-prior' }]
   if (releaseEstimate) {
     evidence.push({
       value: releaseEstimate.value,
       weight:
-        Math.min(10, releaseEstimate.effectiveN) *
-        (0.3 + (1 - priorReliability) * 0.7) *
-        (0.4 + releaseEstimate.confidence * 0.6),
+        Math.min(12, releaseEstimate.effectiveN) *
+        (0.18 + (1 - priorReliability) * 0.45) *
+        (0.35 + releaseEstimate.confidence * 0.65),
       source: 'release-proximity',
     })
   }
   if (playerRatioEstimate) {
     evidence.push({
       value: playerRatioEstimate.value,
-      weight: Math.min(5, playerRatioEstimate.effectiveN) * (0.7 + playerRatioEstimate.confidence * 0.5),
+      weight: Math.min(4, playerRatioEstimate.effectiveN) * (0.45 + playerRatioEstimate.confidence * 0.45),
       source: 'player-proximity',
     })
   }
@@ -244,8 +250,9 @@ export function estimateLaneFairValue(options) {
   const curveValue = baseEstimate.value * multiplierEstimate.multiplier
   const directEstimate = robustFairValueEstimate(options.playerVariationSales ?? [], { asOf: options.asOf, halfLifeDays: 28 })
   const curveWeight = 2 + baseEstimate.confidence * 3 + multiplierEstimate.confidence * 2
+  const evidenceOverlapDiscount = multiplierEstimate.playerMultiplier ? 0.72 : 1
   const directWeight = directEstimate
-    ? Math.min(8, directEstimate.effectiveN) * (0.45 + directEstimate.confidence * 0.75)
+    ? Math.min(8, directEstimate.effectiveN) * (0.45 + directEstimate.confidence * 0.75) * evidenceOverlapDiscount
     : 0
   const totalWeight = curveWeight + directWeight
   const logValue = directEstimate

@@ -11,6 +11,8 @@ export interface FairValueSale {
   playerName?: string | null
 }
 
+export const FAIR_VALUE_MODEL_VERSION: 'backstop-fv-v2'
+
 export interface FairValueEstimate {
   value: number
   low: number

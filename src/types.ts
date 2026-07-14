@@ -112,6 +112,10 @@ export interface ChecklistVariation {
   playerCount?: number
   totalSales?: number
   sortOrder?: number | null
+  modelMethod?: string
+  modelConfidence?: number
+  structuralPrior?: number
+  proximitySales?: number
 }
 
 export interface ChecklistPlayerVariation {
@@ -173,6 +177,7 @@ export interface ChecklistModel {
   multipliers: ChecklistVariation[]
   players: ChecklistPlayer[]
   fetchedAt: string
+  modelVersion?: string
   source:
     | 'public-multipliers'
     | 'authenticated-player-model'

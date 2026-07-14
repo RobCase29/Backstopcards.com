@@ -1,6 +1,12 @@
 import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
 import { findStsRanking, scoreStsBinTarget, scoreStsMomentum, scoreStsRanking, scoreStsRiserValue } from './stsRankings'
 import { normalizeTeamCode, teamDisplayName, teamSearchText } from './teams'
+import { FAIR_VALUE_MODEL_VERSION, stabilizeReleaseMultiplier, structuralVariationPrior } from './variationPriors'
+import {
+  BOWMAN_2026_CHROME_AUTO_VARIATIONS,
+  bowman2026AutoDefinition,
+  canonicalizeBowman2026AutoLabel,
+} from '../../shared/bowman2026Taxonomy.js'
 
 export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'variation-implied' | 'twma-fallback' | 'unpriced'
 export type SaleChannel = 'auction' | 'bin' | 'unknown'
@@ -134,6 +140,9 @@ interface VariationBucket {
   sortOrders: number[]
   playerCounts: number[]
   totalSales: number
+  modelMethods: string[]
+  modelConfidences: number[]
+  proximitySales: number
   synthesizedBase: boolean
 }
 
@@ -559,6 +568,10 @@ function compareVariations(left: ChecklistVariation, right: ChecklistVariation) 
 export function releaseVariationCurve(model: ChecklistModel) {
   const buckets = new Map<string, VariationBucket>()
   let unresolvedMultipliers = 0
+  const hasV2Curve =
+    model.modelVersion === FAIR_VALUE_MODEL_VERSION ||
+    model.multipliers.some((variation) => variation.modelMethod === 'hierarchical-proximity-v2')
+  const isOfficial2026Bowman = model.releaseYear === 2026 && model.category === 'bowman' && hasV2Curve
 
   for (const variation of model.multipliers) {
     if (!isFinitePositive(variation.avgMultiplier)) {
@@ -566,24 +579,63 @@ export function releaseVariationCurve(model: ChecklistModel) {
       continue
     }
 
-    const key = variationKey(variation.variation)
+    const canonicalLabel = isOfficial2026Bowman
+      ? canonicalizeBowman2026AutoLabel(variation.variation, { assumeAuto: true })
+      : variation.variation
+    if (!canonicalLabel) {
+      unresolvedMultipliers += 1
+      continue
+    }
+    const key = variationKey(canonicalLabel)
     const current =
       buckets.get(key) ??
       {
-        label: variation.variation,
+        label: canonicalLabel,
         multipliers: [],
         sortOrders: [],
         playerCounts: [],
         totalSales: 0,
+        modelMethods: [],
+        modelConfidences: [],
+        proximitySales: 0,
         synthesizedBase: false,
       }
 
-    current.label = current.label.length <= variation.variation.length ? current.label : variation.variation
+    current.label = isOfficial2026Bowman
+      ? canonicalLabel
+      : current.label.length <= variation.variation.length
+        ? current.label
+        : variation.variation
     current.multipliers.push(variation.avgMultiplier)
-    if (finiteSortOrder(variation.sortOrder) !== null) current.sortOrders.push(variation.sortOrder as number)
+    const officialSortOrder = isOfficial2026Bowman
+      ? bowman2026AutoDefinition(canonicalLabel)?.scarcityOrder
+      : null
+    if (finiteSortOrder(officialSortOrder) !== null) current.sortOrders.push(officialSortOrder as number)
+    else if (finiteSortOrder(variation.sortOrder) !== null) current.sortOrders.push(variation.sortOrder as number)
     if (isFinitePositive(variation.playerCount)) current.playerCounts.push(variation.playerCount as number)
     if (isFinitePositive(variation.totalSales)) current.totalSales += variation.totalSales as number
+    if (variation.modelMethod) current.modelMethods.push(variation.modelMethod)
+    if (isFinitePositive(variation.modelConfidence)) current.modelConfidences.push(variation.modelConfidence as number)
+    if (isFinitePositive(variation.proximitySales)) current.proximitySales += variation.proximitySales as number
     buckets.set(key, current)
+  }
+
+  if (isOfficial2026Bowman) {
+    for (const definition of BOWMAN_2026_CHROME_AUTO_VARIATIONS) {
+      const key = variationKey(definition.label)
+      if (buckets.has(key)) continue
+      buckets.set(key, {
+        label: definition.label,
+        multipliers: [definition.priorMultiplier],
+        sortOrders: [definition.scarcityOrder],
+        playerCounts: [],
+        totalSales: 0,
+        modelMethods: ['structural-prior-only'],
+        modelConfidences: [definition.priorReliability],
+        proximitySales: 0,
+        synthesizedBase: definition.id === 'base-auto',
+      })
+    }
   }
 
   if (![...buckets.keys()].some((key) => key === 'base')) {
@@ -593,19 +645,47 @@ export function releaseVariationCurve(model: ChecklistModel) {
       sortOrders: [-1],
       playerCounts: [model.players.length],
       totalSales: model.players.reduce((total, player) => total + Math.max(0, player.baseSalesCount || 0), 0),
+      modelMethods: ['structural-base-anchor'],
+      modelConfidences: [1],
+      proximitySales: 0,
       synthesizedBase: true,
     })
   }
 
   const variations = [...buckets.values()]
-    .map<ChecklistVariation & { synthesizedBase?: boolean }>((bucket) => ({
-      variation: bucket.label,
-      avgMultiplier: average(bucket.multipliers),
-      playerCount: bucket.playerCounts.length ? Math.max(...bucket.playerCounts) : undefined,
-      totalSales: bucket.totalSales || undefined,
-      sortOrder: bucket.sortOrders.length ? Math.min(...bucket.sortOrders) : null,
-      synthesizedBase: bucket.synthesizedBase,
-    }))
+    .map<ChecklistVariation & { synthesizedBase?: boolean }>((bucket) => {
+      const empiricalMultiplier = median(bucket.multipliers)
+      const playerCount = bucket.playerCounts.length ? Math.max(...bucket.playerCounts) : undefined
+      const totalSales = bucket.totalSales || undefined
+      const modelMethod = bucket.modelMethods.includes('hierarchical-proximity-v2')
+        ? 'hierarchical-proximity-v2'
+        : bucket.modelMethods.includes('structural-prior-only')
+          ? 'structural-prior-only'
+          : bucket.modelMethods.includes('structural-base-anchor')
+            ? 'structural-base-anchor'
+            : 'stabilized-release-prior'
+      const prior = structuralVariationPrior(bucket.label, model.releaseYear, model.category)
+      return {
+        variation: bucket.label,
+        avgMultiplier: stabilizeReleaseMultiplier({
+          variation: bucket.label,
+          empiricalMultiplier,
+          releaseYear: model.releaseYear,
+          category: model.category,
+          playerCount,
+          totalSales,
+          modelMethod,
+        }),
+        playerCount,
+        totalSales,
+        sortOrder: bucket.sortOrders.length ? Math.min(...bucket.sortOrders) : null,
+        modelMethod,
+        modelConfidence: bucket.modelConfidences.length ? median(bucket.modelConfidences) : undefined,
+        structuralPrior: prior?.multiplier,
+        proximitySales: bucket.proximitySales || undefined,
+        synthesizedBase: bucket.synthesizedBase,
+      }
+    })
     .sort(compareVariations)
 
   return { variations, unresolvedMultipliers }

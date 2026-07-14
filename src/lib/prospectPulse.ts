@@ -449,11 +449,17 @@ function mergeChecklistMultipliers(primary: ChecklistVariation[], secondary: Che
       continue
     }
 
+    const variationIsV2 = variation.modelMethod === 'hierarchical-proximity-v2'
+    const existingIsV2 = existing.modelMethod === 'hierarchical-proximity-v2'
     const preferred =
-      evidenceScore(variation.totalSales ?? variation.playerCount, variation.avgPrice) >
-      evidenceScore(existing.totalSales ?? existing.playerCount, existing.avgPrice)
-        ? variation
-        : existing
+      variationIsV2 !== existingIsV2
+        ? variationIsV2
+          ? variation
+          : existing
+        : evidenceScore(variation.totalSales ?? variation.playerCount, variation.avgPrice) >
+            evidenceScore(existing.totalSales ?? existing.playerCount, existing.avgPrice)
+          ? variation
+          : existing
     const alternate = preferred === variation ? existing : variation
     byVariation.set(key, {
       ...preferred,
@@ -517,6 +523,7 @@ export function mergeChecklistModels(remoteModel: ChecklistModel | null, localMo
     multipliers: mergeChecklistMultipliers(remoteModel.multipliers, localModel.multipliers),
     players: mergeChecklistPlayers(remoteModel.players, localModel.players),
     fetchedAt: new Date().toISOString(),
+    modelVersion: localModel.modelVersion ?? remoteModel.modelVersion,
     source: remoteModel.players.length ? remoteModel.source : localModel.source,
   }
 }

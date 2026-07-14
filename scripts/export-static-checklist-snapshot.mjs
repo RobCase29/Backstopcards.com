@@ -1,6 +1,16 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import {
+  FAIR_VALUE_MODEL_VERSION,
+  buildProximityRatioPoints,
+  estimateHierarchicalMultiplier,
+} from '../shared/fairValueEngine.js'
+import {
+  BOWMAN_2026_CHROME_AUTO_VARIATIONS,
+  bowman2026AutoDefinition,
+  canonicalizeBowman2026AutoVariation,
+} from '../shared/bowman2026Taxonomy.js'
 
 const ROOT = process.cwd()
 const DB_PATH = resolve(ROOT, process.argv[2] ?? 'local-data/backstop-sales.sqlite')
@@ -48,6 +58,15 @@ function categoryFromReleaseName(releaseName) {
   return 'bowman'
 }
 
+function productMatchesReleaseCategory(productFamily, releaseCategory) {
+  const product = searchKey(productFamily)
+  if (releaseCategory === 'draft') return product.includes('draft')
+  if (releaseCategory === 'chrome') return product.includes('chrome') && !product.includes('draft')
+  // Prospect autos from the flagship Bowman release are catalogued under the
+  // Bowman Chrome card family. Bowman Draft remains a separate release lane.
+  return product.includes('chrome') && !product.includes('draft')
+}
+
 function releaseSlug(releaseName, releaseKey) {
   const label = releaseName.replace(/\s+/g, ' ').trim().replace(/ /g, '-')
   return label || releaseKey
@@ -80,6 +99,23 @@ function displayVariation(row) {
     return `Paper ${label}`
   }
   return label
+}
+
+function canonicalReleaseVariation(row, releaseYear, releaseCategory) {
+  const displayed = displayVariation(row)
+  if (releaseYear !== 2026 || releaseCategory !== 'bowman') return displayed
+  const sourceText = [
+    rowString(row, 'title'),
+    displayed,
+    rowNumber(row, 'serialDenominator') ? `/${rowNumber(row, 'serialDenominator')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const resolved = canonicalizeBowman2026AutoVariation(sourceText, {
+    playerName: rowString(row, 'playerName'),
+    assumeAuto: true,
+  })
+  return resolved.modelEligible ? resolved.definition.label : null
 }
 
 function variationSortOrder(label, serialDenominator) {
@@ -185,50 +221,91 @@ const variationStatement = db.prepare(`
 
 const baseSalesStatement = db.prepare(`
   SELECT
-    n.player_name AS playerName,
-    n.release_year AS releaseYear,
-    r.item_id AS itemId,
-    r.title AS title,
-    r.sale_price AS salePrice,
-    r.sold_at AS soldAt,
-    r.sale_type AS saleType,
-    n.channel AS channel
-  FROM market_movers_sales_normalized n
-  JOIN market_movers_sales_raw r ON r.item_id = n.item_id
-  WHERE n.release_year = ?
-    AND n.grade_bucket = 'Raw'
-    AND n.card_class IN ('auto', 'paper-auto')
-    AND n.variation_label IN ('Base Auto', 'Base', '')
-    AND n.model_eligible = 1
-    AND r.sale_price > 0
-  ORDER BY r.sold_at DESC
+    cc.player_name AS playerName,
+    cc.release_year AS releaseYear,
+    cc.product_family AS productFamily,
+    m.source AS source,
+    m.source_key AS sourceKey,
+    json_extract(m.raw_json, '$.normalized.itemId') AS itemId,
+    json_extract(m.raw_json, '$.normalized.title') AS title,
+    json_extract(m.raw_json, '$.normalized.salePrice') AS salePrice,
+    json_extract(m.raw_json, '$.normalized.soldAt') AS soldAt,
+    json_extract(m.raw_json, '$.normalized.channel') AS channel,
+    json_extract(m.raw_json, '$.normalized.modelEligible') AS modelEligible
+  FROM canonical_source_mappings m
+  JOIN canonical_cards cc USING(canonical_card_key)
+  WHERE cc.release_year = ?
+    AND cc.grade_bucket = 'Raw'
+    AND cc.card_class = 'auto'
+    AND cc.variation_label IN ('Base Auto', 'Base', '')
+    AND lower(cc.product_family) LIKE '%chrome%'
+    AND json_extract(m.raw_json, '$.normalized.salePrice') > 0
+    AND json_extract(m.raw_json, '$.normalized.soldAt') IS NOT NULL
+  ORDER BY json_extract(m.raw_json, '$.normalized.soldAt') DESC
 `)
 
-function baseCandidatesByPlayer(releaseYear) {
+const allAutoSalesStatement = db.prepare(`
+  SELECT
+    cc.player_name AS playerName,
+    cc.release_year AS releaseYear,
+    cc.product_family AS productFamily,
+    cc.card_class AS cardClass,
+    cc.variation_label AS variationLabel,
+    cc.serial_denominator AS serialDenominator,
+    m.source AS source,
+    m.source_key AS sourceKey,
+    json_extract(m.raw_json, '$.normalized.itemId') AS itemId,
+    json_extract(m.raw_json, '$.normalized.title') AS title,
+    json_extract(m.raw_json, '$.normalized.salePrice') AS salePrice,
+    json_extract(m.raw_json, '$.normalized.soldAt') AS soldAt,
+    json_extract(m.raw_json, '$.normalized.channel') AS channel,
+    json_extract(m.raw_json, '$.normalized.modelEligible') AS modelEligible
+  FROM canonical_source_mappings m
+  JOIN canonical_cards cc USING(canonical_card_key)
+  WHERE cc.release_year = ?
+    AND cc.grade_bucket = 'Raw'
+    AND cc.card_class = 'auto'
+    AND lower(cc.product_family) LIKE '%chrome%'
+    AND json_extract(m.raw_json, '$.normalized.salePrice') > 0
+    AND json_extract(m.raw_json, '$.normalized.soldAt') IS NOT NULL
+  ORDER BY json_extract(m.raw_json, '$.normalized.soldAt') DESC
+`)
+
+function baseCandidatesByPlayer(releaseYear, releaseCategory) {
   const map = new Map()
   for (const row of baseCandidateStatement.all(releaseYear)) {
+    if (!productMatchesReleaseCategory(rowString(row, 'productFamily'), releaseCategory)) continue
     const key = playerYearKey(rowString(row, 'playerName'), releaseYear)
     if (!map.has(key)) map.set(key, row)
   }
   return map
 }
 
-function baseSalesByPlayer(releaseYear) {
+function baseSalesByPlayer(releaseYear, releaseCategory) {
   const map = new Map()
+  const seenByPlayer = new Map()
   for (const row of baseSalesStatement.all(releaseYear)) {
+    if (!rowNumber(row, 'modelEligible')) continue
+    if (!productMatchesReleaseCategory(rowString(row, 'productFamily'), releaseCategory)) continue
     const price = rowNumber(row, 'salePrice')
     const soldAt = rowString(row, 'soldAt')
     if (!price || !soldAt) continue
     const key = playerYearKey(rowString(row, 'playerName'), releaseYear)
+    const seen = seenByPlayer.get(key) ?? new Set()
+    const itemId = rowString(row, 'itemId') || rowString(row, 'sourceKey')
+    const identity = itemId.replace(/^[a-z_-]+:/i, '') || `${soldAt}|${money(price)}|${searchKey(rowString(row, 'title'))}`
+    if (seen.has(identity)) continue
+    seen.add(identity)
+    seenByPlayer.set(key, seen)
     const current = map.get(key) ?? []
     if (current.length >= MAX_BASE_SALES_PER_PLAYER) continue
     current.push({
-      id: rowString(row, 'itemId'),
+      id: itemId,
       title: rowString(row, 'title'),
       salePrice: money(price),
       soldAt,
-      saleType: rowString(row, 'saleType'),
-      source: 'market-movers',
+      saleType: rowString(row, 'channel'),
+      source: rowString(row, 'source'),
       format: rowString(row, 'channel'),
     })
     map.set(key, current)
@@ -236,16 +313,53 @@ function baseSalesByPlayer(releaseYear) {
   return map
 }
 
-function variationRowsByPlayer(releaseYear, baseMap, allowedPlayerKeys) {
+function releaseProximitySales(releaseYear, releaseCategory, allowedPlayerKeys) {
+  const byPlayer = new Map()
+  const seen = new Set()
+  for (const row of allAutoSalesStatement.all(releaseYear)) {
+    if (!rowNumber(row, 'modelEligible')) continue
+    if (!productMatchesReleaseCategory(rowString(row, 'productFamily'), releaseCategory)) continue
+    const playerKey = playerYearKey(rowString(row, 'playerName'), releaseYear)
+    if (!allowedPlayerKeys.has(playerKey)) continue
+    const price = rowNumber(row, 'salePrice')
+    const soldAt = rowString(row, 'soldAt')
+    if (!price || !soldAt) continue
+    const itemId = rowString(row, 'itemId') || rowString(row, 'sourceKey')
+    const identity = itemId.replace(/^[a-z_-]+:/i, '') || `${soldAt}|${money(price)}|${searchKey(rowString(row, 'title'))}`
+    if (seen.has(identity)) continue
+    seen.add(identity)
+    const label = canonicalReleaseVariation(row, releaseYear, releaseCategory)
+    if (!label) continue
+    const player = byPlayer.get(playerKey) ?? new Map()
+    const lane = player.get(label) ?? []
+    lane.push({
+      price,
+      soldAt,
+      channel: rowString(row, 'channel'),
+      itemId,
+      title: rowString(row, 'title'),
+      source: rowString(row, 'source'),
+      groupKey: playerKey,
+      playerName: rowString(row, 'playerName'),
+    })
+    player.set(label, lane)
+    byPlayer.set(playerKey, player)
+  }
+  return byPlayer
+}
+
+function variationRowsByPlayer(releaseYear, releaseCategory, baseMap, allowedPlayerKeys) {
   const byPlayer = new Map()
 
   for (const row of variationStatement.all(releaseYear)) {
+    if (!productMatchesReleaseCategory(rowString(row, 'productFamily'), releaseCategory)) continue
     const price = modelPrice(row)
     if (!price) continue
     const playerName = rowString(row, 'playerName')
     const playerKey = playerYearKey(playerName, releaseYear)
     if (!allowedPlayerKeys.has(playerKey)) continue
-    const label = displayVariation(row)
+    const label = canonicalReleaseVariation(row, releaseYear, releaseCategory)
+    if (!label) continue
     const serialDenominator = rowNumber(row, 'serialDenominator')
     const base = modelPrice(baseMap.get(playerKey))
     const releaseMultiplier = base > 0 ? price / base : 0
@@ -284,6 +398,23 @@ function variationRowsByPlayer(releaseYear, baseMap, allowedPlayerKeys) {
     }
   }
 
+  const proximitySalesByPlayer = releaseProximitySales(releaseYear, releaseCategory, allowedPlayerKeys)
+
+  if (releaseYear === 2026 && releaseCategory === 'bowman') {
+    for (const definition of BOWMAN_2026_CHROME_AUTO_VARIATIONS) {
+      if (definition.id === 'base-auto') continue
+      const key = definition.label
+      if (multiplierBuckets.has(key)) continue
+      multiplierBuckets.set(key, {
+        label: definition.label,
+        values: [],
+        playerCount: 0,
+        totalSales: 0,
+        sortOrder: variationSortOrder(definition.label, definition.serialDenominator),
+      })
+    }
+  }
+
   const multipliers = [
     {
       variation: 'Base Auto',
@@ -291,15 +422,46 @@ function variationRowsByPlayer(releaseYear, baseMap, allowedPlayerKeys) {
       playerCount: [...allowedPlayerKeys].filter((key) => baseMap.has(key)).length,
       totalSales: [...allowedPlayerKeys].reduce((total, key) => total + rowNumber(baseMap.get(key), 'saleCount'), 0),
       sortOrder: -1,
+      modelMethod: 'structural-base-anchor',
+      modelConfidence: 1,
+      structuralPrior: 1,
     },
     ...[...multiplierBuckets.values()]
-      .map((bucket) => ({
-        variation: bucket.label,
-        avgMultiplier: Number(median(bucket.values).toFixed(3)),
-        playerCount: bucket.playerCount,
-        totalSales: bucket.totalSales,
-        sortOrder: bucket.sortOrder,
-      }))
+      .map((bucket) => {
+        const ratioPoints = []
+        for (const player of proximitySalesByPlayer.values()) {
+          const baseSales = player.get('Base Auto') ?? []
+          const variationSales = player.get(bucket.label) ?? []
+          if (!baseSales.length || !variationSales.length) continue
+          ratioPoints.push(...buildProximityRatioPoints(variationSales, baseSales))
+        }
+        const legacyPrior = median(bucket.values)
+        const structuralDefinition =
+          releaseYear === 2026 && releaseCategory === 'bowman'
+            ? bowman2026AutoDefinition(bucket.label)
+            : null
+        const priorMultiplier = structuralDefinition?.priorMultiplier ?? legacyPrior
+        const priorReliability = structuralDefinition?.priorReliability ?? (ratioPoints.length >= 8 ? 0.42 : 0.62)
+        const estimate = estimateHierarchicalMultiplier({
+          priorMultiplier,
+          priorReliability,
+          releaseRatioPoints: ratioPoints,
+        })
+        return {
+          variation: bucket.label,
+          avgMultiplier: Number(estimate.multiplier.toFixed(3)),
+          playerCount: Math.max(
+            bucket.playerCount,
+            [...proximitySalesByPlayer.values()].filter((player) => (player.get(bucket.label) ?? []).length > 0).length,
+          ),
+          totalSales: Math.max(bucket.totalSales, ratioPoints.length),
+          sortOrder: structuralDefinition?.scarcityOrder ?? bucket.sortOrder,
+          modelMethod: 'hierarchical-proximity-v2',
+          modelConfidence: Number(estimate.confidence.toFixed(3)),
+          structuralPrior: structuralDefinition?.priorMultiplier,
+          proximitySales: ratioPoints.length,
+        }
+      })
       .filter((bucket) => bucket.avgMultiplier > 1)
       .sort((left, right) => left.sortOrder - right.sortOrder || left.avgMultiplier - right.avgMultiplier),
   ]
@@ -332,13 +494,14 @@ const models = releases.map((releaseRow) => {
   const releaseKey = rowString(releaseRow, 'releaseKey')
   const releaseYear = rowNumber(releaseRow, 'releaseYear')
   const releaseName = rowString(releaseRow, 'releaseName')
+  const releaseCategory = categoryFromReleaseName(releaseName)
   const checklistPlayerRows = playerStatement.all(releaseKey)
   const allowedPlayerKeys = new Set(
     checklistPlayerRows.map((row) => playerYearKey(rowString(row, 'playerName'), releaseYear)),
   )
-  const baseMap = baseCandidatesByPlayer(releaseYear)
-  const salesMap = baseSalesByPlayer(releaseYear)
-  const { byPlayer: variationMap, multipliers } = variationRowsByPlayer(releaseYear, baseMap, allowedPlayerKeys)
+  const baseMap = baseCandidatesByPlayer(releaseYear, releaseCategory)
+  const salesMap = baseSalesByPlayer(releaseYear, releaseCategory)
+  const { byPlayer: variationMap, multipliers } = variationRowsByPlayer(releaseYear, releaseCategory, baseMap, allowedPlayerKeys)
   const players = checklistPlayerRows.map((row) => {
     const key = playerYearKey(rowString(row, 'playerName'), releaseYear)
     const baseRow = baseMap.get(key)
@@ -357,7 +520,7 @@ const models = releases.map((releaseRow) => {
   })
   const pricedPlayers = players.filter((player) => player.baseAvgPrice > 0 || player.variations.some((variation) => variation.avgPrice > 0))
   return {
-    category: categoryFromReleaseName(releaseName),
+    category: releaseCategory,
     release: releaseSlug(releaseName, releaseKey),
     releaseYear,
     totalPlayers: players.length,
@@ -366,6 +529,7 @@ const models = releases.map((releaseRow) => {
     multipliers,
     players,
     fetchedAt: new Date().toISOString(),
+    modelVersion: FAIR_VALUE_MODEL_VERSION,
     source: 'canonical-sold-model',
   }
 })

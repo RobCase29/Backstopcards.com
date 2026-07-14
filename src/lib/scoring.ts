@@ -11,8 +11,9 @@ import type {
   ScoreSettings,
   ValuationSource,
 } from '../types'
-import { estimateBasePrice } from './matrix'
+import { estimateBasePrice, releaseVariationCurve } from './matrix'
 import { salesCacheValuationForListing } from './liveComps'
+import { blendLaneEvidence } from './variationFairValue'
 import { titleLooksHandSignedAuto } from './handSigned'
 import type { SalesCachePlayerModel } from './salesCache'
 import { canonicalizeBowman2026AutoVariation } from '../../shared/bowman2026Taxonomy.js'
@@ -809,19 +810,20 @@ function estimateValuation(
   const baseEstimate = player ? estimateBasePrice(player) : null
   const modeledBasePrice = baseEstimate?.price ?? player?.baseAvgPrice ?? 0
   const playerVariation = player ? findVariation(listing, player.variations) : null
+  const releaseVariations = model ? releaseVariationCurve(model).variations : []
   const releaseVariation =
     model && playerVariation
-      ? findVariation(listing, model.multipliers) ??
+      ? findVariation(listing, releaseVariations) ??
         findVariation(
           {
             ...listing,
             title: `${listing.title} ${playerVariation.item.variation}`,
             variationLabel: playerVariation.item.variation,
           },
-          model.multipliers,
+          releaseVariations,
         )
       : model
-        ? findVariation(listing, model.multipliers)
+        ? findVariation(listing, releaseVariations)
         : null
   const baseTwmaPrice =
     modeledBasePrice && releaseVariation?.item.avgMultiplier
@@ -854,20 +856,22 @@ function estimateValuation(
     const variationSales = playerVariationSales
     const baseSales = baseEstimate?.effectiveSales ?? player?.baseSalesCount ?? 0
     const baseConfidence = baseEstimate?.confidence ?? 0.5
-    const variationWeight = clamp(0.42 + Math.min(variationSales, 8) / 28, 0.42, 0.68)
-    const baseWeight = clamp(0.42 + baseConfidence * 0.5 + Math.min(baseSales, 12) / 80, 0.5, 0.86)
-    const compWeight = compPrice ? clamp(listing.compCount / 16, 0.08, 0.28) : 0
+    const laneEstimate = blendLaneEvidence({
+      curvePrice: baseTwmaPrice,
+      directPrice: variationPrice,
+      saleCount: variationSales,
+      curveConfidence: baseConfidence,
+      directConfidence: clamp(0.42 + Math.log1p(variationSales) * 0.12, 0.42, 0.82),
+    })
+    const compWeight = compPrice ? clamp(listing.compCount / 40, 0.04, 0.14) : 0
     modelPrice = weightedAverage([
-      { value: variationPrice, weight: variationWeight },
-      { value: baseTwmaPrice, weight: baseWeight },
+      { value: laneEstimate.value, weight: 1 - compWeight },
       { value: compPrice ?? 0, weight: compWeight },
     ])
     modelConfidence = clamp(
-      0.64 +
-        Math.min(variationSales, 8) / 42 +
-        baseConfidence * 0.18 +
-        Math.min(baseSales, 12) / 80 +
-        Math.min(releaseVariation?.item.totalSales ?? 0, 250) / 1_200,
+      laneEstimate.confidence +
+        Math.min(baseSales, 12) / 160 +
+        Math.min(releaseVariation?.item.totalSales ?? 0, 250) / 2_000,
       0,
       0.95,
     )
@@ -876,9 +880,10 @@ function estimateValuation(
   } else if (baseTwmaPrice && player && releaseVariation) {
     const baseConfidence = baseEstimate?.confidence ?? 0.5
     const baseSales = baseEstimate?.effectiveSales ?? player.baseSalesCount
+    const compWeight = compPrice ? clamp(listing.compCount / 40, 0.04, 0.14) : 0
     modelPrice = weightedAverage([
-      { value: baseTwmaPrice, weight: 0.82 },
-      { value: compPrice ?? 0, weight: compPrice ? clamp(listing.compCount / 14, 0.08, 0.3) : 0 },
+      { value: baseTwmaPrice, weight: 1 - compWeight },
+      { value: compPrice ?? 0, weight: compWeight },
     ])
     modelConfidence = clamp(0.42 + baseConfidence * 0.34 + Math.min(baseSales, 8) / 44 + Math.min(releaseVariation.item.totalSales ?? 0, 200) / 900)
     matchedVariation = releaseVariation.item.variation
@@ -919,32 +924,25 @@ function estimateValuation(
       }
     }
 
-    const soldWeight = listing.isLowSerialNonAuto
-      ? 1
-      : soldComp.saleCount >= 5 && soldComp.matchScore >= 72
-        ? 0.82
-        : soldComp.saleCount >= 3
-          ? 0.68
-          : 0.54
-    const curveWeight = valuation.modelPrice && valuation.modelPrice > 0 ? 1 - soldWeight : 0
-    const soldModelPrice = weightedAverage([
-      { value: soldComp.soldModelPrice, weight: soldWeight },
-      { value: valuation.modelPrice ?? 0, weight: curveWeight },
-    ])
-    const blendedConfidence = clamp(
-      soldComp.confidence * (curveWeight > 0 ? soldWeight : 1) + valuation.modelConfidence * curveWeight,
-      0,
-      0.97,
-    )
+    const laneEstimate = blendLaneEvidence({
+      curvePrice: valuation.modelPrice ?? 0,
+      directPrice: soldComp.soldModelPrice,
+      saleCount: soldComp.saleCount,
+      curveConfidence: valuation.modelConfidence || 0.48,
+      directConfidence: soldComp.confidence,
+      matchScore: soldComp.matchScore,
+      lowSerialNonAuto: listing.isLowSerialNonAuto,
+    })
+    const soldModelPrice = laneEstimate.value
 
     return {
       ...valuation,
       fairValue: soldModelPrice,
       modelPrice: soldModelPrice,
       compPrice: soldComp.soldModelPrice,
-      modelConfidence: Math.max(valuation.modelConfidence, blendedConfidence),
+      modelConfidence: laneEstimate.confidence,
       matchedVariation: soldComp.bucket.variationLabel || valuation.matchedVariation,
-      valuationSource: soldComp.source,
+      valuationSource: valuation.modelPrice && valuation.modelPrice > 0 ? 'sales-cache-blend' : soldComp.source,
       compBucketLabel: soldComp.bucketLabel,
       compSaleCount: soldComp.saleCount,
       compLast3Avg: soldComp.last3Avg,

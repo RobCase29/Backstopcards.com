@@ -24,11 +24,21 @@ Case hits, sealed wax, and system health live at `/case-hits`, `/sealed-wax`, an
 Use Node 22.13+ locally. This repo includes `.nvmrc` set to Node 22 to match Vercel.
 
 For the current source-of-truth spec, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The versioned pricing hierarchy and its release safeguards are documented in
+[`docs/FAIR_VALUE_MODEL.md`](docs/FAIR_VALUE_MODEL.md).
 
 Run the full local guardrail pass with:
 
 ```bash
 npm run check
+```
+
+When pricing evidence or taxonomy changes, also run:
+
+```bash
+npm run checklist:static-snapshot
+npm run model:audit
+npm run model:backtest
 ```
 
 ## Current Architecture

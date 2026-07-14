@@ -30,6 +30,7 @@
     "comps:coverage": "node scripts/card-hedge-coverage-sync.mjs",
     "comps:coverage:audit": "node scripts/audit-checklist-coverage.mjs",
     "canonical:rebuild": "node scripts/rebuild-canonical-market.mjs",
+    "model:audit": "node --experimental-strip-types scripts/audit-fair-value-model.mjs",
     "model:backtest": "node scripts/backtest-fair-value.mjs",
     "sales:refresh": "npm run sales:sync && npm run sales:sync:structured && npm run canonical:rebuild && npm run sales:doctor",
     "sales:doctor": "node scripts/sales-cache-doctor.mjs",
