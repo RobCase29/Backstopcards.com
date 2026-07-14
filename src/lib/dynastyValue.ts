@@ -1,4 +1,5 @@
 import type { BasePriceSource } from './matrix'
+import type { OracleRankingRoute, StsRankingSource } from './stsRankings'
 
 export interface DynastyValueInput {
   stsRank: number | null
@@ -8,6 +9,14 @@ export interface DynastyValueInput {
   stsRiserValueScore: number | null
   stsAge: number | null
   stsLevel: string | null
+  rankingSource?: StsRankingSource | null
+  oracleRoute?: OracleRankingRoute | null
+  oracleStageRank?: number | null
+  oracleRankUniverse?: number | null
+  oracleRankAvailability?: string | null
+  oracleEvidenceTier?: string | null
+  oracleVolatility?: string | null
+  oracleCareerOutlook?: number | null
   baseTwmaPrice: number
   baseEffectiveSales: number
   baseVolatility: number
@@ -54,10 +63,45 @@ function sourceAdjustment(source: BasePriceSource) {
 }
 
 function rankingCoverage(row: DynastyValueInput) {
-  return row.stsRank !== null || row.stsProspectRank !== null || row.stsDynastyScore !== null
+  return (
+    row.stsRank !== null ||
+    row.stsProspectRank !== null ||
+    row.stsDynastyScore !== null ||
+    typeof row.oracleStageRank === 'number' ||
+    typeof row.oracleCareerOutlook === 'number'
+  )
+}
+
+function oracleEvidenceReliability(row: DynastyValueInput) {
+  const evidence =
+    row.oracleEvidenceTier === 'completed_season_full_model'
+      ? 1
+      : row.oracleEvidenceTier === 'completed_season_prior'
+        ? 0.94
+        : row.oracleEvidenceTier === 'live_in_season_prior'
+          ? 0.84
+          : 0.9
+  const volatility = row.oracleVolatility === 'very_high' ? 0.9 : row.oracleVolatility === 'high' ? 0.95 : 1
+  const availability = row.oracleRankAvailability === 'insufficient_sample' ? 0.94 : 1
+  return evidence * volatility * availability
 }
 
 function formulatedRankQuality(row: DynastyValueInput) {
+  const hasOracleStageRank =
+    (row.oracleRoute === 'milb' || row.oracleRoute === 'rookie') &&
+    row.oracleStageRank !== null &&
+    row.oracleStageRank !== undefined
+  if (row.rankingSource === 'baseball-oracle' && hasOracleStageRank) {
+    const rankQuality = rankPercentile(row.oracleStageRank ?? null, Math.max(2, row.oracleRankUniverse ?? 6_500))
+    const careerQuality =
+      row.oracleCareerOutlook !== null && row.oracleCareerOutlook !== undefined
+        ? clamp(row.oracleCareerOutlook / 100, 0, 1)
+        : row.stsDynastyScore !== null
+          ? clamp(row.stsDynastyScore / 100, 0, 1)
+          : rankQuality
+    return clamp((rankQuality * 0.72 + careerQuality * 0.28) * oracleEvidenceReliability(row), 0, 1)
+  }
+
   const dynastyQuality = row.stsDynastyScore !== null ? clamp(row.stsDynastyScore / 100, 0, 1) : rankPercentile(row.stsRank, 7_500)
   const overallQuality = rankPercentile(row.stsRank, 7_500)
   const prospectQuality = rankPercentile(row.stsProspectRank, 3_600)
@@ -109,8 +153,13 @@ function liquidityScore(row: DynastyValueInput) {
 
 function eliteAffordabilityBoost(row: DynastyValueInput, basePrice: number) {
   const isElite =
+    ((row.oracleRoute === 'milb' || row.oracleRoute === 'rookie') &&
+      row.oracleStageRank !== null &&
+      row.oracleStageRank !== undefined &&
+      row.oracleStageRank <= 10) ||
     (row.stsProspectRank !== null && row.stsProspectRank <= 10) ||
     (row.stsRank !== null && row.stsRank <= 12) ||
+    (row.oracleCareerOutlook !== null && row.oracleCareerOutlook !== undefined && row.oracleCareerOutlook >= 88) ||
     (row.stsDynastyScore !== null && row.stsDynastyScore >= 88)
 
   const referencePrice = isElite ? 220 : 115

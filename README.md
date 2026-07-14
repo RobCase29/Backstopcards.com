@@ -1,6 +1,6 @@
 # Backstop Card Finder
 
-Local price atlas for Bowman 1st auto cards. The app turns checklist data into a player x variation model using a recency-weighted base price, set-level variation multiples, and Formulated Consensus dynasty context, then can scan active marketplace listings and rank them against the model by raw dollar edge.
+Local price atlas for Bowman 1st auto cards. The app turns checklist data into a player x variation model using a recency-weighted base price, set-level variation multiples, Baseball Oracle prospect context, and Scout the Statline trends, then can scan active marketplace listings and rank them against the model by raw dollar edge.
 
 ## Run
 
@@ -89,9 +89,17 @@ CRON_SECRET=your_long_random_cron_secret
 
 If Vercel provisions the Redis integration with KV-compatible names, `KV_REST_API_URL` and `KV_REST_API_TOKEN` are accepted as aliases. Keep all of these server-side only.
 
-## Consensus Rankings
+## Player Rankings
 
-Dynasty context is refreshed from Scout the Statline's Formulated Consensus endpoint. The app pulls hitters and pitchers separately, always includes low-coverage rows, then normalizes them into one combined ranking layer for lookup, BIN targeting, and dynasty-value sorting.
+Baseball Oracle is the authoritative prospect-ranking source for checklist-matched MiLB players. The app keeps Oracle's served Prospect Rank and ranking-universe size intact, and also imports Career Outlook, evidence tier, volatility, rank target, model version, and as-of metadata. Scout the Statline (STS) remains a complementary signal: it supplies movement and coverage context for matched prospects and the MLB dynasty-rank fallback for players who no longer have a current Oracle MiLB prospect rank.
+
+The ranking layer intentionally exposes three different ordinals:
+
+- **Oracle Prospect Rank** is the global, provider-served position within Oracle's current MiLB universe. It is never renumbered to fit a Bowman checklist.
+- **Bowman-local prospect rank** is the relative order of Oracle-ranked prospects present in the loaded Bowman universe. It is useful for checklist navigation, but it is not an Oracle rank.
+- **Opportunity rank** is Backstop's price-aware ordering. It combines ranking and Career Outlook context with the local comp model; it must not be presented as a provider ranking.
+
+Oracle's Rookie Pre-Debut and MLB Career ranks are distinct stage-specific signals and are not compared numerically with the MiLB Prospect Rank. Career Outlook is a separate 0-100 dynasty projection, not another ordinal.
 
 Refresh the local ranking snapshots with:
 
@@ -101,10 +109,14 @@ npm run rankings:refresh
 
 The generated snapshots are:
 
+- `src/data/baseball_oracle_bowman_prospects.csv`
 - `src/data/sts_formulated_consensus_hitters.csv`
 - `src/data/sts_formulated_consensus_pitchers.csv`
+- `src/data/sts_oopsy_peak_mlb.csv`
 
-Production rankings refresh through Vercel Cron at `/api/rankings/refresh`, which writes to the runtime cache instead of the read-only deployment filesystem. The bundled CSV files are fallback snapshots for local development and outage recovery.
+The refresh script reconciles checklist players to stable Oracle player IDs, then stores a compact provider-owned snapshot with record version, snapshot ID, schema/contract versions, model/as-of fields, evidence, volatility, and match provenance. Ambiguous name matches fail closed instead of attaching a ranking to the wrong player.
+
+Production rankings refresh through Vercel Cron at `/api/rankings/refresh`, which writes to the runtime cache instead of the read-only deployment filesystem. Oracle requests run only in the server route or refresh script; the browser never calls the provider API directly. The bundled CSV files are fallback snapshots for local development, outage recovery, and lineage inspection.
 
 ## Legacy Checklist Feed (Fallback Only)
 
@@ -173,7 +185,7 @@ The BIN Deal Radar can scan one loaded checklist or every loaded checklist. It b
 modeled variation price - all-in BIN price
 ```
 
-The radar can scan the full checklist, focus on a specific player name, focus on a variation/parallel term such as `packfractor`, `gold shimmer`, or `red lava`, or use the `Target 50` bucket. `Target 50` scores the best players to hunt using modeled base-auto price, consensus rank, prospect rank, source coverage, and current market quality.
+The radar can scan the full checklist, focus on a specific player name, focus on a variation/parallel term such as `packfractor`, `gold shimmer`, or `red lava`, or use the `Target 50` bucket. `Target 50` scores the best players to hunt using modeled base-auto price, Oracle prospect/Career Outlook context, STS trend or MLB fallback data, source coverage, and current market quality.
 
 To enable live scans, create `.env.local` from `.env.example` and set:
 
@@ -415,7 +427,7 @@ Eli Willits,285,455,Blue /150,2026 Bowman Chrome,https://example.com,0,
 
 ## Scoring
 
-The board opens on the most underpriced decision-ready players: rank-implied base value is compared with the current sold-comp base, then tempered by model quality and ranking coverage. Search, team, set, model-quality, and rank filters can narrow that board without changing the underlying price evidence. Consensus-powered sorts include overall rank, prospect/MLB rank, dynasty score, value score, momentum, and BIN target score. Export writes the long-form valuation ladder with price source, sale depth, ranking context, and deal-target fields.
+The board opens on the most underpriced decision-ready players: rank-implied base value is compared with the current sold-comp base, then tempered by model quality and ranking coverage. Search, team, set, model-quality, and rank filters can narrow that board without changing the underlying price evidence. Ranking-powered sorts include Oracle Prospect Rank, Bowman-local rank, STS MLB fallback rank, Career Outlook, value score, momentum, and BIN target score. Export writes the long-form valuation ladder with price source, sale depth, ranking context, Oracle lineage, and deal-target fields.
 
 The live BIN radar ranks fetched listings by raw dollar spread, but it is now downstream of the model. Unsupported players, wrong-set matches, and adjacent product families are excluded instead of being modeled from broad search noise.
 

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { ChecklistModel } from '../types'
 import { buildPricingMatrix, estimateBasePrice, releaseVariationCurve, variationKey } from './matrix'
 import { BOWMAN_2026_CHROME_AUTO_VARIATIONS } from '../../shared/bowman2026Taxonomy.js'
+import { STS_FALLBACK_CSV_INPUTS } from './stsFallback'
+import { hydrateStsLeaderboard } from './stsRankings'
 
 const asOf = Date.UTC(2026, 5, 21)
 
@@ -86,6 +88,64 @@ describe('pricing matrix', () => {
       ['Blue /150 Auto', 195],
       ['Gold /50 Auto', 400],
     ])
+  })
+
+  it('preserves global Oracle ranks while assigning a distinct Bowman-local prospect order', () => {
+    const headers = [
+      'Source', '#', 'Checklist Key', 'Checklist Name', 'Checklist Team', 'Match Method',
+      'Oracle Player Id', 'MLBAM Id', 'Oracle Name', 'Oracle Route', 'Ranking Role',
+      'Rank Label', 'Rank Availability', 'Rank Universe', 'Rank Target', 'Rank As Of',
+      'Rank Model Version', 'Evidence Tier', 'Volatility', 'Reason Codes', 'Career Outlook',
+      'Career Outlook Band', 'Career Outlook Basis', 'Career Outlook As Of',
+      'Career Outlook Model Version', 'Age', 'Level', 'Team', 'Pos', 'Record Version',
+      'Snapshot Id', 'Schema Version', 'Contract Version', 'Updated',
+    ]
+    const row = (name: string, team: string, rank: number, id: string, mlbam: string, outlook: number) => [
+      'Baseball Oracle Player Signals', rank, name.toLowerCase(), name, team, 'checklist_name_and_team',
+      id, mlbam, name, 'milb', 'hitter', 'Prospect Rank', 'available', 6_490,
+      'mlb_war_next_5_ge_5', '2025-12-31T00:00:00.000Z', 'rank-model-v1',
+      'completed_season_full_model', 'standard', '', outlook, 'MLB contributor',
+      'conditional_on_mlb_arrival', '2025-12-31T00:00:00.000Z', 'career-model-v1',
+      20, 'AA', team, 'SS', `record-${id}`, 'snapshot-matrix-test', 'player-signals.v1',
+      'player-signals-contract/v1', '2026-07-14T14:14:34.796Z',
+    ].join(',')
+    const oracleCsv = [
+      headers.join(','),
+      row('Local Rank One', 'MIA', 12, 'oracle:local-one', '900001', 76),
+      row('Local Rank Two', 'BOS', 300, 'oracle:local-two', '900002', 62),
+    ].join('\n')
+
+    try {
+      hydrateStsLeaderboard([oracleCsv])
+      const matrix = buildPricingMatrix([
+        {
+          ...bowmanModel,
+          players: [
+            { playerName: 'Local Rank One', team: 'MIA', baseAvgPrice: 40, baseSalesCount: 5, variations: [] },
+            { playerName: 'Local Rank Two', team: 'BOS', baseAvgPrice: 80, baseSalesCount: 5, variations: [] },
+          ],
+        },
+      ])
+      const first = matrix.rows.find((candidate) => candidate.playerName === 'Local Rank One')
+      const second = matrix.rows.find((candidate) => candidate.playerName === 'Local Rank Two')
+
+      expect(first).toMatchObject({
+        rankingSource: 'baseball-oracle',
+        oraclePlayerId: 'oracle:local-one',
+        oracleMlbamId: '900001',
+        oracleServedProspectRank: 12,
+        oracleRankUniverse: 6_490,
+        bowmanProspectRank: 1,
+        oracleSnapshotId: 'snapshot-matrix-test',
+      })
+      expect(second).toMatchObject({
+        oracleServedProspectRank: 300,
+        bowmanProspectRank: 2,
+      })
+      expect(matrix.stsProspectRows).toBe(2)
+    } finally {
+      hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)
+    }
   })
 
   it('uses each release-specific multiple for the same variation label', () => {

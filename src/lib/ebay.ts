@@ -16,7 +16,7 @@ import {
   variationQueryTerm,
 } from './cardTitleGuards'
 import { titleLooksHandSignedAuto } from './handSigned'
-import { findStsRanking } from './stsRankings'
+import { findStsRanking, primaryStsRank } from './stsRankings'
 
 type EbayQueryMeta = {
   q?: string
@@ -349,7 +349,7 @@ function mapEbayItemToListing(item: EbayItemSummary, fallbackReleaseLabel: strin
       level: stsRanking?.level,
       position: stsRanking?.pos,
       age: stsRanking?.age,
-      ranking: stsRanking?.prospectRank ?? stsRanking?.rank,
+      ranking: stsRanking ? primaryStsRank(stsRanking) : null,
     },
   }
 }

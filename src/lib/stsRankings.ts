@@ -1,5 +1,8 @@
-export type StsRankingSource = 'formulated-consensus' | 'legacy-leaderboard' | 'oopsy-peak-mlb'
-export type StsPopulation = 'hitter' | 'pitcher' | 'legacy' | 'mlb'
+import { normalizeTeamCode } from './teams'
+
+export type StsRankingSource = 'baseball-oracle' | 'formulated-consensus' | 'legacy-leaderboard' | 'oopsy-peak-mlb'
+export type StsPopulation = 'oracle' | 'hitter' | 'pitcher' | 'legacy' | 'mlb'
+export type OracleRankingRoute = 'milb' | 'rookie' | 'mlb'
 
 export interface StsRanking {
   name: string
@@ -25,7 +28,80 @@ export interface StsRanking {
   lowCoverage: boolean
   sourceRanks: Record<string, number | null>
   updated: string
+  oraclePlayerId: string | null
+  oracleMlbamId: string | null
+  oracleRoute: OracleRankingRoute | null
+  oracleRankingRole: 'hitter' | 'pitcher' | null
+  oracleRankLabel: string | null
+  oracleStageRank: number | null
+  oracleRankUniverse: number | null
+  oracleRankAvailability: string | null
+  oracleRankTarget: string | null
+  oracleRankAsOf: string | null
+  oracleRankModelVersion: string | null
+  oracleEvidenceTier: string | null
+  oracleVolatility: string | null
+  oracleCareerOutlook: number | null
+  oracleCareerOutlookBand: string | null
+  oracleCareerOutlookBasis: string | null
+  oracleCareerOutlookAsOf: string | null
+  oracleCareerOutlookModelVersion: string | null
+  oracleRecordVersion: string | null
+  oracleSnapshotId: string | null
+  oracleSchemaVersion: string | null
+  oracleContractVersion: string | null
+  oracleMatchMethod: string | null
 }
+
+const NO_ORACLE_FIELDS = {
+  oraclePlayerId: null,
+  oracleMlbamId: null,
+  oracleRoute: null,
+  oracleRankingRole: null,
+  oracleRankLabel: null,
+  oracleStageRank: null,
+  oracleRankUniverse: null,
+  oracleRankAvailability: null,
+  oracleRankTarget: null,
+  oracleRankAsOf: null,
+  oracleRankModelVersion: null,
+  oracleEvidenceTier: null,
+  oracleVolatility: null,
+  oracleCareerOutlook: null,
+  oracleCareerOutlookBand: null,
+  oracleCareerOutlookBasis: null,
+  oracleCareerOutlookAsOf: null,
+  oracleCareerOutlookModelVersion: null,
+  oracleRecordVersion: null,
+  oracleSnapshotId: null,
+  oracleSchemaVersion: null,
+  oracleContractVersion: null,
+  oracleMatchMethod: null,
+} satisfies Pick<StsRanking,
+  | 'oraclePlayerId'
+  | 'oracleMlbamId'
+  | 'oracleRoute'
+  | 'oracleRankingRole'
+  | 'oracleRankLabel'
+  | 'oracleStageRank'
+  | 'oracleRankUniverse'
+  | 'oracleRankAvailability'
+  | 'oracleRankTarget'
+  | 'oracleRankAsOf'
+  | 'oracleRankModelVersion'
+  | 'oracleEvidenceTier'
+  | 'oracleVolatility'
+  | 'oracleCareerOutlook'
+  | 'oracleCareerOutlookBand'
+  | 'oracleCareerOutlookBasis'
+  | 'oracleCareerOutlookAsOf'
+  | 'oracleCareerOutlookModelVersion'
+  | 'oracleRecordVersion'
+  | 'oracleSnapshotId'
+  | 'oracleSchemaVersion'
+  | 'oracleContractVersion'
+  | 'oracleMatchMethod'
+>
 
 const CONSENSUS_SOURCE_COLUMNS = [
   'BaGS',
@@ -189,6 +265,7 @@ function parseConsensusCsv(rows: string[][], headers: string[]) {
       lowCoverage,
       sourceRanks,
       updated: cell(row, 'Updated'),
+      ...NO_ORACLE_FIELDS,
     }
     return [{ ...ranking, summary: consensusSummary(ranking) }]
   })
@@ -231,6 +308,7 @@ function parseLegacyCsv(rows: string[][], headers: string[]) {
         lowCoverage: false,
         sourceRanks: {},
         updated: '',
+        ...NO_ORACLE_FIELDS,
       },
     ]
   })
@@ -274,14 +352,95 @@ function parseOopsyPeakMlbCsv(rows: string[][], headers: string[]) {
         lowCoverage: false,
         sourceRanks: {},
         updated: cell(row, 'Updated'),
+        ...NO_ORACLE_FIELDS,
       },
     ]
+  })
+}
+
+function parseBaseballOracleCsv(rows: string[][], headers: string[]) {
+  const headerIndex = new Map(headers.map((header, index) => [header.trim(), index]))
+  const cell = (row: string[], header: string) => row[headerIndex.get(header) ?? -1]?.trim() ?? ''
+
+  return rows.slice(1).flatMap<StsRanking>((row) => {
+    const checklistName = cell(row, 'Checklist Name')
+    const oracleName = cell(row, 'Oracle Name')
+    const oraclePlayerId = cell(row, 'Oracle Player Id')
+    const routeText = cell(row, 'Oracle Route')
+    const oracleRoute: OracleRankingRoute | null = routeText === 'milb' || routeText === 'rookie' || routeText === 'mlb' ? routeText : null
+    if (!checklistName || !oracleName || !oraclePlayerId || !oracleRoute) return []
+
+    const availability = cell(row, 'Rank Availability')
+    const stageRankValue = parseNumber(cell(row, '#'))
+    const stageRank = availability === 'available' || availability === 'insufficient_sample' ? stageRankValue : null
+    const evidenceTier = cell(row, 'Evidence Tier') || null
+    const volatility = cell(row, 'Volatility') || null
+    const careerOutlook = parseNumber(cell(row, 'Career Outlook'))
+    const rankLabel = cell(row, 'Rank Label') || null
+    const careerBand = cell(row, 'Career Outlook Band') || null
+    const evidenceText = evidenceTier ? evidenceTier.replaceAll('_', ' ') : 'evidence unavailable'
+    const summary = [
+      stageRank && rankLabel ? `Baseball Oracle ${rankLabel} #${formatRank(stageRank)} of ${formatRank(parseNumber(cell(row, 'Rank Universe')) ?? stageRank)}` : `Baseball Oracle ${rankLabel ?? 'Stage Rank'} unavailable`,
+      careerOutlook !== null ? `Career Outlook ${careerOutlook.toFixed(1)}${careerBand ? ` (${careerBand})` : ''}` : null,
+      `${evidenceText}${volatility ? ` / ${volatility.replaceAll('_', ' ')} volatility` : ''}`,
+      'Research-only baseball signal; card opportunity is modeled separately.',
+    ].filter(Boolean).join(' | ')
+
+    return [{
+      name: oracleName,
+      normalizedName: normalizeStsPlayerName(checklistName),
+      team: cell(row, 'Team'),
+      pos: cell(row, 'Pos'),
+      age: parseNumber(cell(row, 'Age')),
+      level: cell(row, 'Level'),
+      rank: null,
+      prospectRank: oracleRoute === 'milb' ? stageRank : null,
+      change3d: null,
+      change7d: null,
+      change14d: null,
+      change30d: null,
+      war: null,
+      summary,
+      source: 'baseball-oracle',
+      population: 'oracle',
+      populationRank: stageRank,
+      avgRank: null,
+      sortAvgRank: stageRank,
+      coverage: 0,
+      lowCoverage: availability === 'insufficient_sample' || evidenceTier !== 'completed_season_full_model' || volatility !== 'standard',
+      sourceRanks: {},
+      updated: cell(row, 'Updated'),
+      oraclePlayerId,
+      oracleMlbamId: cell(row, 'MLBAM Id') || null,
+      oracleRoute,
+      oracleRankingRole: cell(row, 'Ranking Role') === 'pitcher' ? 'pitcher' : 'hitter',
+      oracleRankLabel: rankLabel,
+      oracleStageRank: stageRank,
+      oracleRankUniverse: parseNumber(cell(row, 'Rank Universe')),
+      oracleRankAvailability: availability || null,
+      oracleRankTarget: cell(row, 'Rank Target') || null,
+      oracleRankAsOf: cell(row, 'Rank As Of') || null,
+      oracleRankModelVersion: cell(row, 'Rank Model Version') || null,
+      oracleEvidenceTier: evidenceTier,
+      oracleVolatility: volatility,
+      oracleCareerOutlook: careerOutlook,
+      oracleCareerOutlookBand: careerBand,
+      oracleCareerOutlookBasis: cell(row, 'Career Outlook Basis') || null,
+      oracleCareerOutlookAsOf: cell(row, 'Career Outlook As Of') || null,
+      oracleCareerOutlookModelVersion: cell(row, 'Career Outlook Model Version') || null,
+      oracleRecordVersion: cell(row, 'Record Version') || null,
+      oracleSnapshotId: cell(row, 'Snapshot Id') || null,
+      oracleSchemaVersion: cell(row, 'Schema Version') || null,
+      oracleContractVersion: cell(row, 'Contract Version') || null,
+      oracleMatchMethod: cell(row, 'Match Method') || null,
+    }]
   })
 }
 
 export function parseStsCsv(input: string) {
   const rows = parseCsvRows(input)
   const headers = rows[0] ?? []
+  if (headers.includes('Oracle Player Id') && headers.includes('Rank Availability')) return parseBaseballOracleCsv(rows, headers)
   if (headers.includes('Avg Rank') && headers.includes('Coverage')) return parseConsensusCsv(rows, headers)
   if (headers.includes('Source') && headers.includes('PlayerId') && headers.includes('Rank')) return parseOopsyPeakMlbCsv(rows, headers)
   return parseLegacyCsv(rows, headers)
@@ -339,6 +498,7 @@ function betterRanking(left: StsRanking | undefined, right: StsRanking) {
 }
 
 function rankingPrecedence(ranking: StsRanking) {
+  if (ranking.source === 'baseball-oracle') return 5
   if (ranking.prospectRank !== null) return 4
   if (ranking.source === 'oopsy-peak-mlb' && isMlbLevel(ranking.level) && ranking.rank !== null) return 3
   if (ranking.source === 'formulated-consensus' && ranking.rank !== null) return 2
@@ -346,25 +506,91 @@ function rankingPrecedence(ranking: StsRanking) {
   return 0
 }
 
+function mergeOracleRanking(oracle: StsRanking, supplement?: StsRanking) {
+  if (!supplement) return oracle
+  return {
+    ...supplement,
+    name: oracle.name,
+    normalizedName: oracle.normalizedName,
+    team: oracle.team || supplement.team,
+    pos: oracle.pos || supplement.pos,
+    age: oracle.age ?? supplement.age,
+    level: oracle.level || supplement.level,
+    // Oracle owns the prospect ordinal. STS remains the overall/MLB fallback and trend source.
+    prospectRank: oracle.prospectRank,
+    change3d: supplement.change3d,
+    change7d: supplement.change7d,
+    change14d: supplement.change14d,
+    change30d: supplement.change30d,
+    war: supplement.war,
+    summary: [oracle.summary, supplement.summary ? `Scout the Statline context: ${supplement.summary}` : null].filter(Boolean).join(' | '),
+    source: 'baseball-oracle' as const,
+    population: 'oracle' as const,
+    populationRank: oracle.populationRank,
+    sortAvgRank: oracle.sortAvgRank,
+    lowCoverage: oracle.lowCoverage,
+    updated: oracle.updated,
+    oraclePlayerId: oracle.oraclePlayerId,
+    oracleMlbamId: oracle.oracleMlbamId,
+    oracleRoute: oracle.oracleRoute,
+    oracleRankingRole: oracle.oracleRankingRole,
+    oracleRankLabel: oracle.oracleRankLabel,
+    oracleStageRank: oracle.oracleStageRank,
+    oracleRankUniverse: oracle.oracleRankUniverse,
+    oracleRankAvailability: oracle.oracleRankAvailability,
+    oracleRankTarget: oracle.oracleRankTarget,
+    oracleRankAsOf: oracle.oracleRankAsOf,
+    oracleRankModelVersion: oracle.oracleRankModelVersion,
+    oracleEvidenceTier: oracle.oracleEvidenceTier,
+    oracleVolatility: oracle.oracleVolatility,
+    oracleCareerOutlook: oracle.oracleCareerOutlook,
+    oracleCareerOutlookBand: oracle.oracleCareerOutlookBand,
+    oracleCareerOutlookBasis: oracle.oracleCareerOutlookBasis,
+    oracleCareerOutlookAsOf: oracle.oracleCareerOutlookAsOf,
+    oracleCareerOutlookModelVersion: oracle.oracleCareerOutlookModelVersion,
+    oracleRecordVersion: oracle.oracleRecordVersion,
+    oracleSnapshotId: oracle.oracleSnapshotId,
+    oracleSchemaVersion: oracle.oracleSchemaVersion,
+    oracleContractVersion: oracle.oracleContractVersion,
+    oracleMatchMethod: oracle.oracleMatchMethod,
+  }
+}
+
 function buildLeaderboard(csvInputs: string[]) {
   const rows = assignCombinedRanks(csvInputs.flatMap(parseStsCsv))
-  const byName = new Map<string, StsRanking>()
+  const fallbackByName = new Map<string, StsRanking>()
+  const oracleByName = new Map<string, StsRanking[]>()
 
   for (const ranking of rows) {
-    byName.set(ranking.normalizedName, betterRanking(byName.get(ranking.normalizedName), ranking))
+    if (ranking.source === 'baseball-oracle') {
+      const candidates = oracleByName.get(ranking.normalizedName) ?? []
+      candidates.push(ranking)
+      oracleByName.set(ranking.normalizedName, candidates)
+    } else {
+      fallbackByName.set(ranking.normalizedName, betterRanking(fallbackByName.get(ranking.normalizedName), ranking))
+    }
+  }
+
+  const byName = new Map<string, StsRanking[]>()
+  for (const key of new Set([...fallbackByName.keys(), ...oracleByName.keys()])) {
+    const fallback = fallbackByName.get(key)
+    const oracleRows = oracleByName.get(key) ?? []
+    byName.set(key, oracleRows.length ? oracleRows.map((oracle) => mergeOracleRanking(oracle, fallback)) : fallback ? [fallback] : [])
   }
 
   for (const [alias, officialName] of STS_PLAYER_ALIASES) {
-    const officialRanking = byName.get(normalizeStsPlayerName(officialName))
-    if (officialRanking) byName.set(normalizeStsPlayerName(alias), officialRanking)
+    const officialRankings = byName.get(normalizeStsPlayerName(officialName))
+    if (officialRankings?.length) byName.set(normalizeStsPlayerName(alias), officialRankings)
   }
 
-  return { rows, byName }
+  const mergedRows = [...byName.values()].flat()
+  return { rows: mergedRows, byName, fallbackByName }
 }
 
 type LeaderboardState = {
   rows: StsRanking[]
-  byName: Map<string, StsRanking>
+  byName: Map<string, StsRanking[]>
+  fallbackByName: Map<string, StsRanking>
   maxRank: number
   maxProspectRank: number
 }
@@ -374,7 +600,7 @@ let activeCsvInputs: string[] = []
 
 export function hydrateStsLeaderboard(csvInputs: string[]) {
   const validInputs = csvInputs.filter((input) => input.trim())
-  if (validInputs.length < 2) return false
+  if (validInputs.length < 1) return false
   activeCsvInputs = validInputs
   cachedLeaderboard = null
   leaderboardState()
@@ -383,12 +609,14 @@ export function hydrateStsLeaderboard(csvInputs: string[]) {
 
 function leaderboardState() {
   if (cachedLeaderboard) return cachedLeaderboard
-  const { rows, byName } = buildLeaderboard(activeCsvInputs)
+  const { rows, byName, fallbackByName } = buildLeaderboard(activeCsvInputs)
+  const fallbackRows = [...fallbackByName.values()]
   cachedLeaderboard = {
     rows,
     byName,
-    maxRank: Math.max(1, ...rows.map((ranking) => ranking.rank ?? 0)),
-    maxProspectRank: Math.max(1, ...rows.map((ranking) => ranking.prospectRank ?? 0)),
+    fallbackByName,
+    maxRank: Math.max(1, ...fallbackRows.map((ranking) => ranking.rank ?? 0)),
+    maxProspectRank: Math.max(1, ...fallbackRows.map((ranking) => ranking.prospectRank ?? 0)),
   }
   return cachedLeaderboard
 }
@@ -399,6 +627,20 @@ function rankScore(rank: number | null, max: number) {
 }
 
 function coverageAdjustment(ranking: StsRanking) {
+  if (ranking.source === 'baseball-oracle') {
+    const evidenceAdjustment =
+      ranking.oracleEvidenceTier === 'completed_season_full_model' || ranking.oracleEvidenceTier === 'current_mlb_model'
+        ? 1
+        : ranking.oracleEvidenceTier === 'completed_season_prior'
+          ? 0.94
+          : ranking.oracleEvidenceTier === 'live_in_season_prior'
+            ? 0.84
+            : 0.9
+    const volatilityAdjustment =
+      ranking.oracleVolatility === 'very_high' ? 0.9 : ranking.oracleVolatility === 'high' ? 0.95 : 1
+    const availabilityAdjustment = ranking.oracleRankAvailability === 'insufficient_sample' ? 0.94 : 1
+    return evidenceAdjustment * volatilityAdjustment * availabilityAdjustment
+  }
   if (ranking.source !== 'formulated-consensus') return 1
   if (ranking.lowCoverage) return 0.84 + Math.min(ranking.coverage, 2) * 0.04
   return 0.96 + clamp(ranking.coverage / 7, 0, 1) * 0.04
@@ -408,19 +650,41 @@ export function isStsMlbDynastyFallback(ranking: Pick<StsRanking, 'level' | 'pro
   return ranking.prospectRank === null && ranking.rank !== null && isMlbLevel(ranking.level)
 }
 
-export function primaryStsRank(ranking: Pick<StsRanking, 'rank' | 'prospectRank'>) {
+type PrimaryRankingInput = Pick<StsRanking, 'rank' | 'prospectRank'> &
+  Partial<Pick<StsRanking, 'level' | 'oracleRoute' | 'oracleStageRank'>>
+
+export function primaryStsRank(ranking: PrimaryRankingInput) {
+  if ((ranking.oracleRoute === 'milb' || ranking.oracleRoute === 'rookie') && typeof ranking.oracleStageRank === 'number') {
+    return ranking.oracleStageRank
+  }
   return ranking.prospectRank ?? ranking.rank
 }
 
-export function primaryStsRankLabel(ranking: Pick<StsRanking, 'level' | 'rank' | 'prospectRank'>) {
+export function primaryStsRankLabel(ranking: PrimaryRankingInput) {
+  if (ranking.oracleRoute === 'milb' && typeof ranking.oracleStageRank === 'number') {
+    return `Oracle Prospect #${ranking.oracleStageRank.toLocaleString()}`
+  }
+  if (ranking.oracleRoute === 'rookie' && typeof ranking.oracleStageRank === 'number') {
+    return `Oracle Pre-Debut #${ranking.oracleStageRank.toLocaleString()}`
+  }
   if (ranking.prospectRank !== null) return `Prospect #${ranking.prospectRank.toLocaleString()}`
-  if (isStsMlbDynastyFallback(ranking)) return `MLB dynasty #${ranking.rank?.toLocaleString()}`
+  if (ranking.level && isStsMlbDynastyFallback({ ...ranking, level: ranking.level })) {
+    return `MLB dynasty #${ranking.rank?.toLocaleString()}`
+  }
   if (ranking.rank !== null) return `Rank #${ranking.rank.toLocaleString()}`
   return null
 }
 
 export function scoreStsRanking(ranking: StsRanking) {
   const { maxRank, maxProspectRank } = leaderboardState()
+  if (ranking.source === 'baseball-oracle') {
+    const oracleRankScore = rankScore(
+      ranking.oracleRoute === 'milb' || ranking.oracleRoute === 'rookie' ? ranking.oracleStageRank : null,
+      ranking.oracleRankUniverse ?? maxProspectRank,
+    )
+    const rawScore = ranking.oracleCareerOutlook ?? oracleRankScore ?? 0
+    return Number((rawScore * coverageAdjustment(ranking)).toFixed(1))
+  }
   const overallScore = rankScore(ranking.rank, maxRank) ?? 0
   const prospectScore = rankScore(ranking.prospectRank, maxProspectRank) ?? 0
   const prospectWeight = isMlbLevel(ranking.level) ? 0.9 : 1
@@ -451,7 +715,7 @@ export function scoreStsRiserValue(ranking: StsRanking, basePrice: number) {
   const priceDrag = Math.log10(Math.max(10, basePrice)) * 13
   const prospectBoost = ranking.prospectRank ? 5 : 0
   const coverageBoost = ranking.source === 'formulated-consensus' ? clamp(ranking.coverage, 0, 7) * 0.55 : 0
-  const lowCoverageDiscovery = ranking.lowCoverage ? 3 : 0
+  const lowCoverageDiscovery = ranking.source === 'formulated-consensus' && ranking.lowCoverage ? 3 : 0
   return Number(Math.max(0, dynastyScore + positiveMomentum * 0.85 + prospectBoost + coverageBoost + lowCoverageDiscovery - priceDrag).toFixed(1))
 }
 
@@ -465,12 +729,36 @@ export function scoreStsBinTarget(ranking: StsRanking, basePrice: number) {
   const prospectBoost = ranking.prospectRank ? 8 : 0
   const trendScore = positiveMomentum * 0.72
   const coverageBoost = ranking.source === 'formulated-consensus' ? clamp(ranking.coverage, 0, 7) * 0.65 : 0
-  const lowCoverageDiscovery = ranking.lowCoverage ? 4 : 0
+  const lowCoverageDiscovery = ranking.source === 'formulated-consensus' && ranking.lowCoverage ? 4 : 0
   return Number(Math.max(0, dynastyScore * 0.72 + trendScore + priceSweetSpot + investablePrice + prospectBoost + coverageBoost + lowCoverageDiscovery).toFixed(1))
 }
 
-export function findStsRanking(playerName: string) {
-  return leaderboardState().byName.get(normalizeStsPlayerName(playerName)) ?? null
+export function findStsRanking(
+  playerName: string,
+  options: { team?: string | null; oraclePlayerId?: string | null; mlbamId?: string | null } = {},
+) {
+  const state = leaderboardState()
+  const key = normalizeStsPlayerName(playerName)
+  const candidates = state.byName.get(key) ?? []
+  if (!candidates.length) return null
+
+  if (options.oraclePlayerId) {
+    const exact = candidates.find((candidate) => candidate.oraclePlayerId === options.oraclePlayerId)
+    if (exact) return exact
+  }
+  if (options.mlbamId) {
+    const exact = candidates.find((candidate) => candidate.oracleMlbamId === options.mlbamId)
+    if (exact) return exact
+  }
+  if (candidates.length === 1) return candidates[0]
+
+  const requestedTeam = normalizeTeamCode(options.team)
+  if (requestedTeam) {
+    const teamMatches = candidates.filter((candidate) => normalizeTeamCode(candidate.team) === requestedTeam)
+    if (teamMatches.length === 1) return teamMatches[0]
+  }
+
+  return state.fallbackByName.get(key) ?? null
 }
 
 export function getStsLeaderboard() {

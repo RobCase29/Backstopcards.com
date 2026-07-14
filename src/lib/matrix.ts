@@ -1,5 +1,6 @@
 import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
 import { findStsRanking, scoreStsBinTarget, scoreStsMomentum, scoreStsRanking, scoreStsRiserValue } from './stsRankings'
+import type { OracleRankingRoute, StsRankingSource } from './stsRankings'
 import { normalizeTeamCode, teamDisplayName, teamSearchText } from './teams'
 import {
   FAIR_VALUE_MODEL_VERSION,
@@ -83,6 +84,31 @@ export interface PricingRow {
   stsChange14d: number | null
   stsChange30d: number | null
   stsSummary: string | null
+  rankingSource: StsRankingSource | null
+  oraclePlayerId: string | null
+  oracleMlbamId: string | null
+  oracleRoute: OracleRankingRoute | null
+  oracleRankLabel: string | null
+  oracleStageRank: number | null
+  oracleServedProspectRank: number | null
+  oracleRankUniverse: number | null
+  bowmanProspectRank: number | null
+  oracleRankAvailability: string | null
+  oracleRankTarget: string | null
+  oracleRankAsOf: string | null
+  oracleRankModelVersion: string | null
+  oracleEvidenceTier: string | null
+  oracleVolatility: string | null
+  oracleCareerOutlook: number | null
+  oracleCareerOutlookBand: string | null
+  oracleCareerOutlookBasis: string | null
+  oracleCareerOutlookAsOf: string | null
+  oracleCareerOutlookModelVersion: string | null
+  oracleRecordVersion: string | null
+  oracleSnapshotId: string | null
+  oracleSchemaVersion: string | null
+  oracleContractVersion: string | null
+  oracleMatchMethod: string | null
   release: string
   releaseYear: number
   category: ChecklistModel['category']
@@ -784,7 +810,7 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
     for (const { player, estimate } of playerEntries) {
       const hasModelPrice = isFinitePositive(estimate.price)
       const baseEstimate = hasModelPrice ? estimate : unpricedBaseEstimate()
-      const stsRanking = findStsRanking(player.playerName)
+      const stsRanking = findStsRanking(player.playerName, { team: player.team })
       const checklistTeam = normalizeTeamCode(player.team) || null
       const currentTeam = normalizeTeamCode(stsRanking?.team) || checklistTeam || null
       const currentTeamName = currentTeam ? teamDisplayName(currentTeam) : null
@@ -883,6 +909,31 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
         stsChange14d: stsRanking?.change14d ?? null,
         stsChange30d: stsRanking?.change30d ?? null,
         stsSummary: stsRanking?.summary ?? null,
+        rankingSource: stsRanking?.source ?? null,
+        oraclePlayerId: stsRanking?.oraclePlayerId ?? null,
+        oracleMlbamId: stsRanking?.oracleMlbamId ?? null,
+        oracleRoute: stsRanking?.oracleRoute ?? null,
+        oracleRankLabel: stsRanking?.oracleRankLabel ?? null,
+        oracleStageRank: stsRanking?.oracleStageRank ?? null,
+        oracleServedProspectRank: stsRanking?.oracleRoute === 'milb' ? stsRanking.oracleStageRank : null,
+        oracleRankUniverse: stsRanking?.oracleRankUniverse ?? null,
+        bowmanProspectRank: null,
+        oracleRankAvailability: stsRanking?.oracleRankAvailability ?? null,
+        oracleRankTarget: stsRanking?.oracleRankTarget ?? null,
+        oracleRankAsOf: stsRanking?.oracleRankAsOf ?? null,
+        oracleRankModelVersion: stsRanking?.oracleRankModelVersion ?? null,
+        oracleEvidenceTier: stsRanking?.oracleEvidenceTier ?? null,
+        oracleVolatility: stsRanking?.oracleVolatility ?? null,
+        oracleCareerOutlook: stsRanking?.oracleCareerOutlook ?? null,
+        oracleCareerOutlookBand: stsRanking?.oracleCareerOutlookBand ?? null,
+        oracleCareerOutlookBasis: stsRanking?.oracleCareerOutlookBasis ?? null,
+        oracleCareerOutlookAsOf: stsRanking?.oracleCareerOutlookAsOf ?? null,
+        oracleCareerOutlookModelVersion: stsRanking?.oracleCareerOutlookModelVersion ?? null,
+        oracleRecordVersion: stsRanking?.oracleRecordVersion ?? null,
+        oracleSnapshotId: stsRanking?.oracleSnapshotId ?? null,
+        oracleSchemaVersion: stsRanking?.oracleSchemaVersion ?? null,
+        oracleContractVersion: stsRanking?.oracleContractVersion ?? null,
+        oracleMatchMethod: stsRanking?.oracleMatchMethod ?? null,
         release: model.release,
         releaseYear: model.releaseYear,
         category: model.category,
@@ -909,11 +960,41 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
     }
   }
 
+  const oracleProspectsByIdentity = new Map<string, (typeof rowsWithoutRank)[number]>()
+  for (const row of rowsWithoutRank) {
+    if (row.oracleRoute !== 'milb' || row.oracleServedProspectRank === null) continue
+    const identity = row.oracleMlbamId || row.oraclePlayerId
+    if (!identity) continue
+    const current = oracleProspectsByIdentity.get(identity)
+    if (
+      !current ||
+      row.oracleServedProspectRank < (current.oracleServedProspectRank ?? Number.POSITIVE_INFINITY) ||
+      (row.oracleServedProspectRank === current.oracleServedProspectRank &&
+        (row.oracleCareerOutlook ?? -1) > (current.oracleCareerOutlook ?? -1))
+    ) {
+      oracleProspectsByIdentity.set(identity, row)
+    }
+  }
+  const bowmanProspectRankByIdentity = new Map(
+    [...oracleProspectsByIdentity.entries()]
+      .sort(([, left], [, right]) =>
+        (left.oracleServedProspectRank ?? Number.POSITIVE_INFINITY) -
+          (right.oracleServedProspectRank ?? Number.POSITIVE_INFINITY) ||
+        (right.oracleCareerOutlook ?? -1) - (left.oracleCareerOutlook ?? -1) ||
+        left.playerName.localeCompare(right.playerName),
+      )
+      .map(([identity], index) => [identity, index + 1]),
+  )
+
   const rows = rowsWithoutRank
+    .map((row) => ({
+      ...row,
+      bowmanProspectRank: bowmanProspectRankByIdentity.get(row.oracleMlbamId || row.oraclePlayerId || '') ?? null,
+    }))
     .sort((left, right) => right.baseTwmaPrice - left.baseTwmaPrice || right.topVariationPrice - left.topVariationPrice)
     .map((row, index) => ({ ...row, rank: index + 1 }))
   const stsMatchedRows = rows.filter((row) => row.stsName).length
-  const stsProspectRows = rows.filter((row) => row.stsProspectRank).length
+  const stsProspectRows = rows.filter((row) => row.oracleServedProspectRank ?? row.stsProspectRank).length
 
   return {
     rows,

@@ -48,8 +48,8 @@ const FANATICS_COLLECT_WIDE_MAX_TIME_BUDGET_MS = 50_000
 const DAVE_ADAMS_BASE_URL = 'https://www.dacardworld.com'
 const DAVE_ADAMS_QUERY_CACHE_NAMESPACE = 'backstop-dave-adams-query-v1'
 const DAVE_ADAMS_QUERY_CACHE_TTL_SECONDS = 6 * 60 * 60
-const RANKINGS_RUNTIME_CACHE_NAMESPACE = 'backstop-rankings-v1'
-const RANKINGS_RUNTIME_CACHE_KEY = 'sts-ranking-csv-bundle'
+const RANKINGS_RUNTIME_CACHE_NAMESPACE = 'backstop-rankings-v2'
+const RANKINGS_RUNTIME_CACHE_KEY = 'player-ranking-csv-bundle'
 const RANKINGS_RUNTIME_CACHE_TTL_SECONDS = 36 * 60 * 60
 const EBAY_BIN_QUERY_CACHE_TTL_SECONDS = 24 * 60 * 60
 const EBAY_AUCTION_QUERY_CACHE_TTL_SECONDS = 10 * 60
@@ -109,10 +109,19 @@ const LIVE_MARKET_AUCTION_TTL_SECONDS = 10 * 60
 const LIVE_MARKET_MAX_TTL_SECONDS = 6 * 60 * 60
 const RANKINGS_REFRESH_TIMEOUT_MS = 90_000
 const RANKINGS_FILES = [
+  {
+    population: 'oracle-prospect',
+    type: 'baseball-oracle-prospect',
+    file: 'src/data/baseball_oracle_bowman_prospects.csv',
+  },
   { population: 'hitter', type: 'hitting', file: 'src/data/sts_formulated_consensus_hitters.csv' },
   { population: 'pitcher', type: 'pitching', file: 'src/data/sts_formulated_consensus_pitchers.csv' },
   { population: 'mlb', type: 'oopsy-peak-mlb', file: 'src/data/sts_oopsy_peak_mlb.csv' },
-]
+] as const
+const DEFAULT_BASEBALL_ORACLE_API_BASE = 'https://baseball-oracle.vercel.app'
+const BASEBALL_ORACLE_SCHEMA_VERSION = 'player-signals.v1'
+const BASEBALL_ORACLE_CONTRACT_VERSION = 'player-signals-contract/v1'
+const BASEBALL_ORACLE_MAX_IDS = 50
 const STS_CONSENSUS_API_BASE = 'https://scoutthestatline.com/wp-json/sts/v1/get-consensus'
 const STS_OOPSY_PEAK_API_BASE = 'https://scoutthestatline.com/wp-json/sts/v1/get-leaderboard'
 const STS_SOURCE_COLUMNS = [
@@ -989,7 +998,9 @@ function parseCsvRows(input: string) {
 }
 
 function parseRankingNumber(value: string | undefined) {
-  const parsed = Number(String(value ?? '').replace(/[$,%\s,]/g, ''))
+  const cleaned = String(value ?? '').replace(/[$,%\s,]/g, '')
+  if (!cleaned) return null
+  const parsed = Number(cleaned)
   return Number.isFinite(parsed) ? parsed : null
 }
 
@@ -1014,10 +1025,71 @@ type RankingCsvSource = RankingFileSpec & {
   fileUpdatedAt: string
 }
 type RankingRuntimeCacheValue = {
-  version: 1
+  version: 2
   refreshedAt: string
   expiresAt: string
   sources: RankingCsvSource[]
+}
+
+type OracleSignalItem = {
+  recordVersion: string
+  player: {
+    id: string
+    name: string
+    externalIds: { mlbam: string | null }
+  }
+  classification: {
+    route: 'milb' | 'rookie' | 'mlb'
+    rankingRole: 'hitter' | 'pitcher'
+    age: number | null
+    organizationCode: string | null
+    position: string | null
+    currentLevel: string | null
+  }
+  signals: {
+    stageRank: {
+      label: 'Prospect Rank' | 'Pre-Debut Rank' | 'MLB Career Rank'
+      availability: string
+      reasonCodes: string[]
+      rank: number | null
+      universe: number | null
+      targetId: string | null
+      asOf: string | null
+      modelVersion: string | null
+      evidenceTier: string | null
+      volatility: string | null
+    }
+    careerOutlook: {
+      availability: string
+      value: number | null
+      band: { id: string; label: string } | null
+      basis: string | null
+      asOf: string | null
+      modelVersion: string | null
+    }
+  }
+}
+
+type OracleSignalsPage = {
+  schemaVersion: string
+  contractVersion: string
+  snapshot: {
+    id: string
+    dataAsOf: string | null
+    freshness: { status: string }
+  }
+  items: OracleSignalItem[]
+  page: { page: number; limit: number; total: number; totalPages: number }
+}
+
+type OracleChecklistIdentity = {
+  checklistName: string
+  checklistKey: string
+  checklistTeam: string
+  oraclePlayerId: string
+  mlbamId: string
+  rankingRole: string
+  matchMethod: string
 }
 
 function csvCell(value: unknown) {
@@ -1033,7 +1105,9 @@ function apiString(value: unknown) {
 
 function apiNumber(value: unknown) {
   if (typeof value === 'number' && Number.isFinite(value)) return value
-  const parsed = Number(String(value ?? '').replace(/[$,%\s,]/g, ''))
+  const cleaned = String(value ?? '').replace(/[$,%\s,]/g, '')
+  if (!cleaned) return null
+  const parsed = Number(cleaned)
   return Number.isFinite(parsed) ? parsed : null
 }
 
@@ -1072,6 +1146,189 @@ async function fetchJsonWithTimeout(url: URL, description: string) {
   } finally {
     clearTimeout(timer)
   }
+}
+
+function oracleChecklistIdentities(csv: string): OracleChecklistIdentity[] {
+  const rows = parseCsvRows(csv)
+  const headers = rows[0] ?? []
+  const indexes = new Map(headers.map((header, index) => [header.trim(), index]))
+  const cell = (row: string[], header: string) => row[indexes.get(header) ?? -1]?.trim() ?? ''
+  if (!indexes.has('Oracle Player Id') || !indexes.has('Checklist Name')) {
+    throw new Error('Bundled Baseball Oracle identity snapshot has an unsupported schema')
+  }
+
+  const identities = rows.slice(1).flatMap<OracleChecklistIdentity>((row) => {
+    const oraclePlayerId = cell(row, 'Oracle Player Id')
+    const checklistName = cell(row, 'Checklist Name')
+    if (!oraclePlayerId || !checklistName) return []
+    return [{
+      checklistName,
+      checklistKey: cell(row, 'Checklist Key'),
+      checklistTeam: cell(row, 'Checklist Team'),
+      oraclePlayerId,
+      mlbamId: cell(row, 'MLBAM Id'),
+      rankingRole: cell(row, 'Ranking Role'),
+      matchMethod: cell(row, 'Match Method'),
+    }]
+  })
+
+  const unique = new Map<string, OracleChecklistIdentity>()
+  for (const identity of identities) {
+    const key = `${identity.checklistKey || identity.checklistName}\u0000${identity.oraclePlayerId}`
+    unique.set(key, identity)
+  }
+  return [...unique.values()]
+}
+
+function assertOracleSignalsPage(payload: unknown, description: string): OracleSignalsPage {
+  if (!payload || typeof payload !== 'object') throw new Error(`${description} returned an invalid response`)
+  const page = payload as Partial<OracleSignalsPage>
+  if (page.schemaVersion !== BASEBALL_ORACLE_SCHEMA_VERSION || page.contractVersion !== BASEBALL_ORACLE_CONTRACT_VERSION) {
+    throw new Error(`${description} returned an unsupported Baseball Oracle contract`)
+  }
+  if (!page.snapshot?.id || page.snapshot.freshness?.status !== 'ok') {
+    throw new Error(`${description} returned a stale or incomplete Baseball Oracle snapshot`)
+  }
+  if (!Array.isArray(page.items) || !page.page || !Number.isInteger(page.page.page) || !Number.isInteger(page.page.total)) {
+    throw new Error(`${description} returned invalid Baseball Oracle pagination`)
+  }
+  for (const item of page.items) {
+    if (
+      !item?.recordVersion ||
+      !item.player?.id ||
+      !item.player?.name ||
+      !item.classification?.route ||
+      !item.signals?.stageRank ||
+      !item.signals?.careerOutlook
+    ) {
+      throw new Error(`${description} returned an incomplete Baseball Oracle player record`)
+    }
+  }
+  return page as OracleSignalsPage
+}
+
+async function fetchOracleSignalsByIds(playerIds: string[]) {
+  const chunks: string[][] = []
+  for (let index = 0; index < playerIds.length; index += BASEBALL_ORACLE_MAX_IDS) {
+    chunks.push(playerIds.slice(index, index + BASEBALL_ORACLE_MAX_IDS))
+  }
+
+  const pages: OracleSignalsPage[] = []
+  const apiBase = process.env.BASEBALL_ORACLE_API_BASE?.trim() || process.env.BASEBALL_ORACLE_API_URL?.trim() || DEFAULT_BASEBALL_ORACLE_API_BASE
+  for (let start = 0; start < chunks.length; start += 6) {
+    const batch = chunks.slice(start, start + 6)
+    const nextPages = await Promise.all(batch.map(async (ids, batchIndex) => {
+      const url = new URL('/api/v1/player-signals', apiBase)
+      url.searchParams.set('stage', 'All')
+      url.searchParams.set('sort', 'name')
+      url.searchParams.set('ids', ids.join(','))
+      url.searchParams.set('page', '1')
+      url.searchParams.set('limit', String(BASEBALL_ORACLE_MAX_IDS))
+      const description = `Baseball Oracle identity batch ${start + batchIndex + 1}`
+      return assertOracleSignalsPage(await fetchJsonWithTimeout(url, description), description)
+    }))
+    pages.push(...nextPages)
+  }
+
+  const snapshotIds = new Set(pages.map((page) => page.snapshot.id))
+  if (snapshotIds.size !== 1) throw new Error('Baseball Oracle snapshot changed during the rankings refresh')
+  const items = pages.flatMap((page) => page.items)
+  const requested = new Set(playerIds)
+  const returned = new Set(items.map((item) => item.player.id))
+  if (items.length !== playerIds.length || returned.size !== items.length || [...requested].some((id) => !returned.has(id))) {
+    throw new Error(`Baseball Oracle returned ${items.length} of ${playerIds.length} exact player identities`)
+  }
+  return { items, snapshot: pages[0].snapshot }
+}
+
+function baseballOracleCsv(
+  identities: OracleChecklistIdentity[],
+  items: OracleSignalItem[],
+  snapshot: OracleSignalsPage['snapshot'],
+) {
+  const byPlayerId = new Map(items.map((item) => [item.player.id, item]))
+  const headers = [
+    'Source',
+    '#',
+    'Checklist Key',
+    'Checklist Name',
+    'Checklist Team',
+    'Match Method',
+    'Oracle Player Id',
+    'MLBAM Id',
+    'Oracle Name',
+    'Oracle Route',
+    'Ranking Role',
+    'Rank Label',
+    'Rank Availability',
+    'Rank Universe',
+    'Rank Target',
+    'Rank As Of',
+    'Rank Model Version',
+    'Evidence Tier',
+    'Volatility',
+    'Reason Codes',
+    'Career Outlook',
+    'Career Outlook Band',
+    'Career Outlook Basis',
+    'Career Outlook As Of',
+    'Career Outlook Model Version',
+    'Age',
+    'Level',
+    'Team',
+    'Pos',
+    'Record Version',
+    'Snapshot Id',
+    'Schema Version',
+    'Contract Version',
+    'Updated',
+  ]
+  const rows = identities.flatMap((identity) => {
+    const item = byPlayerId.get(identity.oraclePlayerId)
+    if (!item) return []
+    const stageRank = item.signals.stageRank
+    const careerOutlook = item.signals.careerOutlook
+    return [[
+      'Baseball Oracle Player Signals',
+      stageRank.rank ?? '',
+      identity.checklistKey,
+      identity.checklistName,
+      identity.checklistTeam,
+      identity.matchMethod,
+      item.player.id,
+      item.player.externalIds.mlbam ?? identity.mlbamId,
+      item.player.name,
+      item.classification.route,
+      item.classification.rankingRole,
+      stageRank.label,
+      stageRank.availability,
+      stageRank.universe ?? '',
+      stageRank.targetId ?? '',
+      stageRank.asOf ?? '',
+      stageRank.modelVersion ?? '',
+      stageRank.evidenceTier ?? '',
+      stageRank.volatility ?? '',
+      stageRank.reasonCodes.join(' | '),
+      careerOutlook.value ?? '',
+      careerOutlook.band?.label ?? '',
+      careerOutlook.basis ?? '',
+      careerOutlook.asOf ?? '',
+      careerOutlook.modelVersion ?? '',
+      item.classification.age ?? '',
+      item.classification.currentLevel ?? '',
+      item.classification.organizationCode ?? '',
+      item.classification.position ?? '',
+      item.recordVersion,
+      snapshot.id,
+      BASEBALL_ORACLE_SCHEMA_VERSION,
+      BASEBALL_ORACLE_CONTRACT_VERSION,
+      snapshot.dataAsOf ?? '',
+    ]]
+  }).sort((left, right) => {
+    const rankDelta = (apiNumber(left[1]) ?? Number.POSITIVE_INFINITY) - (apiNumber(right[1]) ?? Number.POSITIVE_INFINITY)
+    return rankDelta || apiString(left[3]).localeCompare(apiString(right[3]))
+  })
+  return `${headers.map(csvCell).join(',')}\n${rows.map((row) => row.map(csvCell).join(',')).join('\n')}\n`
 }
 
 function consensusCsv(population: string, updated: string, players: Array<Record<string, unknown>>) {
@@ -1152,8 +1409,24 @@ function oopsyPeakMlbCsv(updated: string, players: Array<Record<string, unknown>
   return `${headers.map(csvCell).join(',')}\n${rows.map((row) => row.map(csvCell).join(',')).join('\n')}\n`
 }
 
-async function fetchStsRankingSource(spec: RankingFileSpec): Promise<RankingCsvSource> {
+async function fetchRankingSource(spec: RankingFileSpec): Promise<RankingCsvSource> {
   const refreshedAt = new Date().toISOString()
+  if (spec.type === 'baseball-oracle-prospect') {
+    const target = resolve(process.cwd(), spec.file)
+    if (!existsSync(target)) {
+      throw new Error('Baseball Oracle identity snapshot is missing; run npm run rankings:refresh locally before deploying')
+    }
+    const identities = oracleChecklistIdentities(readFileSync(target, 'utf8'))
+    if (!identities.length) throw new Error('Baseball Oracle identity snapshot contains no matched Bowman players')
+    const playerIds = [...new Set(identities.map((identity) => identity.oraclePlayerId))]
+    const { items, snapshot } = await fetchOracleSignalsByIds(playerIds)
+    return {
+      ...spec,
+      available: true,
+      csv: baseballOracleCsv(identities, items, snapshot),
+      fileUpdatedAt: refreshedAt,
+    }
+  }
   if (spec.type === 'oopsy-peak-mlb') {
     const url = new URL(STS_OOPSY_PEAK_API_BASE)
     url.searchParams.set('type', 'combined')
@@ -1180,8 +1453,8 @@ async function fetchStsRankingSource(spec: RankingFileSpec): Promise<RankingCsvS
   return { ...spec, available: true, csv: consensusCsv(spec.population, updated, players), fileUpdatedAt: refreshedAt }
 }
 
-async function refreshStsRankingSources() {
-  return Promise.all(RANKINGS_FILES.map(fetchStsRankingSource))
+async function refreshRankingSources() {
+  return Promise.all(RANKINGS_FILES.map(fetchRankingSource))
 }
 
 async function readRuntimeRankingSources() {
@@ -1194,7 +1467,7 @@ async function readRuntimeRankingSources() {
           ? (parseJsonText(value, null) as RankingRuntimeCacheValue | null)
           : ((value ?? null) as RankingRuntimeCacheValue | null)
       if (
-        parsed?.version === 1 &&
+        parsed?.version === 2 &&
         Array.isArray(parsed.sources) &&
         parsed.sources.every((source) => typeof source.csv === 'string' && source.csv.trim()) &&
         Date.parse(parsed.expiresAt) > Date.now()
@@ -1211,7 +1484,7 @@ async function readRuntimeRankingSources() {
   try {
     const value = await cache.get<RankingRuntimeCacheValue>(RANKINGS_RUNTIME_CACHE_KEY)
     if (
-      value?.version === 1 &&
+      value?.version === 2 &&
       Array.isArray(value.sources) &&
       value.sources.every((source) => typeof source.csv === 'string' && source.csv.trim()) &&
       Date.parse(value.expiresAt) > Date.now()
@@ -1227,7 +1500,7 @@ async function readRuntimeRankingSources() {
 async function writeRuntimeRankingSources(sources: RankingCsvSource[]) {
   const refreshedAt = new Date().toISOString()
   const value: RankingRuntimeCacheValue = {
-    version: 1,
+    version: 2,
     refreshedAt,
     expiresAt: new Date(Date.now() + RANKINGS_RUNTIME_CACHE_TTL_SECONDS * 1000).toISOString(),
     sources,
@@ -1250,8 +1523,8 @@ async function writeRuntimeRankingSources(sources: RankingCsvSource[]) {
   try {
     await cache.set(RANKINGS_RUNTIME_CACHE_KEY, value, {
       ttl: RANKINGS_RUNTIME_CACHE_TTL_SECONDS,
-      tags: ['rankings', 'sts'],
-      name: 'Scout the Statline rankings',
+      tags: ['rankings', 'baseball-oracle', 'sts'],
+      name: 'Baseball player rankings',
     })
     return wrote ?? 'runtime-write'
   } catch {
@@ -1288,7 +1561,7 @@ async function currentRankingSources(options: { allowLiveRefresh: boolean }) {
 
   if (options.allowLiveRefresh) {
     try {
-      const fresh = await refreshStsRankingSources()
+      const fresh = await refreshRankingSources()
       const cachedFresh = await writeRuntimeRankingSources(fresh)
       return { sources: fresh, cache: cachedFresh ?? ('live' as const) }
     } catch {
@@ -1321,7 +1594,7 @@ function rankingStatusFromSources(sources: RankingCsvSource[]) {
     const coverageIndex = headerIndex.get('Coverage') ?? -1
     const avgRankIndex = headerIndex.get('Avg Rank') ?? -1
     const rankIndex = headerIndex.get('#') ?? -1
-    const nameIndex = headerIndex.get('Name') ?? -1
+    const nameIndex = headerIndex.get('Name') ?? headerIndex.get('Checklist Name') ?? headerIndex.get('Oracle Name') ?? -1
     const bodyRows = csvRows.slice(1).filter((row) => String(row[nameIndex] ?? '').trim())
     const latestUpdatedTime = Math.max(
       0,
@@ -1352,7 +1625,7 @@ function rankingStatusFromSources(sources: RankingCsvSource[]) {
 
   return {
     available: missing.length === 0 && rows > 0,
-    source: 'Scout the Statline formulated consensus + OOPSY Peak MLB',
+    source: 'Baseball Oracle Prospect Rank + Scout the Statline trends and MLB fallback',
     rows,
     matchedRows: summarizedSources.reduce((total, source) => total + source.matchedRows, 0),
     lowCoverageRows: summarizedSources.reduce((total, source) => total + source.lowCoverageRows, 0),
@@ -6641,14 +6914,14 @@ export async function handleRankingsRoute(route: string, request: Request) {
     }
 
     try {
-      const sources = await refreshStsRankingSources()
+      const sources = await refreshRankingSources()
       const cached = await writeRuntimeRankingSources(sources)
       const status = rankingStatusFromSources(sources)
       return jsonResponse(200, {
         ...status,
         cache: cached ?? 'live',
         refreshedAt: new Date().toISOString(),
-        output: `Refreshed ${status.rows.toLocaleString()} Scout the Statline ranking rows`,
+        output: `Refreshed ${status.rows.toLocaleString()} Baseball Oracle and Scout the Statline ranking rows`,
         sources: sources.map((source) => ({
           ...source,
           ...rankingStatusFromSources([source]).sources[0],

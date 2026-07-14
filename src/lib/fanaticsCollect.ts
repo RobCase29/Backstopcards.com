@@ -16,7 +16,7 @@ import {
 } from './cardTitleGuards'
 import type { EbayBinScanResult, EbayBinSearchMode } from './ebay'
 import { titleLooksHandSignedAuto } from './handSigned'
-import { findStsRanking } from './stsRankings'
+import { findStsRanking, primaryStsRank } from './stsRankings'
 
 type FanaticsCollectQueryMeta = {
   q?: string
@@ -489,7 +489,7 @@ function mapFanaticsCollectHitToListing(item: FanaticsCollectHit, fallbackReleas
       level: stsRanking?.level,
       position: stsRanking?.pos,
       age: stsRanking?.age,
-      ranking: stsRanking?.prospectRank ?? stsRanking?.rank,
+      ranking: stsRanking ? primaryStsRank(stsRanking) : null,
     },
   }
 }

@@ -90,6 +90,42 @@ describe('dynasty value scoring', () => {
     expect(strongRank).toBeGreaterThan(weakerRank + 18)
   })
 
+  it('uses Oracle universe-relative rank and discounts thin, volatile evidence', () => {
+    const oracleBase: DynastyValueInput = {
+      ...baseRow,
+      rankingSource: 'baseball-oracle',
+      oracleRoute: 'milb',
+      oracleStageRank: 45,
+      oracleRankUniverse: 6_490,
+      oracleRankAvailability: 'available',
+      oracleEvidenceTier: 'completed_season_full_model',
+      oracleVolatility: 'standard',
+      oracleCareerOutlook: 72,
+      stsRank: null,
+      stsProspectRank: 45,
+      stsDynastyScore: 72,
+      stsMomentumScore: 50,
+      stsRiserValueScore: 0,
+      baseTwmaPrice: 70,
+    }
+    const weakerRank = {
+      ...oracleBase,
+      oracleStageRank: 1_200,
+      stsProspectRank: 1_200,
+    }
+    const thinEvidence = {
+      ...oracleBase,
+      oracleRankAvailability: 'insufficient_sample',
+      oracleEvidenceTier: 'live_in_season_prior',
+      oracleVolatility: 'very_high',
+    }
+
+    expect(impliedDynastyBasePrice(oracleBase)).toBeGreaterThan(impliedDynastyBasePrice(weakerRank))
+    expect(scoreDynastyValueOpportunity(oracleBase)).toBeGreaterThan(scoreDynastyValueOpportunity(weakerRank) + 8)
+    expect(impliedDynastyBasePrice(oracleBase)).toBeGreaterThan(impliedDynastyBasePrice(thinEvidence))
+    expect(scoreDynastyValueOpportunity(oracleBase)).toBeGreaterThan(scoreDynastyValueOpportunity(thinEvidence) + 8)
+  })
+
   it('makes elite cheap base autos beat similarly elite expensive base autos', () => {
     const cheapElite = scoreDynastyValueOpportunity({
       ...baseRow,

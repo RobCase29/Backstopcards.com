@@ -376,8 +376,8 @@ const BASE_FILTER_LABELS: Array<{ value: BaseSourceFilter; label: string }> = [
 const SORT_LABELS: Record<SortMode, string> = {
   'base-desc': 'Model Base',
   'sts-rank': 'Dynasty Rank',
-  'prospect-rank': 'Prospect / MLB Rank',
-  'dynasty-score': 'Dynasty Score',
+  'prospect-rank': 'Oracle Prospect / MLB Rank',
+  'dynasty-score': 'Career Outlook / Dynasty',
   'dynasty-value': 'Undervalued',
   'momentum-desc': 'Momentum',
   'riser-value': 'Riser Value',
@@ -389,7 +389,7 @@ const SORT_LABELS: Record<SortMode, string> = {
 const STS_FILTER_LABELS: Record<StsFilter, string> = {
   all: 'All players',
   ranked: 'Ranked',
-  prospects: 'Prospects',
+  prospects: 'Oracle prospects',
   mlb: 'MLB level',
   unmatched: 'Unmatched',
 }
@@ -418,9 +418,12 @@ function rowMatchesTeam(row: PricingRow, teamFilter: TeamFilter) {
 }
 
 function rowMatchesStsFilter(row: PricingRow, stsFilter: StsFilter) {
-  if (stsFilter === 'ranked') return Boolean(row.stsRank)
-  if (stsFilter === 'prospects') return Boolean(row.stsProspectRank)
-  if (stsFilter === 'mlb') return row.stsLevel?.toUpperCase() === 'MLB'
+  if (stsFilter === 'ranked') return row.oracleStageRank !== null || row.stsProspectRank !== null || row.stsRank !== null
+  if (stsFilter === 'prospects') {
+    if (row.rankingSource === 'baseball-oracle') return row.oracleRoute === 'milb' && row.oracleServedProspectRank !== null
+    return row.stsProspectRank !== null
+  }
+  if (stsFilter === 'mlb') return row.oracleRoute === 'mlb' || row.stsLevel?.toUpperCase() === 'MLB'
   if (stsFilter === 'unmatched') return !row.stsName
   return true
 }
@@ -430,7 +433,7 @@ const BIN_RESULT_SORT_LABELS: Record<BinResultSort, string> = {
   'edge-desc': 'Spread',
   'score-desc': 'Model score',
   'sts-rank': 'Dynasty rank',
-  'prospect-rank': 'Prospect / MLB rank',
+  'prospect-rank': 'Oracle prospect / MLB rank',
   'trend-desc': 'Trend',
   'price-asc': 'Price low',
   'price-desc': 'Price high',
@@ -486,23 +489,58 @@ function rankOrInfinity(value: number | null) {
   return value ?? Number.POSITIVE_INFINITY
 }
 
-function rankSignalBucket(row: Pick<PricingRow, 'stsLevel' | 'stsProspectRank' | 'stsRank'>) {
-  if (row.stsProspectRank !== null) return 0
-  if (row.stsRank !== null && row.stsLevel?.toUpperCase() === 'MLB') return 1
-  if (row.stsRank !== null) return 2
-  return 3
+type RankSignal = Pick<
+  PricingRow,
+  'stsLevel' | 'stsProspectRank' | 'stsRank' | 'oracleRoute' | 'oracleStageRank' | 'oracleServedProspectRank'
+>
+
+function rankSignalBucket(row: RankSignal) {
+  if (row.oracleRoute === 'milb' && row.oracleServedProspectRank !== null) return 0
+  if (row.oracleRoute === 'rookie' && row.oracleStageRank !== null) return 1
+  if (row.stsProspectRank !== null) return 2
+  if (row.oracleRoute === 'mlb' || (row.stsRank !== null && row.stsLevel?.toUpperCase() === 'MLB')) return 3
+  if (row.stsRank !== null) return 4
+  return 5
 }
 
-function primaryRankOrInfinity(row: Pick<PricingRow, 'stsRank' | 'stsProspectRank'>) {
-  return rankOrInfinity(primaryStsRank({ rank: row.stsRank, prospectRank: row.stsProspectRank }))
+type PricingRankSignal = Pick<
+  PricingRow,
+  'stsLevel' | 'stsRank' | 'stsProspectRank' | 'oracleRoute' | 'oracleStageRank' | 'oracleServedProspectRank' | 'bowmanProspectRank'
+>
+
+function pricingRowPrimaryRank(row: PricingRankSignal) {
+  return primaryStsRank({
+    level: row.stsLevel ?? '',
+    rank: row.stsRank,
+    prospectRank: row.stsProspectRank,
+    oracleRoute: row.oracleRoute,
+    oracleStageRank: row.oracleStageRank,
+  })
 }
 
-function comparePrimaryRank(left: Pick<PricingRow, 'stsLevel' | 'stsProspectRank' | 'stsRank'>, right: Pick<PricingRow, 'stsLevel' | 'stsProspectRank' | 'stsRank'>) {
+function primaryRankOrInfinity(row: PricingRankSignal) {
+  return rankOrInfinity(pricingRowPrimaryRank(row))
+}
+
+function comparePrimaryRank(left: PricingRankSignal, right: PricingRankSignal) {
   return rankSignalBucket(left) - rankSignalBucket(right) || primaryRankOrInfinity(left) - primaryRankOrInfinity(right)
 }
 
-function primaryRankLabel(row: Pick<PricingRow, 'stsLevel' | 'stsRank' | 'stsProspectRank'>) {
-  return primaryStsRankLabel({ level: row.stsLevel ?? '', rank: row.stsRank, prospectRank: row.stsProspectRank })
+function primaryRankLabel(row: PricingRankSignal) {
+  if (row.oracleRoute === 'milb' && row.oracleServedProspectRank !== null) {
+    const oracleLabel = `Oracle Prospect #${row.oracleServedProspectRank.toLocaleString()}`
+    return row.bowmanProspectRank !== null ? `Bowman #${row.bowmanProspectRank.toLocaleString()} · ${oracleLabel}` : oracleLabel
+  }
+  if (row.oracleRoute === 'rookie' && row.oracleStageRank !== null) {
+    return `Oracle Pre-Debut #${row.oracleStageRank.toLocaleString()}`
+  }
+  return primaryStsRankLabel({
+    level: row.stsLevel ?? '',
+    rank: row.stsRank,
+    prospectRank: row.stsProspectRank,
+    oracleRoute: row.oracleRoute,
+    oracleStageRank: row.oracleStageRank,
+  })
 }
 
 function clampNumber(value: number, min: number, max: number) {
@@ -1022,8 +1060,13 @@ function formatStsLine(row: PricingRow) {
   const parts = []
   const rankLabel = primaryRankLabel(row)
   if (rankLabel) parts.push(rankLabel)
-  if (row.stsProspectRank && row.stsRank) parts.push(`Overall #${row.stsRank.toLocaleString()}`)
-  if (row.stsDynastyScore !== null || row.stsRank !== null || row.stsProspectRank !== null) {
+  if (row.rankingSource === 'baseball-oracle' && row.oracleCareerOutlook !== null) {
+    const band = row.oracleCareerOutlookBand ? ` (${row.oracleCareerOutlookBand.replaceAll('_', ' ')})` : ''
+    parts.push(`Career Outlook ${row.oracleCareerOutlook.toFixed(1)}${band}`)
+  } else if (row.stsProspectRank && row.stsRank) {
+    parts.push(`Overall #${row.stsRank.toLocaleString()}`)
+  }
+  if (row.stsDynastyScore !== null || row.stsRank !== null || row.stsProspectRank !== null || row.oracleStageRank !== null) {
     const impliedBase = impliedDynastyBasePrice(row)
     const multiple = impliedBase > 0 && row.baseTwmaPrice > 0 ? impliedBase / row.baseTwmaPrice : 0
     const valueScore = scoreDynastyBaseValue(row)
@@ -1110,7 +1153,7 @@ function modelTrustSignal(row: PricingRow) {
             ? 8
             : 4
           : 0
-  const rankSignal = row.stsProspectRank !== null ? 8 : row.stsRank !== null ? 5 : 0
+  const rankSignal = row.oracleStageRank !== null || row.stsProspectRank !== null ? 8 : row.stsRank !== null ? 5 : 0
   const score = Math.round(clampNumber(sourceWeight + compDepth + confidence + freshness + rankSignal, 0, 100))
   const valueScore = scoreDynastyValueOpportunity(row)
   const tone: ModelTrustTone =
@@ -1653,10 +1696,10 @@ function valueRowsFromRows(rows: PricingRow[], limit = 25) {
 
 function prospectRowsFromRows(rows: PricingRow[], limit = 100) {
   const selectedRows = rows
-    .filter((row) => rowHasModel(row) && row.stsProspectRank !== null)
+    .filter((row) => rowHasModel(row) && rowMatchesStsFilter(row, 'prospects'))
     .sort(
       (left, right) =>
-        rankOrInfinity(left.stsProspectRank) - rankOrInfinity(right.stsProspectRank) ||
+        comparePrimaryRank(left, right) ||
         rankOrInfinity(left.stsRank) - rankOrInfinity(right.stsRank) ||
         (right.stsMomentumScore ?? -1) - (left.stsMomentumScore ?? -1) ||
         (right.stsDynastyScore ?? -1) - (left.stsDynastyScore ?? -1) ||
@@ -1685,10 +1728,13 @@ function opportunityStsContext(opportunity: Opportunity) {
   const ranking = findStsRanking(opportunity.listing.playerName)
   return {
     ranking,
+    source: ranking?.source ?? null,
     rank: ranking?.rank ?? null,
     prospectRank: ranking?.prospectRank ?? null,
     primaryRank: ranking ? primaryStsRank(ranking) : null,
     primaryRankLabel: ranking ? primaryStsRankLabel(ranking) : null,
+    careerOutlook: ranking?.oracleCareerOutlook ?? null,
+    careerOutlookBand: ranking?.oracleCareerOutlookBand ?? null,
     change30d: ranking?.change30d ?? null,
     momentumScore: ranking ? scoreStsMomentum(ranking) : null,
   }
@@ -1807,7 +1853,7 @@ function marlinsModeledDealScore(opportunity: Opportunity, modelRow: PricingRow 
   const targetSignal = modelRow?.stsBinTargetScore != null ? clampNumber(modelRow.stsBinTargetScore / 100, 0, 1) * 11 : 0
   const momentumSource = modelRow?.stsMomentumScore ?? sts.momentumScore
   const momentumSignal = momentumSource != null ? clampNumber((momentumSource - 40) / 40, 0, 1) * 8 : 0
-  const primaryRank = modelRow ? primaryStsRank({ rank: modelRow.stsRank, prospectRank: modelRow.stsProspectRank }) : sts.primaryRank
+  const primaryRank = modelRow ? pricingRowPrimaryRank(modelRow) : sts.primaryRank
   const rankSignal = primaryRank ? clampNumber((650 - Math.min(primaryRank, 650)) / 650, 0, 1) * 8 : 0
   const prospectRank = modelRow?.stsProspectRank ?? sts.prospectRank
   const prospectSignal = prospectRank ? clampNumber((175 - Math.min(prospectRank, 175)) / 175, 0, 1) * 5 : 0
@@ -1913,7 +1959,7 @@ function buildTeamChecklistOpportunities(
         null
       const ranking = findStsRanking(playerName)
       const rankLabel = contextRow ? primaryRankLabel(contextRow) : ranking ? primaryStsRankLabel(ranking) : null
-      const primaryRank = contextRow ? primaryStsRank({ rank: contextRow.stsRank, prospectRank: contextRow.stsProspectRank }) : ranking ? primaryStsRank(ranking) : null
+      const primaryRank = contextRow ? pricingRowPrimaryRank(contextRow) : ranking ? primaryStsRank(ranking) : null
       const prospectRank = contextRow?.stsProspectRank ?? ranking?.prospectRank ?? null
       const dynastyValueScore = bestRow ? scoreDynastyValueOpportunity(bestRow) : 0
       const targetScore = bestRow?.stsBinTargetScore ?? 0
@@ -1952,8 +1998,8 @@ function buildTeamChecklistOpportunities(
       (left, right) =>
         right.score - left.score ||
         (right.bestRow ? scoreDynastyValueOpportunity(right.bestRow) : 0) - (left.bestRow ? scoreDynastyValueOpportunity(left.bestRow) : 0) ||
-        rankOrInfinity(left.bestRow ? primaryStsRank({ rank: left.bestRow.stsRank, prospectRank: left.bestRow.stsProspectRank }) : left.ranking ? primaryStsRank(left.ranking) : null) -
-          rankOrInfinity(right.bestRow ? primaryStsRank({ rank: right.bestRow.stsRank, prospectRank: right.bestRow.stsProspectRank }) : right.ranking ? primaryStsRank(right.ranking) : null) ||
+        rankOrInfinity(left.bestRow ? pricingRowPrimaryRank(left.bestRow) : left.ranking ? primaryStsRank(left.ranking) : null) -
+          rankOrInfinity(right.bestRow ? pricingRowPrimaryRank(right.bestRow) : right.ranking ? primaryStsRank(right.ranking) : null) ||
         left.playerName.localeCompare(right.playerName),
   )
 }
@@ -2158,11 +2204,19 @@ function sortBinOpportunities(opportunities: Opportunity[], sortMode: BinResultS
           stsLevel: left.sts.ranking?.level ?? null,
           stsProspectRank: left.sts.prospectRank,
           stsRank: left.sts.rank,
+          oracleRoute: left.sts.ranking?.oracleRoute ?? null,
+          oracleStageRank: left.sts.ranking?.oracleStageRank ?? null,
+          oracleServedProspectRank:
+            left.sts.ranking?.oracleRoute === 'milb' ? left.sts.ranking.oracleStageRank : null,
         }) -
           rankSignalBucket({
             stsLevel: right.sts.ranking?.level ?? null,
             stsProspectRank: right.sts.prospectRank,
             stsRank: right.sts.rank,
+            oracleRoute: right.sts.ranking?.oracleRoute ?? null,
+            oracleStageRank: right.sts.ranking?.oracleStageRank ?? null,
+            oracleServedProspectRank:
+              right.sts.ranking?.oracleRoute === 'milb' ? right.sts.ranking.oracleStageRank : null,
           }) ||
         rankOrInfinity(left.sts.primaryRank) - rankOrInfinity(right.sts.primaryRank) ||
         rankOrInfinity(left.sts.rank) - rankOrInfinity(right.sts.rank) ||
@@ -2491,9 +2545,35 @@ function downloadMatrixCsv(rows: PricingRow[]) {
     'Rank',
     'Player',
     'Release',
+    'Ranking Source',
+    'Primary Rank Label',
+    'Bowman Prospect Rank (Local)',
+    'Oracle Prospect Rank (Global)',
+    'Oracle Stage Rank',
+    'Oracle Rank Universe',
+    'Oracle Rank Label',
+    'Oracle Route',
+    'Oracle Player ID',
+    'Oracle MLBAM ID',
+    'Oracle Rank Availability',
+    'Oracle Rank Target',
+    'Oracle Rank As Of',
+    'Oracle Rank Model Version',
+    'Oracle Evidence Tier',
+    'Oracle Volatility',
+    'Oracle Career Outlook',
+    'Oracle Career Outlook Band',
+    'Oracle Career Outlook Basis',
+    'Oracle Career Outlook As Of',
+    'Oracle Career Outlook Model Version',
+    'Oracle Record Version',
+    'Oracle Snapshot ID',
+    'Oracle Schema Version',
+    'Oracle Contract Version',
+    'Oracle Match Method',
     'Dynasty Rank',
     'Prospect Rank',
-    'Dynasty Score',
+    'Career Outlook / Dynasty Score',
     'Rank vs Price Score',
     'Expected Base From Rank',
     'Momentum Score',
@@ -2524,13 +2604,40 @@ function downloadMatrixCsv(rows: PricingRow[]) {
     'Modeled Price',
   ]
   const csvRows = rows.flatMap((row) => {
-    const hasDynastySignal = row.stsDynastyScore !== null || row.stsRank !== null || row.stsProspectRank !== null
+    const hasDynastySignal =
+      row.stsDynastyScore !== null || row.stsRank !== null || row.stsProspectRank !== null || row.oracleStageRank !== null
     const dynastyValueScore = scoreDynastyValueOpportunity(row)
     const hasModel = rowHasModel(row)
     return row.ladder.map((quote) => [
       row.rank,
       row.playerName,
       row.release,
+      row.rankingSource ?? '',
+      primaryRankLabel(row) ?? '',
+      row.bowmanProspectRank ?? '',
+      row.oracleServedProspectRank ?? '',
+      row.oracleStageRank ?? '',
+      row.oracleRankUniverse ?? '',
+      row.oracleRankLabel ?? '',
+      row.oracleRoute ?? '',
+      row.oraclePlayerId ?? '',
+      row.oracleMlbamId ?? '',
+      row.oracleRankAvailability ?? '',
+      row.oracleRankTarget ?? '',
+      row.oracleRankAsOf ?? '',
+      row.oracleRankModelVersion ?? '',
+      row.oracleEvidenceTier ?? '',
+      row.oracleVolatility ?? '',
+      row.oracleCareerOutlook ?? '',
+      row.oracleCareerOutlookBand ?? '',
+      row.oracleCareerOutlookBasis ?? '',
+      row.oracleCareerOutlookAsOf ?? '',
+      row.oracleCareerOutlookModelVersion ?? '',
+      row.oracleRecordVersion ?? '',
+      row.oracleSnapshotId ?? '',
+      row.oracleSchemaVersion ?? '',
+      row.oracleContractVersion ?? '',
+      row.oracleMatchMethod ?? '',
       row.stsRank ?? '',
       row.stsProspectRank ?? '',
       row.stsDynastyScore?.toFixed(1) ?? '',
@@ -3808,12 +3915,17 @@ function TeamCoverageEnginePanel({
 }
 
 function teamOpportunityProspectRank(opportunity: TeamChecklistOpportunity) {
-  return opportunity.bestRow?.stsProspectRank ?? opportunity.ranking?.prospectRank ?? null
+  return (
+    opportunity.bestRow?.oracleServedProspectRank ??
+    opportunity.bestRow?.stsProspectRank ??
+    (opportunity.ranking?.oracleRoute === 'milb' ? opportunity.ranking.oracleStageRank : opportunity.ranking?.prospectRank) ??
+    null
+  )
 }
 
 function teamOpportunityPrimaryRank(opportunity: TeamChecklistOpportunity) {
   return opportunity.bestRow
-    ? primaryStsRank({ rank: opportunity.bestRow.stsRank, prospectRank: opportunity.bestRow.stsProspectRank })
+    ? pricingRowPrimaryRank(opportunity.bestRow)
     : opportunity.ranking
       ? primaryStsRank(opportunity.ranking)
       : null
@@ -3971,7 +4083,7 @@ function buildTeamSuperfractorEntries(
       const roiPct = edgeDollars !== null && allInPrice > 0 ? edgeDollars / allInPrice : null
       const ranking = findStsRanking(rawListingPlayerName(listing))
       const rankLabel = model.row ? primaryRankLabel(model.row) : ranking ? primaryStsRankLabel(ranking) : null
-      const primaryRank = model.row ? primaryStsRank({ rank: model.row.stsRank, prospectRank: model.row.stsProspectRank }) : ranking ? primaryStsRank(ranking) : null
+      const primaryRank = model.row ? pricingRowPrimaryRank(model.row) : ranking ? primaryStsRank(ranking) : null
       const edgeSignal = edgeDollars !== null ? clampNumber(edgeDollars / Math.max(80, (model.value ?? 0) * 0.4), -0.25, 1) * 42 : 0
       const roiSignal = roiPct !== null ? clampNumber((roiPct + 0.08) / 0.7, 0, 1) * 18 : 0
       const rankSignal = primaryRank ? clampNumber((700 - Math.min(primaryRank, 700)) / 700, 0, 1) * 18 : 0
@@ -4253,7 +4365,7 @@ function TeamDealCommandCenter({
         <div className="team-command-lane prospect">
           <span>Prospect Bet</span>
           <strong>{topProspect?.playerName ?? '--'}</strong>
-          <small>{topProspect ? topProspect.rankLabel ?? `Prospect #${teamOpportunityProspectRank(topProspect)}` : 'No ranked prospect yet'}</small>
+          <small>{topProspect ? topProspect.rankLabel ?? `Oracle Prospect #${teamOpportunityProspectRank(topProspect)}` : 'No ranked prospect yet'}</small>
         </div>
         <div className="team-command-lane gap">
           <span>Price Gap</span>
@@ -4373,7 +4485,7 @@ function MarlinsTeamPage({
   onUndoRejectListing: () => void
 }) {
   const pricedPlayerCount = new Set(rows.map((row) => scanNameKey(row.playerName))).size
-  const rankedCount = rows.filter((row) => row.stsRank !== null || row.stsProspectRank !== null).length
+  const rankedCount = rows.filter((row) => row.oracleStageRank !== null || row.stsRank !== null || row.stsProspectRank !== null).length
   const checklistRankedCount = checklistPlayers.filter((playerName) => findStsRanking(playerName)).length
   const sortedChecklistPlayers = useMemo(() => [...checklistPlayers].sort((left, right) => left.localeCompare(right)), [checklistPlayers])
   const baseSales30 = rows.reduce((total, row) => total + row.baseSales30, 0)
@@ -4692,11 +4804,12 @@ function MarlinsTeamPage({
 }
 
 function RankingOnlyMatch({ ranking }: { ranking: NonNullable<ReturnType<typeof findStsRanking>> }) {
+  const isOracle = ranking.source === 'baseball-oracle'
   return (
     <div className="ranking-only-card">
       <Brain size={18} />
       <div>
-        <span>Ranking found, no priced card lane yet</span>
+        <span>{isOracle ? 'Baseball Oracle match, no priced card lane yet' : 'Ranking found, no priced card lane yet'}</span>
         <strong>{ranking.name}</strong>
         <small>
           {[ranking.team, ranking.pos, ranking.level, ranking.age ? `Age ${ranking.age}` : null].filter(Boolean).join(' / ')}
@@ -4707,7 +4820,14 @@ function RankingOnlyMatch({ ranking }: { ranking: NonNullable<ReturnType<typeof 
       </div>
       <div className="ranking-only-stats">
         <span>{primaryStsRankLabel(ranking) ?? 'Unranked'}</span>
-        {ranking.prospectRank && ranking.rank ? <span>Overall #{ranking.rank.toLocaleString()}</span> : null}
+        {isOracle && ranking.oracleCareerOutlook !== null ? (
+          <span>
+            Career Outlook {ranking.oracleCareerOutlook.toFixed(1)}
+            {ranking.oracleCareerOutlookBand ? ` / ${ranking.oracleCareerOutlookBand.replaceAll('_', ' ')}` : ''}
+          </span>
+        ) : ranking.prospectRank && ranking.rank ? (
+          <span>Overall #{ranking.rank.toLocaleString()}</span>
+        ) : null}
         <span className={changeClassName(ranking.change30d)}>30D {formatSigned(ranking.change30d)}</span>
       </div>
     </div>
@@ -4743,6 +4863,12 @@ function LadderDetail({ row }: { row?: PricingRow }) {
     ['30D', row.stsChange30d],
   ]
   const stsSummary = compactSummary(row.stsSummary)
+  const isOracle = row.rankingSource === 'baseball-oracle'
+  const oracleContext = [
+    row.oracleEvidenceTier ? `${row.oracleEvidenceTier.replaceAll('_', ' ')} evidence` : null,
+    row.oracleVolatility ? `${row.oracleVolatility.replaceAll('_', ' ')} volatility` : null,
+    row.oracleRankAvailability ? row.oracleRankAvailability.replaceAll('_', ' ') : null,
+  ].filter(Boolean).join(' / ')
 
   return (
     <section className="detail-card ladder-detail">
@@ -4784,18 +4910,32 @@ function LadderDetail({ row }: { row?: PricingRow }) {
         <div className="sts-context-panel">
           <div className="sts-context-head">
             <div>
-              <span>Rank vs Price</span>
+              <span>{isOracle ? 'Baseball Oracle Rank vs Price' : 'Rank vs Price'}</span>
               <strong>{formatStsLine(row)}</strong>
               <small>
                 {[row.stsTeam, row.stsPosition, row.stsLevel, row.stsAge ? `Age ${row.stsAge}` : null].filter(Boolean).join(' / ')}
               </small>
             </div>
             <div className="sts-score-stack">
-              <span>BIN Target</span>
-              <strong>{row.stsBinTargetScore?.toFixed(1) ?? '--'}</strong>
-              <small>
-                {row.stsMomentumScore?.toFixed(1) ?? '--'} momentum / {row.stsRiserValueScore?.toFixed(1) ?? '--'} riser
-              </small>
+              {isOracle ? (
+                <>
+                  <span>Career Outlook</span>
+                  <strong>{row.oracleCareerOutlook?.toFixed(1) ?? '--'}</strong>
+                  <small>
+                    {row.oracleCareerOutlookBand?.replaceAll('_', ' ') ?? 'band pending'}
+                    {oracleContext ? ` / ${oracleContext}` : ''}
+                    {row.stsBinTargetScore !== null ? ` / ${row.stsBinTargetScore.toFixed(1)} BIN target` : ''}
+                  </small>
+                </>
+              ) : (
+                <>
+                  <span>BIN Target</span>
+                  <strong>{row.stsBinTargetScore?.toFixed(1) ?? '--'}</strong>
+                  <small>
+                    {row.stsMomentumScore?.toFixed(1) ?? '--'} momentum / {row.stsRiserValueScore?.toFixed(1) ?? '--'} riser
+                  </small>
+                </>
+              )}
             </div>
           </div>
           {stsChangeItems.some(([, value]) => value !== null) ? (
@@ -6363,9 +6503,9 @@ function SourceStackPanel({
       key: 'rankings',
       label: 'Player signal',
       value: ranking?.rows ? `${ranking.matchedRows.toLocaleString()} matched` : 'Bundled',
-      detail: ranking?.latestUpdated ? `rankings updated ${new Date(ranking.latestUpdated).toLocaleDateString()}` : 'Formulated Consensus snapshots',
+      detail: ranking?.latestUpdated ? `rankings updated ${new Date(ranking.latestUpdated).toLocaleDateString()}` : 'Baseball Oracle + STS snapshots',
       tone: ranking?.rows ? 'fresh' : 'watch',
-      role: 'Consensus rank, trend, and coverage drive the value board.',
+      role: 'Baseball Oracle owns prospect rank and Career Outlook; STS adds trend and MLB fallback.',
     },
   ] satisfies Array<{
     key: string
@@ -6718,8 +6858,8 @@ function BinRadar({
         <button className="preset-scan-card" type="button" onClick={onScanTopProspects} disabled={!canScanTopProspects}>
           <BookOpenCheck size={17} />
           <span>
-            <strong>Top 100 prospects</strong>
-            <small>rank-first scan</small>
+            <strong>Top 100 Oracle prospects</strong>
+            <small>Oracle rank-first scan</small>
           </span>
         </button>
         <button className="preset-scan-card" type="button" onClick={onScanBaseAutos} disabled={!canScanBaseAutos}>
@@ -7071,7 +7211,14 @@ function BinRadar({
                     {sts.ranking ? (
                       <>
                         {sts.primaryRankLabel ? <small className="sts-chip">{sts.primaryRankLabel}</small> : null}
-                        {sts.prospectRank && sts.rank ? <small className="sts-chip">Overall #{sts.rank.toLocaleString()}</small> : null}
+                        {sts.source === 'baseball-oracle' && sts.careerOutlook !== null ? (
+                          <small className="sts-chip">
+                            Career Outlook {sts.careerOutlook.toFixed(1)}
+                            {sts.careerOutlookBand ? ` / ${sts.careerOutlookBand.replaceAll('_', ' ')}` : ''}
+                          </small>
+                        ) : sts.prospectRank && sts.rank ? (
+                          <small className="sts-chip">Overall #{sts.rank.toLocaleString()}</small>
+                        ) : null}
                         {sts.change30d !== null ? (
                           <small className={`sts-chip ${changeClassName(sts.change30d)}`}>30D {formatSigned(sts.change30d)}</small>
                         ) : null}
@@ -10761,7 +10908,7 @@ function App() {
         activePlayerScope === 'value-25'
           ? 'Value board needs priced checklist rows matched to ranking signals before scanning.'
           : activePlayerScope === 'prospect-100'
-            ? 'Top 100 prospects needs checklist rows matched to formulated prospect ranks before scanning.'
+            ? 'Top 100 Oracle prospects need checklist rows matched to Baseball Oracle ranks before scanning.'
           : 'Target 50 needs priced checklist rows matched to ranking signals before scanning.',
       )
       return
@@ -10952,7 +11099,7 @@ function App() {
         activePlayerScope === 'value-25'
           ? 'Value board needs priced checklist rows matched to ranking signals before scanning auctions.'
           : activePlayerScope === 'prospect-100'
-            ? 'Top 100 prospects needs checklist rows matched to formulated prospect ranks before scanning auctions.'
+            ? 'Top 100 Oracle prospects need checklist rows matched to Baseball Oracle ranks before scanning auctions.'
           : 'Target 50 needs priced checklist rows matched to ranking signals before scanning auctions.',
       )
       return
@@ -11301,7 +11448,7 @@ function App() {
                 <small>
                   {effectiveSelectedRow && (selectedRowId || trimmedQuery)
                     ? `${effectiveSelectedRow.release.replaceAll('-', ' ')} / ${effectiveSelectedRow.currentTeamName ?? 'team unknown'} / ${formatBasePrice(effectiveSelectedRow)} base auto / ${formatStsLine(effectiveSelectedRow) || 'no rank signal'}`
-                    : 'Consensus player rank compared with the latest modeled 1st Bowman base-auto price.'}
+                    : 'Baseball Oracle prospect rank and Career Outlook compared with the latest modeled 1st Bowman base-auto price.'}
                 </small>
               </div>
               <label className="lookup-primary-search">

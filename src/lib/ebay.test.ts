@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ChecklistModel } from '../types'
 import { fetchEbayAuctionListings, fetchEbayBinListings, isEbayRateLimitError } from './ebay'
 import { STS_FALLBACK_CSV_INPUTS } from './stsFallback'
-import { hydrateStsLeaderboard } from './stsRankings'
+import { findStsRanking, hydrateStsLeaderboard, primaryStsRank } from './stsRankings'
 
 beforeAll(() => {
   hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)
@@ -93,7 +93,9 @@ describe('fetchEbayBinListings', () => {
       ranking: expect.any(Number),
       level: 'A+',
     })
-    expect(result.listings[0]?.prospect?.ranking).toBeLessThan(25)
+    const oracleRanking = findStsRanking('Eli Willits')
+    expect(oracleRanking?.source).toBe('baseball-oracle')
+    expect(result.listings[0]?.prospect?.ranking).toBe(oracleRanking ? primaryStsRank(oracleRanking) : null)
     expect(result.stats.mappedListings).toBe(1)
   })
 

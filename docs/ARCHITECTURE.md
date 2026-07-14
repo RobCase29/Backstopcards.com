@@ -17,6 +17,8 @@ Anything that does not directly support those jobs should live in an operations 
 ```text
 Official checklists + Wax Pack Hero 1st lists
   -> checklist universe and card lanes
+  -> Baseball Oracle MiLB Prospect Rank + Career Outlook
+     -> Scout the Statline movement/coverage context + MLB fallback
   -> Card Hedge Elite daily export (broad discovery)
   -> Card Hedge targeted search + comps (precision fallback)
   -> Neon canonical hosted comp lanes + refresh queue
@@ -33,7 +35,8 @@ Official checklists + Wax Pack Hero 1st lists
 - Card Hedge: scalable recent sold comps and daily refresh inputs.
 - eBay Browse: active BIN and auction discovery today.
 - Fanatics Collect: active fixed-price card discovery through the public search-key + Algolia path; no account login should be stored.
-- Scout the Statline snapshots: value-board ranking, trend, and coverage context.
+- Baseball Oracle snapshots: authoritative global Prospect Rank for matched MiLB players, plus Career Outlook and provider lineage.
+- Scout the Statline snapshots: movement and coverage context for prospects, plus the MLB dynasty-rank fallback.
 - Neon Postgres: production sold-comp lanes, item-level comp history, refresh queue, live snapshots, rejects, and cleanup memory.
 - Local canonical SQLite cache: development/import tooling and offline fallback.
 - Upstash Redis: hosted shared cache for repeated marketplace pages and ranking refreshes.
@@ -58,6 +61,9 @@ Sold comps are immutable enough to store permanently. Live listings are not.
 - Production stores live opportunity snapshots in Neon as observations, but every listing needs freshness metadata and should be treated as stale quickly.
 - Local development and disaster recovery may fall back to ignored SQLite files and the generated static snapshot.
 - User rejects and bucket merges are cleanup signal, not throwaway UI state.
+- Ranking API calls are server-only. The browser consumes the app's normalized ranking bundle and never calls Baseball Oracle directly.
+- Ranking snapshots preserve stable Oracle player/MLBAM IDs, record and snapshot IDs, schema/contract versions, model and as-of fields, evidence tier, volatility, and match provenance.
+- Identity matching prefers persisted provider IDs and MLBAM IDs. Name/team fallback must be unique; ambiguous candidates fail closed.
 
 ## Modeling Policy
 
@@ -69,7 +75,15 @@ Base auto price is the anchor. Variation pricing should prefer, in order:
 4. Release-level multiple only when player-level evidence is absent.
 5. Explicit low-confidence label when none of the above is available.
 
-The value board should use current base-auto price against rank-implied base price. Prospect ranking gets priority over MLB-only dynasty rank when both exist. MLB dynasty rank is useful for players who aged out of prospect lists.
+The value board should use current base-auto price against rank-implied base price. For a current MiLB player, Baseball Oracle's served Prospect Rank is the authoritative prospect ordinal and Career Outlook is a separate dynasty-quality signal. STS trend and coverage data may supplement that player, but it must not overwrite the Oracle ordinal. STS MLB dynasty rank is the fallback for players who aged out of a current Oracle MiLB prospect list.
+
+Do not collapse the following ranks into one field or label:
+
+1. **Global Oracle Prospect Rank**: the provider-served position in the current MiLB universe, evaluated against the universe size shipped with that snapshot.
+2. **Bowman-local prospect rank**: the relative position among Oracle-ranked players represented in the active Bowman checklist universe.
+3. **Opportunity rank**: Backstop's price-aware ordering derived from ranking context, Career Outlook, comp evidence, and market price.
+
+Oracle Rookie Pre-Debut Rank and MLB Career Rank belong to different stage universes and must not be numerically compared with MiLB Prospect Rank. The Bowman-local ordinal is a convenience projection, while opportunity rank is a model result; neither may be labeled or exported as an Oracle rank.
 
 ## Scale Guardrails
 
@@ -79,7 +93,9 @@ The value board should use current base-auto price against rank-implied base pri
 - Broad scans should use cached query pages and constrained player buckets.
 - Hosted scans should check Redis before spending marketplace API requests and should write fresh snapshots to Neon after scoring.
 - Classification fixes should be encoded as parser rules or bucket overrides after repeated misses.
-- Rankings refresh through the hosted `/api/rankings/refresh` cron path and persist to Redis or Vercel Runtime Cache. Bundled CSV files are fallback snapshots, not the production write target.
+- Rankings refresh through the hosted `/api/rankings/refresh` cron path and persist to Redis or Vercel Runtime Cache. The local equivalent is `npm run rankings:refresh`.
+- The refresh resolves checklist identities to exact Oracle player IDs before requesting current signals. Snapshot/contract drift and ambiguous identity matches fail closed.
+- Bundled Oracle and STS CSV files are fallback snapshots and audit artifacts, not the production write target. They retain enough lineage to explain which provider record, snapshot, model, and match produced each ranking row.
 - Vercel Hobby runs one authenticated daily comp cron. On-demand player refreshes use the same durable queue, and a future worker can increase cadence without changing the data contract.
 
 ## Subscription Decisions

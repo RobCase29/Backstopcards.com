@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   findStsRanking,
   hydrateStsLeaderboard,
@@ -15,6 +15,99 @@ import { STS_FALLBACK_CSV_INPUTS } from './stsFallback'
 beforeAll(() => {
   hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)
 })
+
+afterEach(() => {
+  hydrateStsLeaderboard(STS_FALLBACK_CSV_INPUTS)
+})
+
+const ORACLE_HEADERS = [
+  'Source',
+  '#',
+  'Checklist Key',
+  'Checklist Name',
+  'Checklist Team',
+  'Match Method',
+  'Oracle Player Id',
+  'MLBAM Id',
+  'Oracle Name',
+  'Oracle Route',
+  'Ranking Role',
+  'Rank Label',
+  'Rank Availability',
+  'Rank Universe',
+  'Rank Target',
+  'Rank As Of',
+  'Rank Model Version',
+  'Evidence Tier',
+  'Volatility',
+  'Reason Codes',
+  'Career Outlook',
+  'Career Outlook Band',
+  'Career Outlook Basis',
+  'Career Outlook As Of',
+  'Career Outlook Model Version',
+  'Age',
+  'Level',
+  'Team',
+  'Pos',
+  'Record Version',
+  'Snapshot Id',
+  'Schema Version',
+  'Contract Version',
+  'Updated',
+] as const
+
+type OracleCsvOverride = Partial<Record<(typeof ORACLE_HEADERS)[number], string | number | null>>
+
+function csvCell(value: string | number | null | undefined) {
+  const text = String(value ?? '')
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
+}
+
+function oracleCsv(...overrides: OracleCsvOverride[]) {
+  const rows = overrides.map((override, index) => {
+    const name = String(override['Checklist Name'] ?? `Oracle Prospect ${index + 1}`)
+    const values: Record<(typeof ORACLE_HEADERS)[number], string | number | null> = {
+      Source: 'Baseball Oracle Player Signals',
+      '#': index + 10,
+      'Checklist Key': normalizeStsPlayerName(name),
+      'Checklist Name': name,
+      'Checklist Team': 'Miami Marlins',
+      'Match Method': 'checklist_name_and_team',
+      'Oracle Player Id': `oracle:test:${index + 1}`,
+      'MLBAM Id': `90000${index + 1}`,
+      'Oracle Name': name,
+      'Oracle Route': 'milb',
+      'Ranking Role': 'hitter',
+      'Rank Label': 'Prospect Rank',
+      'Rank Availability': 'available',
+      'Rank Universe': 6_490,
+      'Rank Target': 'mlb_war_next_5_ge_5',
+      'Rank As Of': '2025-12-31T00:00:00.000Z',
+      'Rank Model Version': 'milb-impact-five-calendar-year-war-v1',
+      'Evidence Tier': 'completed_season_full_model',
+      Volatility: 'standard',
+      'Reason Codes': '',
+      'Career Outlook': 72,
+      'Career Outlook Band': 'MLB contributor',
+      'Career Outlook Basis': 'conditional_on_mlb_arrival',
+      'Career Outlook As Of': '2025-12-31T00:00:00.000Z',
+      'Career Outlook Model Version': 'career-model-v1',
+      Age: 20,
+      Level: 'AA',
+      Team: 'MIA',
+      Pos: 'SS',
+      'Record Version': `record-${index + 1}`,
+      'Snapshot Id': 'snapshot-test-1',
+      'Schema Version': 'player-signals.v1',
+      'Contract Version': 'player-signals-contract/v1',
+      Updated: '2026-07-14T14:14:34.796Z',
+      ...override,
+    }
+    return ORACLE_HEADERS.map((header) => csvCell(values[header])).join(',')
+  })
+  return [ORACLE_HEADERS.join(','), ...rows].join('\n')
+}
 
 describe('consensus rankings', () => {
   it('still parses quoted legacy rows without splitting records', () => {
@@ -90,19 +183,62 @@ describe('consensus rankings', () => {
     expect(primaryStsRankLabel(ranking!)).toBe('MLB dynasty #1')
   })
 
+  it('parses Baseball Oracle rank, Career Outlook, and provider lineage without renumbering it', () => {
+    const [ranking] = parseStsCsv(
+      oracleCsv({
+        '#': 27,
+        'Checklist Name': 'Edward Florentino',
+        'Oracle Player Id': 'oracle:edward-florentino',
+        'MLBAM Id': '812345',
+        'Oracle Name': 'Edward Florentino',
+        'Rank Universe': 6_490,
+        'Career Outlook': 78.4,
+        'Career Outlook Band': 'Impact regular',
+        'Record Version': 'record-edward',
+        'Snapshot Id': 'snapshot-oracle-a',
+        'Match Method': 'verified_checklist_seed',
+      }),
+    )
+
+    expect(ranking).toMatchObject({
+      source: 'baseball-oracle',
+      population: 'oracle',
+      prospectRank: 27,
+      oracleStageRank: 27,
+      oracleRankUniverse: 6_490,
+      oracleCareerOutlook: 78.4,
+      oracleCareerOutlookBand: 'Impact regular',
+      oraclePlayerId: 'oracle:edward-florentino',
+      oracleMlbamId: '812345',
+      oracleRecordVersion: 'record-edward',
+      oracleSnapshotId: 'snapshot-oracle-a',
+      oracleSchemaVersion: 'player-signals.v1',
+      oracleContractVersion: 'player-signals-contract/v1',
+      oracleMatchMethod: 'verified_checklist_seed',
+    })
+    expect(primaryStsRankLabel(ranking!)).toBe('Oracle Prospect #27')
+    expect(ranking?.summary).toContain('Prospect Rank #27 of 6,490')
+  })
+
   it('normalizes accents, suffixes, hyphens, and punctuation for player matching', () => {
     expect(normalizeStsPlayerName('Ronald Acuña Jr.')).toBe('ronald acuna')
     expect(normalizeStsPlayerName('Seong-Jun Kim')).toBe('seong jun kim')
   })
 
-  it('matches real formulated consensus rows from both hitter and pitcher feeds', () => {
+  it('keeps real Oracle prospect ranks authoritative while retaining STS hitter and pitcher context', () => {
     const ranking = findStsRanking('Aiva Arquette')
 
     expect(ranking).toMatchObject({
       team: 'MIA',
-      population: 'hitter',
-      source: 'formulated-consensus',
+      population: 'oracle',
+      source: 'baseball-oracle',
+      oracleRoute: 'milb',
+      oracleStageRank: expect.any(Number),
+      oracleRankUniverse: expect.any(Number),
+      prospectRank: expect.any(Number),
     })
+    expect(ranking?.prospectRank).toBe(ranking?.oracleStageRank)
+    expect(ranking?.oracleRankUniverse).toBeGreaterThan(ranking?.oracleStageRank ?? 0)
     expect(ranking?.coverage).toBeGreaterThanOrEqual(5)
     expect(ranking?.coverage).toBe(
       Object.values(ranking?.sourceRanks ?? {}).filter((sourceRank) => sourceRank !== null).length,
@@ -113,10 +249,13 @@ describe('consensus rankings', () => {
 
     expect(pitcher).toMatchObject({
       team: 'MIA',
-      population: 'pitcher',
-      source: 'formulated-consensus',
+      population: 'oracle',
+      source: 'baseball-oracle',
+      oracleRankingRole: 'pitcher',
+      oracleStageRank: expect.any(Number),
     })
-    expect(pitcher?.rank).toBeLessThan(ranking?.rank ?? Number.POSITIVE_INFINITY)
+    expect(pitcher?.coverage).toBeGreaterThan(0)
+    expect(Object.values(pitcher?.sourceRanks ?? {}).some((sourceRank) => sourceRank !== null)).toBe(true)
   })
 
   it('uses OOPSY Peak MLB rows for graduated players without taking precedence over prospect rows', () => {
@@ -132,11 +271,74 @@ describe('consensus rankings', () => {
     expect(primaryStsRankLabel(mlb!)).toBe('MLB dynasty #1')
 
     expect(prospect).toMatchObject({
-      source: 'formulated-consensus',
+      source: 'baseball-oracle',
       level: 'AA',
+      oracleRoute: 'milb',
+      oracleStageRank: expect.any(Number),
     })
     expect(prospect?.prospectRank).not.toBeNull()
-    expect(primaryStsRankLabel(prospect!)).toContain('Prospect #')
+    expect(primaryStsRankLabel(prospect!)).toBe(`Oracle Prospect #${prospect?.oracleStageRank?.toLocaleString()}`)
+  })
+
+  it('merges STS movement into an Oracle row without overwriting the Oracle prospect ordinal', () => {
+    const oracle = oracleCsv({
+      '#': 19,
+      'Checklist Name': 'Signal Player',
+      'Oracle Name': 'Signal Player',
+      'Oracle Player Id': 'oracle:signal-player',
+      Team: 'MIA',
+    })
+    const sts = [
+      'Name,Team,Pos,Age,Level,Rank,Prospect Rank,3 Day Change,7 Day Change,14 Day Change,30 Day Change,WAR,Summary',
+      'Signal Player,MIA,SS,20,AA,120,45,4,12,30,88,3.4,STS trend context',
+    ].join('\n')
+    hydrateStsLeaderboard([oracle, sts])
+
+    const ranking = findStsRanking('Signal Player', { team: 'MIA' })
+    expect(ranking).toMatchObject({
+      source: 'baseball-oracle',
+      oraclePlayerId: 'oracle:signal-player',
+      oracleStageRank: 19,
+      prospectRank: 19,
+      rank: 120,
+      change7d: 12,
+      change30d: 88,
+      war: 3.4,
+    })
+    expect(ranking?.summary).toContain('Scout the Statline context: STS trend context')
+  })
+
+  it('fails closed on ambiguous names while allowing exact team and provider-ID resolution', () => {
+    hydrateStsLeaderboard([
+      oracleCsv(
+        {
+          '#': 40,
+          'Checklist Name': 'Alex Smith',
+          'Oracle Name': 'Alex Smith',
+          'Oracle Player Id': 'oracle:alex-mia',
+          Team: 'MIA',
+        },
+        {
+          '#': 90,
+          'Checklist Name': 'Alex Smith',
+          'Oracle Name': 'Alex Smith',
+          'Oracle Player Id': 'oracle:alex-bos',
+          'MLBAM Id': '955555',
+          Team: 'BOS',
+        },
+      ),
+    ])
+
+    expect(findStsRanking('Alex Smith')).toBeNull()
+    expect(findStsRanking('Alex Smith', { team: 'Boston Red Sox' })).toMatchObject({
+      oraclePlayerId: 'oracle:alex-bos',
+      oracleStageRank: 90,
+    })
+    expect(findStsRanking('Alex Smith', { oraclePlayerId: 'oracle:alex-mia' })).toMatchObject({
+      oraclePlayerId: 'oracle:alex-mia',
+      oracleStageRank: 40,
+    })
+    expect(findStsRanking('Alex Smith', { mlbamId: '955555' })?.oraclePlayerId).toBe('oracle:alex-bos')
   })
 
   it('scores rising rank movement above neutral and improves low-price riser value', () => {
@@ -155,12 +357,30 @@ describe('consensus rankings', () => {
     expect(scoreStsBinTarget(riser, 60)).toBeGreaterThan(scoreStsBinTarget(riser, 3))
   })
 
-  it('keeps low-coverage players visible but discounts them versus fully covered peers', () => {
-    const covered = findStsRanking('Eli Willits')
-    const lowCoverage = findStsRanking('Aidan Miller')
+  it('keeps thin-evidence Oracle players visible but discounts them versus full-model peers', () => {
+    const csv = oracleCsv(
+      {
+        '#': 50,
+        'Checklist Name': 'Full Evidence',
+        'Oracle Name': 'Full Evidence',
+        'Career Outlook': 80,
+      },
+      {
+        '#': 50,
+        'Checklist Name': 'Thin Evidence',
+        'Oracle Name': 'Thin Evidence',
+        'Rank Availability': 'insufficient_sample',
+        'Evidence Tier': 'live_in_season_prior',
+        Volatility: 'very_high',
+        'Career Outlook': 80,
+      },
+    )
+    hydrateStsLeaderboard([csv])
+    const covered = findStsRanking('Full Evidence')
+    const lowCoverage = findStsRanking('Thin Evidence')
 
     expect(covered?.lowCoverage).toBe(false)
     expect(lowCoverage?.lowCoverage).toBe(true)
-    expect(scoreStsRanking(covered!)).toBeGreaterThan(scoreStsRanking(lowCoverage!))
+    expect(scoreStsRanking(covered!)).toBeGreaterThan(scoreStsRanking(lowCoverage!) + 20)
   })
 })
