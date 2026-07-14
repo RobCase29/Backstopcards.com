@@ -37,7 +37,14 @@ const draftModel: ChecklistModel = {
   releaseYear: 2025,
   multipliers: [
     { variation: 'Base Auto', avgMultiplier: 1, sortOrder: 0 },
-    { variation: 'Blue /150 Auto', avgMultiplier: 4, sortOrder: 2 },
+    {
+      variation: 'Blue /150 Auto',
+      avgMultiplier: 4,
+      sortOrder: 2,
+      modelMethod: 'hierarchical-proximity-v3',
+      modelEvidence: 'modeled',
+      modelActionable: true,
+    },
   ],
   players: [
     {
@@ -48,6 +55,7 @@ const draftModel: ChecklistModel = {
     },
   ],
   fetchedAt: '2026-06-21T00:00:00.000Z',
+  modelVersion: 'backstop-fv-v3',
   source: 'authenticated-player-model',
 }
 
@@ -83,7 +91,9 @@ describe('pricing matrix', () => {
   it('uses each release-specific multiple for the same variation label', () => {
     const matrix = buildPricingMatrix([bowmanModel, draftModel])
     const bowmanBlue = matrix.rows.find((row) => row.release === '2026-Bowman')?.ladder.find((quote) => quote.label === 'Blue /150 Auto')
-    const draftBlue = matrix.rows.find((row) => row.release === '2025-Bowman-Draft')?.ladder.find((quote) => quote.label === 'Blue /150 Auto')
+    const draftBlue = matrix.rows.find((row) => row.release === '2025-Bowman-Draft')?.ladder.find(
+      (quote) => variationKey(quote.label) === variationKey('Blue /150 Auto'),
+    )
 
     expect(bowmanBlue).toMatchObject({ multiplier: 1.95, price: 195 })
     expect(draftBlue).toMatchObject({ multiplier: 4, price: 320 })
@@ -97,6 +107,24 @@ describe('pricing matrix', () => {
       price: 195,
       multiplier: 1.95,
     })
+  })
+
+  it('keeps the displayed multiplier mathematically aligned with a direct-comp-adjusted quote', () => {
+    const matrix = buildPricingMatrix([
+      {
+        ...bowmanModel,
+        players: [
+          {
+            ...bowmanModel.players[0],
+            variations: [{ variation: 'Blue /150 Auto', avgPrice: 300, multiplier: 3, salesCount: 8 }],
+          },
+        ],
+      },
+    ])
+    const row = matrix.rows[0]
+    const blue = row.ladder.find((quote) => quote.label === 'Blue /150 Auto')
+
+    expect(blue?.price).toBeCloseTo(row.baseTwmaPrice * (blue?.multiplier ?? 0), 2)
   })
 
   it('passes proximity-calibrated release multipliers through unchanged', () => {
@@ -126,7 +154,7 @@ describe('pricing matrix', () => {
     const { variations } = releaseVariationCurve({
       ...bowmanModel,
       multipliers: [],
-      modelVersion: 'backstop-fv-v2',
+      modelVersion: 'backstop-fv-v3',
     })
 
     expect(variations).toHaveLength(BOWMAN_2026_CHROME_AUTO_VARIATIONS.length)
@@ -141,7 +169,7 @@ describe('pricing matrix', () => {
   it('canonicalizes legacy aliases before aggregating the 2026 release curve', () => {
     const { variations } = releaseVariationCurve({
       ...bowmanModel,
-      modelVersion: 'backstop-fv-v2',
+      modelVersion: 'backstop-fv-v3',
       multipliers: [
         { variation: 'Sunflower Seeds /5', avgMultiplier: 18, totalSales: 2 },
         { variation: 'Sunflower Snack Pack /5', avgMultiplier: 22, totalSales: 3 },
@@ -151,6 +179,22 @@ describe('pricing matrix', () => {
 
     expect(sunflower).toHaveLength(1)
     expect(sunflower[0]?.totalSales).toBe(5)
+  })
+
+  it('canonicalizes historical aliases and rejects impossible generic refractor lanes', () => {
+    const { variations, unresolvedMultipliers } = releaseVariationCurve({
+      ...draftModel,
+      modelVersion: 'backstop-fv-v3',
+      multipliers: [
+        { variation: 'Purple Refractor /250', avgMultiplier: 2.1, totalSales: 4 },
+        { variation: 'Purple /250', avgMultiplier: 1.9, totalSales: 3 },
+        { variation: 'Refractor /250', avgMultiplier: 2, totalSales: 2 },
+      ],
+    })
+
+    expect(variations.filter((variation) => variation.variation === 'Purple /250')).toHaveLength(1)
+    expect(variations.some((variation) => variation.variation === 'Refractor /250')).toBe(false)
+    expect(unresolvedMultipliers).toBe(1)
   })
 
   it('treats snack-pack wording variants as one variation key', () => {
@@ -164,7 +208,7 @@ describe('pricing matrix', () => {
     expect(variationKey('Refractor /499 Auto')).not.toBe(variationKey('Base Auto'))
   })
 
-  it('uses a 30-day recency-weighted base when enough raw sales are available', () => {
+  it('resists a one-off spike while keeping the base anchor current', () => {
     const estimate = estimateBasePrice(
       {
         playerName: 'Hot Prospect',
@@ -184,10 +228,10 @@ describe('pricing matrix', () => {
     )
 
     expect(estimate.source).toBe('weighted-sales')
-    expect(estimate.price).toBeGreaterThan(58)
-    expect(estimate.price).toBeLessThan(70)
+    expect(estimate.price).toBeGreaterThan(48)
+    expect(estimate.price).toBeLessThan(56)
     expect(estimate.sales30).toBe(6)
-    expect(estimate.methodLabel).toContain('robust recency ensemble')
+    expect(estimate.methodLabel).toContain('validated recent market')
   })
 
   it('blends 30-day, 90-day, and fallback values when recent base sales are thin', () => {
@@ -211,7 +255,7 @@ describe('pricing matrix', () => {
     expect(estimate.source).toBe('blended-sales')
     expect(estimate.price).toBeGreaterThan(100)
     expect(estimate.price).toBeLessThan(140)
-    expect(estimate.methodLabel).toContain('robust recency ensemble')
+    expect(estimate.methodLabel).toContain('validated recent market')
   })
 
   it('balances auction and BIN channels when both are present', () => {
@@ -240,7 +284,7 @@ describe('pricing matrix', () => {
     expect(estimate.binSales).toBe(4)
     expect(estimate.price).toBeGreaterThan(108)
     expect(estimate.price).toBeLessThan(132)
-    expect(estimate.methodLabel).toContain('auction/BIN channel blend')
+    expect(estimate.methodLabel).toContain('mixed auction + BIN')
   })
 
   it('shrinks stale thin sales toward the cached summary anchor', () => {
@@ -264,7 +308,7 @@ describe('pricing matrix', () => {
     expect(estimate.confidence).toBeLessThan(0.62)
   })
 
-  it('preserves aggregate comp evidence when detailed sale rows are omitted from a snapshot', () => {
+  it('keeps unversioned aggregate summaries provisional when detailed sale rows are omitted', () => {
     const estimate = estimateBasePrice(
       {
         playerName: 'Fallback Prospect',
@@ -279,16 +323,48 @@ describe('pricing matrix', () => {
       price: 88,
       source: 'twma-fallback',
       rawSales: 6,
-      methodLabel: 'cached comp summary',
+      methodLabel: 'cached comp summary / unversioned',
     })
-    expect(estimate.effectiveSales).toBeGreaterThan(2)
-    expect(estimate.confidence).toBeGreaterThan(0.5)
+    expect(estimate.effectiveSales).toBe(0)
+    expect(estimate.confidence).toBeLessThan(0.5)
+  })
+
+  it('uses explicit snapshot provenance without promoting legacy summaries to raw evidence', () => {
+    const estimate = estimateBasePrice(
+      {
+        playerName: 'Legacy Prospect',
+        baseAvgPrice: 88,
+        baseSalesCount: 20,
+        baseModelMethod: 'legacy-cached-summary',
+        baseModelConfidence: 0.44,
+        baseEffectiveSales: 0,
+        baseModelLow: 60,
+        baseModelHigh: 130,
+        variations: [],
+      },
+      asOf,
+    )
+
+    expect(estimate).toMatchObject({
+      price: 88,
+      low: 60,
+      high: 130,
+      effectiveSales: 0,
+      confidence: 0.44,
+      methodLabel: 'legacy cached summary / awaiting title-verified sales',
+    })
   })
 
   it('backs into base auto value from player variation sales when base auto is missing', () => {
     const matrix = buildPricingMatrix([
       {
         ...bowmanModel,
+        modelVersion: 'backstop-fv-v3',
+        multipliers: bowmanModel.multipliers.map((variation) => ({
+          ...variation,
+          modelEvidence: 'modeled' as const,
+          modelActionable: true,
+        })),
         players: [
           ...bowmanModel.players,
           {
@@ -311,10 +387,40 @@ describe('pricing matrix', () => {
     expect(implied?.baseTwmaPrice).toBeGreaterThan(46)
     expect(implied?.baseTwmaPrice).toBeLessThan(51)
     expect(implied?.baseMethod).toContain('implied from 2 variation anchors')
-    const blueQuote = implied?.ladder.find((quote) => quote.label === 'Blue /150 Auto')
+    const blueQuote = implied?.ladder.find((quote) => variationKey(quote.label) === variationKey('Blue /150 Auto'))
     expect(blueQuote?.price).toBeCloseTo((implied?.baseTwmaPrice ?? 0) * (blueQuote?.multiplier ?? 0), 0)
     expect(matrix.impliedBaseRows).toBe(1)
     expect(matrix.missingBaseRows).toBe(0)
+  })
+
+  it('abstains from a base quote when only one thin rare-variation sale exists', () => {
+    const matrix = buildPricingMatrix([
+      {
+        ...draftModel,
+        modelVersion: 'backstop-fv-v3',
+        multipliers: [
+          {
+            variation: 'Red /5',
+            avgMultiplier: 24,
+            modelEvidence: 'indicative',
+            modelActionable: false,
+          },
+        ],
+        players: [
+          {
+            playerName: 'One Sale Prospect',
+            baseAvgPrice: 0,
+            baseSalesCount: 0,
+            variations: [{ variation: 'Red /5', avgPrice: 500, multiplier: 24, salesCount: 1 }],
+          },
+        ],
+      },
+    ])
+
+    const row = matrix.rows.find((candidate) => candidate.playerName === 'One Sale Prospect')
+    expect(row?.basePriceSource).toBe('unpriced')
+    expect(row?.baseTwmaPrice).toBe(0)
+    expect(matrix.impliedBaseRows).toBe(0)
   })
 
   it('keeps checklist-only players visible without counting them as priced models', () => {

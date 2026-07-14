@@ -1,22 +1,23 @@
 import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
 import { findStsRanking, scoreStsBinTarget, scoreStsMomentum, scoreStsRanking, scoreStsRiserValue } from './stsRankings'
 import { normalizeTeamCode, teamDisplayName, teamSearchText } from './teams'
-import { FAIR_VALUE_MODEL_VERSION, stabilizeReleaseMultiplier, structuralVariationPrior } from './variationPriors'
+import {
+  FAIR_VALUE_MODEL_VERSION,
+  isValidatedHierarchicalModel,
+  stabilizeReleaseMultiplier,
+  structuralVariationPrior,
+} from './variationPriors'
 import {
   BOWMAN_2026_CHROME_AUTO_VARIATIONS,
   bowman2026AutoDefinition,
   canonicalizeBowman2026AutoLabel,
 } from '../../shared/bowman2026Taxonomy.js'
+import { canonicalizeHistoricalBowmanAutoLabel } from '../../shared/bowmanAutoTaxonomy.js'
+import { estimateBaseFairValue } from '../../shared/fairValueEngine.js'
+import { blendLaneEvidence } from './variationFairValue'
 
 export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'variation-implied' | 'twma-fallback' | 'unpriced'
 export type SaleChannel = 'auction' | 'bin' | 'unknown'
-
-interface RobustEstimate {
-  value: number
-  effectiveN: number
-  count: number
-  volatility: number
-}
 
 export interface BaseSalePoint {
   price: number
@@ -26,6 +27,8 @@ export interface BaseSalePoint {
 
 export interface BasePriceEstimate {
   price: number
+  low: number
+  high: number
   source: BasePriceSource
   confidence: number
   rawSales: number
@@ -48,6 +51,12 @@ export interface VariationQuote {
   price: number
   sortOrder: number | null
   synthesizedBase: boolean
+  confidence?: number
+  evidenceTier?: 'observed' | 'modeled' | 'indicative'
+  actionable?: boolean
+  lowPrice?: number
+  highPrice?: number
+  empiricalEffectiveSales?: number
 }
 
 export interface PricingRow {
@@ -143,6 +152,11 @@ interface VariationBucket {
   modelMethods: string[]
   modelConfidences: number[]
   proximitySales: number
+  modelEvidence: Array<'observed' | 'modeled' | 'indicative'>
+  modelActionability: boolean[]
+  lowMultipliers: number[]
+  highMultipliers: number[]
+  empiricalEffectiveSales: number[]
   synthesizedBase: boolean
 }
 
@@ -315,74 +329,6 @@ function ageDays(soldAt: number, asOf: number) {
   return Math.max(0, (asOf - soldAt) / 86_400_000)
 }
 
-function logVolatility(sales: BaseSalePoint[]) {
-  if (sales.length <= 1) return 0
-  const logs = sales.map((sale) => Math.log(sale.price))
-  const center = median(logs)
-  const absoluteDeviations = logs.map((value) => Math.abs(value - center))
-  const mad = median(absoluteDeviations)
-  return mad > 0 ? Math.min(1, mad * 1.4826) : Math.min(1, standardDeviation(logs))
-}
-
-function robustTimeWeightedEstimate(sales: BaseSalePoint[], asOf: number, halfLifeDays: number): RobustEstimate | null {
-  if (sales.length === 0) return null
-  const logs = sales.map((sale) => Math.log(sale.price))
-  const center = median(logs)
-  const volatility = logVolatility(sales)
-  const fallbackSigma = standardDeviation(logs)
-  const sigma = volatility > 0 ? volatility : fallbackSigma
-  const clipWidth = sales.length >= 5 && sigma > 0 ? Math.max(0.2, sigma * 2.35) : Number.POSITIVE_INFINITY
-  const weighted = sales.map((sale) => {
-    const logPrice = Math.log(sale.price)
-    const clippedLogPrice = Math.min(center + clipWidth, Math.max(center - clipWidth, logPrice))
-    const weight = Math.pow(0.5, ageDays(sale.soldAt, asOf) / halfLifeDays)
-    return { logPrice: clippedLogPrice, weight }
-  })
-  const totalWeight = weighted.reduce((total, sale) => total + sale.weight, 0)
-  const squaredWeight = weighted.reduce((total, sale) => total + sale.weight ** 2, 0)
-  if (totalWeight <= 0 || squaredWeight <= 0) return null
-  const weightedLogPrice = weighted.reduce((total, sale) => total + sale.logPrice * sale.weight, 0) / totalWeight
-  return {
-    value: Math.exp(weightedLogPrice),
-    effectiveN: totalWeight ** 2 / squaredWeight,
-    count: sales.length,
-    volatility,
-  }
-}
-
-function blendLog(values: Array<{ value: number | null | undefined; weight: number }>) {
-  const usable = values.filter((item) => isFinitePositive(item.value) && item.weight > 0)
-  const totalWeight = usable.reduce((total, item) => total + item.weight, 0)
-  if (totalWeight <= 0) return null
-  const blendedLog = usable.reduce((total, item) => total + Math.log(item.value as number) * item.weight, 0) / totalWeight
-  return Math.exp(blendedLog)
-}
-
-function channelEstimate(sales: BaseSalePoint[], asOf: number): RobustEstimate | null {
-  const auctionSales = sales.filter((sale) => sale.channel === 'auction')
-  const binSales = sales.filter((sale) => sale.channel === 'bin')
-  if (auctionSales.length < 2 || binSales.length < 2) return null
-
-  const auction = robustTimeWeightedEstimate(auctionSales, asOf, 35)
-  const bin = robustTimeWeightedEstimate(binSales, asOf, 35)
-  if (!auction || !bin) return null
-
-  const auctionWeight = 0.58 + clamp((auction.effectiveN - bin.effectiveN) / 24, -0.08, 0.08)
-  const binWeight = 1 - auctionWeight
-  const blended = blendLog([
-    { value: auction.value, weight: auctionWeight },
-    { value: bin.value, weight: binWeight },
-  ])
-  if (!blended) return null
-
-  return {
-    value: blended,
-    effectiveN: auction.effectiveN + bin.effectiveN,
-    count: auction.count + bin.count,
-    volatility: Math.max(auction.volatility, bin.volatility, Math.abs(Math.log(bin.value / auction.value)) / 2),
-  }
-}
-
 export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): BasePriceEstimate {
   const fallbackPrice = isFinitePositive(player.baseAvgPrice) ? player.baseAvgPrice : 0
   const sales = extractBaseSales(player, asOf)
@@ -392,45 +338,34 @@ export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): B
   const summarySales = Math.max(sales.length, Math.max(0, player.baseSalesCount || 0))
   const sales30 = sales.filter((sale) => ageDays(sale.soldAt, asOf) <= 30)
   const sales90 = sales.filter((sale) => ageDays(sale.soldAt, asOf) <= 90)
-  const sales180 = sales.filter((sale) => ageDays(sale.soldAt, asOf) <= 180)
   const auctionSales = sales.filter((sale) => sale.channel === 'auction').length
   const binSales = sales.filter((sale) => sale.channel === 'bin').length
   const unknownSales = Math.max(0, sales.length - auctionSales - binSales)
-  const weighted30 = robustTimeWeightedEstimate(sales30, asOf, 12)
-  const weighted90 = robustTimeWeightedEstimate(sales90, asOf, 30)
-  const weighted180 = robustTimeWeightedEstimate(sales180.length ? sales180 : sales, asOf, 60)
-  const channel = channelEstimate(sales90.length ? sales90 : sales, asOf)
+  const estimate = estimateBaseFairValue(sales, { asOf })
   const latestSaleAt = sales[0] ? new Date(sales[0].soldAt).toISOString() : null
-  const latestAge = sales[0] ? ageDays(sales[0].soldAt, asOf) : Number.POSITIVE_INFINITY
-  const effectiveSales = Math.max(weighted30?.effectiveN ?? 0, weighted90?.effectiveN ?? 0, weighted180?.effectiveN ?? 0)
-  const volatility = Math.max(weighted90?.volatility ?? 0, channel?.volatility ?? 0, weighted180?.volatility ?? 0)
+  const latestAgeDays = sales[0] ? ageDays(sales[0].soldAt, asOf) : Number.POSITIVE_INFINITY
+  const effectiveSales = estimate?.effectiveN ?? 0
+  const volatility = estimate?.volatility ?? 0
 
-  const evidence = Math.min(18, (weighted90?.effectiveN ?? 0) + Math.min(sales30.length, 8) * 0.35)
-  const fallbackWeight = fallbackPrice ? Math.max(0.06, 0.52 * Math.exp(-evidence / 4.5)) : 0
-  const blended = blendLog([
-    { value: weighted30?.value, weight: weighted30 ? clamp(weighted30.effectiveN / 9, 0.12, 0.42) : 0 },
-    { value: weighted90?.value, weight: weighted90 ? clamp(weighted90.effectiveN / 14, 0.1, 0.32) : 0 },
-    { value: weighted180?.value, weight: weighted180 ? clamp(weighted180.effectiveN / 28, 0.04, 0.16) : 0 },
-    { value: channel?.value, weight: channel ? clamp(channel.effectiveN / 18, 0.08, 0.28) : 0 },
-    { value: fallbackPrice, weight: fallbackWeight },
-  ])
-
-  const recencyScore = latestAge <= 14 ? 0.08 : latestAge <= 45 ? 0.04 : latestAge <= 90 ? 0 : -0.08
-  const channelScore = auctionSales > 0 && binSales > 0 ? 0.06 : auctionSales + binSales > 0 ? 0.025 : 0
-  const sampleScore = Math.min(effectiveSales, 14) / 24 + Math.min(sales30.length, 10) / 55
-  const volatilityPenalty = Math.min(0.22, volatility * 0.28)
-  const confidenceCeiling = sales30.length >= 6 ? 0.94 : sales90.length >= 4 ? 0.84 : 0.74
-  const confidence = clamp(0.4 + sampleScore + channelScore + recencyScore - volatilityPenalty, 0.34, confidenceCeiling)
-
-  if (blended && sales.length > 0) {
-    const methodParts = [
-      channel ? 'auction/BIN channel blend' : sales30.length >= 3 ? 'robust recency ensemble' : 'thin sales shrinkage',
-      `${Number(effectiveSales.toFixed(1))} eff`,
-    ]
+  if (estimate && sales.length >= 2) {
+    const staleShrink = fallbackPrice > 0 && latestAgeDays > 45
+      ? clamp((latestAgeDays - 30) / 120, 0, 0.72) * clamp(4 / Math.max(1, effectiveSales), 0.5, 1)
+      : 0
+    const shrinkToFallback = (value: number) => staleShrink > 0
+      ? Math.exp(Math.log(value) * (1 - staleShrink) + Math.log(fallbackPrice) * staleShrink)
+      : value
+    const price = shrinkToFallback(estimate.value)
+    const low = Math.min(price, shrinkToFallback(estimate.low))
+    const high = Math.max(price, shrinkToFallback(estimate.high))
+    const evidenceLabel = effectiveSales >= 4 ? 'deep' : 'developing'
+    const channelLabel = auctionSales > 0 && binSales > 0 ? 'mixed auction + BIN' : auctionSales > 0 ? 'auction' : binSales > 0 ? 'BIN' : 'market'
+    const freshnessCeiling = latestAgeDays <= 45 ? 0.97 : latestAgeDays <= 90 ? 0.72 : 0.58
     return {
-      price: Number(blended.toFixed(2)),
-      source: sales30.length >= 6 ? 'weighted-sales' : 'blended-sales',
-      confidence,
+      price: Number(price.toFixed(2)),
+      low: Number(low.toFixed(2)),
+      high: Number(high.toFixed(2)),
+      source: effectiveSales >= 4 && staleShrink === 0 ? 'weighted-sales' : 'blended-sales',
+      confidence: Math.min(estimate.confidence * (1 - staleShrink * 0.28), freshnessCeiling),
       rawSales: sales.length,
       sales30: sales30.length,
       sales90: sales90.length,
@@ -441,25 +376,71 @@ export function estimateBasePrice(player: ChecklistPlayer, asOf = Date.now()): B
       volatility: Number(volatility.toFixed(3)),
       latestSaleAt,
       fallbackPrice,
-      methodLabel: methodParts.join(' / '),
+      methodLabel: `validated recent market / ${channelLabel} / ${evidenceLabel} / last ${Math.min(10, sales.length)} sales${staleShrink > 0 ? ' / stale-anchor shrinkage' : ''}`,
     }
   }
 
+  if (estimate && sales.length === 1) {
+    const price = fallbackPrice > 0
+      ? Math.exp(Math.log(estimate.value) * 0.42 + Math.log(fallbackPrice) * 0.58)
+      : estimate.value
+    return {
+      price: Number(price.toFixed(2)),
+      low: Number(Math.min(price, estimate.low).toFixed(2)),
+      high: Number(Math.max(price, estimate.high).toFixed(2)),
+      source: 'blended-sales',
+      confidence: Math.min(0.48, estimate.confidence),
+      rawSales: 1,
+      sales30: sales30.length,
+      sales90: sales90.length,
+      auctionSales,
+      binSales,
+      unknownSales,
+      effectiveSales: Number(effectiveSales.toFixed(2)),
+      volatility: Number(volatility.toFixed(3)),
+      latestSaleAt,
+      fallbackPrice,
+      methodLabel: fallbackPrice > 0 ? 'single recent sale / baseline shrinkage' : 'single recent sale / indicative',
+    }
+  }
+
+  const hasExplicitSnapshotProvenance = Boolean(player.baseModelMethod)
+  const snapshotConfidence = isFinitePositive(player.baseModelConfidence)
+    ? clamp(player.baseModelConfidence, 0, 1)
+    : null
+  const snapshotEffectiveSales = isFinitePositive(player.baseEffectiveSales) ? player.baseEffectiveSales : 0
+  const snapshotLow = isFinitePositive(player.baseModelLow) ? player.baseModelLow : fallbackPrice * 0.68
+  const snapshotHigh = isFinitePositive(player.baseModelHigh) ? player.baseModelHigh : fallbackPrice * 1.47
+  const snapshotLatestAt = player.baseLatestSaleAt && Number.isFinite(new Date(player.baseLatestSaleAt).getTime())
+    ? player.baseLatestSaleAt
+    : latestSaleAt
+  const legacySummary = player.baseModelMethod === 'legacy-cached-summary'
+  const fallbackConfidence = snapshotConfidence ?? Math.min(0.58, 0.32 + Math.min(summarySales, 18) / 70)
   return {
     price: Number(fallbackPrice.toFixed(2)),
+    low: Number(snapshotLow.toFixed(2)),
+    high: Number(snapshotHigh.toFixed(2)),
     source: 'twma-fallback',
-    confidence: Math.min(0.72, 0.42 + Math.min(summarySales, 18) / 55),
+    confidence: legacySummary ? Math.min(0.48, fallbackConfidence) : fallbackConfidence,
     rawSales: summarySales,
     sales30: sales30.length,
     sales90: sales90.length,
     auctionSales,
     binSales,
     unknownSales,
-    effectiveSales: Number(Math.max(effectiveSales, Math.min(summarySales, 18) * 0.42).toFixed(2)),
+    effectiveSales: Number(Math.max(effectiveSales, snapshotEffectiveSales).toFixed(2)),
     volatility: Number(volatility.toFixed(3)),
-    latestSaleAt,
+    latestSaleAt: snapshotLatestAt,
     fallbackPrice,
-    methodLabel: sales.length > 0 ? 'thin sales fallback' : summarySales > 0 ? 'cached comp summary' : 'baseline average',
+    methodLabel: sales.length > 0
+      ? 'thin sales fallback'
+      : hasExplicitSnapshotProvenance
+        ? legacySummary
+          ? 'legacy cached summary / awaiting title-verified sales'
+          : player.baseModelMethod || 'snapshot model'
+        : summarySales > 0
+          ? 'cached comp summary / unversioned'
+          : 'baseline average',
   }
 }
 
@@ -473,6 +454,12 @@ function estimateVariationImpliedBasePrice(player: ChecklistPlayer, variations: 
 
       const key = variationKey(variation.variation)
       const releaseVariation = variationByKey.get(key)
+      const releaseActionable = Boolean(releaseVariation?.modelActionable) && releaseVariation?.modelEvidence !== 'indicative'
+      const directSales = Math.max(0, variation.salesCount ?? 0)
+      // A variation-only base estimate is a rescue path, not permission to
+      // price from a one-off rare card. Require either a validated release
+      // curve or enough direct lane depth to withstand one bad classification.
+      if (!releaseActionable && directSales < 3) return null
       const releaseMultiplier = releaseVariation && !isBaseVariation(releaseVariation.variation) ? releaseVariation.avgMultiplier : null
       const playerMultiplier = !isBaseVariation(variation.variation) ? variation.multiplier : null
       const multiplier = isFinitePositive(releaseMultiplier) ? releaseMultiplier : isFinitePositive(playerMultiplier) ? playerMultiplier : null
@@ -480,7 +467,7 @@ function estimateVariationImpliedBasePrice(player: ChecklistPlayer, variations: 
       const numericAvgPrice = avgPrice
       const numericMultiplier = multiplier
 
-      const salesCount = Math.max(1, Math.min(12, variation.salesCount ?? releaseVariation?.totalSales ?? 1))
+      const salesCount = Math.max(1, Math.min(12, directSales || releaseVariation?.totalSales || 1))
       const highMultiplierPenalty = clamp(2.4 / Math.sqrt(numericMultiplier), 0.35, 1.15)
       const releaseCurveWeight = releaseVariation ? 1 : 0.62
       const weight = Math.sqrt(salesCount) * highMultiplierPenalty * releaseCurveWeight
@@ -492,11 +479,28 @@ function estimateVariationImpliedBasePrice(player: ChecklistPlayer, variations: 
         label: releaseVariation?.variation ?? variation.variation,
         weight,
         salesCount,
+        multiplier: numericMultiplier,
+        releaseActionable,
       }
     })
-    .filter((point): point is { value: number; label: string; weight: number; salesCount: number } => Boolean(point))
+    .filter((point): point is {
+      value: number
+      label: string
+      weight: number
+      salesCount: number
+      multiplier: number
+      releaseActionable: boolean
+    } => Boolean(point))
 
   if (points.length === 0) return null
+  const totalSales = points.reduce((total, point) => total + point.salesCount, 0)
+  const singleDeepAnchor =
+    points.length === 1 &&
+    points[0].salesCount >= 4 &&
+    points[0].multiplier <= 10 &&
+    points[0].releaseActionable
+  if (points.length < 2 && !singleDeepAnchor) return null
+  if (totalSales < 3) return null
 
   const logs = points.map((point) => Math.log(point.value))
   const center = median(logs)
@@ -514,12 +518,13 @@ function estimateVariationImpliedBasePrice(player: ChecklistPlayer, variations: 
       return total + clipped * point.weight
     }, 0) / totalWeight
   const price = Math.exp(blendedLog)
-  const totalSales = points.reduce((total, point) => total + point.salesCount, 0)
   const confidence = clamp(0.28 + Math.min(totalWeight, 7) / 22 + Math.min(points.length, 4) * 0.035, 0.3, 0.58)
   const labels = [...new Set(points.map((point) => point.label))].slice(0, 3).join(', ')
 
   return {
     price: Number(price.toFixed(2)),
+    low: Number((price * Math.exp(-Math.max(0.18, sigma || 0.32))).toFixed(2)),
+    high: Number((price * Math.exp(Math.max(0.18, sigma || 0.32))).toFixed(2)),
     source: 'variation-implied',
     confidence,
     rawSales: 0,
@@ -539,6 +544,8 @@ function estimateVariationImpliedBasePrice(player: ChecklistPlayer, variations: 
 function unpricedBaseEstimate(): BasePriceEstimate {
   return {
     price: 0,
+    low: 0,
+    high: 0,
     source: 'unpriced',
     confidence: 0,
     rawSales: 0,
@@ -568,10 +575,11 @@ function compareVariations(left: ChecklistVariation, right: ChecklistVariation) 
 export function releaseVariationCurve(model: ChecklistModel) {
   const buckets = new Map<string, VariationBucket>()
   let unresolvedMultipliers = 0
-  const hasV2Curve =
+  const hasValidatedCurve =
     model.modelVersion === FAIR_VALUE_MODEL_VERSION ||
-    model.multipliers.some((variation) => variation.modelMethod === 'hierarchical-proximity-v2')
-  const isOfficial2026Bowman = model.releaseYear === 2026 && model.category === 'bowman' && hasV2Curve
+    model.modelVersion === 'backstop-fv-v2' ||
+    model.multipliers.some((variation) => isValidatedHierarchicalModel(variation.modelMethod))
+  const isOfficial2026Bowman = model.releaseYear === 2026 && model.category === 'bowman' && hasValidatedCurve
 
   for (const variation of model.multipliers) {
     if (!isFinitePositive(variation.avgMultiplier)) {
@@ -581,7 +589,9 @@ export function releaseVariationCurve(model: ChecklistModel) {
 
     const canonicalLabel = isOfficial2026Bowman
       ? canonicalizeBowman2026AutoLabel(variation.variation, { assumeAuto: true })
-      : variation.variation
+      : hasValidatedCurve
+        ? canonicalizeHistoricalBowmanAutoLabel(variation.variation, { assumeAuto: true })
+        : variation.variation
     if (!canonicalLabel) {
       unresolvedMultipliers += 1
       continue
@@ -598,10 +608,15 @@ export function releaseVariationCurve(model: ChecklistModel) {
         modelMethods: [],
         modelConfidences: [],
         proximitySales: 0,
+        modelEvidence: [],
+        modelActionability: [],
+        lowMultipliers: [],
+        highMultipliers: [],
+        empiricalEffectiveSales: [],
         synthesizedBase: false,
       }
 
-    current.label = isOfficial2026Bowman
+    current.label = isOfficial2026Bowman || hasValidatedCurve
       ? canonicalLabel
       : current.label.length <= variation.variation.length
         ? current.label
@@ -617,6 +632,13 @@ export function releaseVariationCurve(model: ChecklistModel) {
     if (variation.modelMethod) current.modelMethods.push(variation.modelMethod)
     if (isFinitePositive(variation.modelConfidence)) current.modelConfidences.push(variation.modelConfidence as number)
     if (isFinitePositive(variation.proximitySales)) current.proximitySales += variation.proximitySales as number
+    if (variation.modelEvidence) current.modelEvidence.push(variation.modelEvidence)
+    if (typeof variation.modelActionable === 'boolean') current.modelActionability.push(variation.modelActionable)
+    if (isFinitePositive(variation.modelLowMultiplier)) current.lowMultipliers.push(variation.modelLowMultiplier as number)
+    if (isFinitePositive(variation.modelHighMultiplier)) current.highMultipliers.push(variation.modelHighMultiplier as number)
+    if (isFinitePositive(variation.empiricalEffectiveSales)) {
+      current.empiricalEffectiveSales.push(variation.empiricalEffectiveSales as number)
+    }
     buckets.set(key, current)
   }
 
@@ -633,6 +655,11 @@ export function releaseVariationCurve(model: ChecklistModel) {
         modelMethods: ['structural-prior-only'],
         modelConfidences: [definition.priorReliability],
         proximitySales: 0,
+        modelEvidence: ['indicative'],
+        modelActionability: [false],
+        lowMultipliers: [],
+        highMultipliers: [],
+        empiricalEffectiveSales: [],
         synthesizedBase: definition.id === 'base-auto',
       })
     }
@@ -648,6 +675,11 @@ export function releaseVariationCurve(model: ChecklistModel) {
       modelMethods: ['structural-base-anchor'],
       modelConfidences: [1],
       proximitySales: 0,
+      modelEvidence: ['observed'],
+      modelActionability: [true],
+      lowMultipliers: [1],
+      highMultipliers: [1],
+      empiricalEffectiveSales: [],
       synthesizedBase: true,
     })
   }
@@ -657,8 +689,10 @@ export function releaseVariationCurve(model: ChecklistModel) {
       const empiricalMultiplier = median(bucket.multipliers)
       const playerCount = bucket.playerCounts.length ? Math.max(...bucket.playerCounts) : undefined
       const totalSales = bucket.totalSales || undefined
-      const modelMethod = bucket.modelMethods.includes('hierarchical-proximity-v2')
-        ? 'hierarchical-proximity-v2'
+      const modelMethod = bucket.modelMethods.includes('hierarchical-proximity-v3')
+        ? 'hierarchical-proximity-v3'
+        : bucket.modelMethods.includes('hierarchical-proximity-v2')
+          ? 'hierarchical-proximity-v2'
         : bucket.modelMethods.includes('structural-prior-only')
           ? 'structural-prior-only'
           : bucket.modelMethods.includes('structural-base-anchor')
@@ -683,6 +717,19 @@ export function releaseVariationCurve(model: ChecklistModel) {
         modelConfidence: bucket.modelConfidences.length ? median(bucket.modelConfidences) : undefined,
         structuralPrior: prior?.multiplier,
         proximitySales: bucket.proximitySales || undefined,
+        modelEvidence: bucket.modelEvidence.includes('observed')
+          ? 'observed'
+          : bucket.modelEvidence.includes('modeled')
+            ? 'modeled'
+            : bucket.modelEvidence.length
+              ? 'indicative'
+              : undefined,
+        modelActionable: bucket.modelActionability.length ? bucket.modelActionability.some(Boolean) : undefined,
+        modelLowMultiplier: bucket.lowMultipliers.length ? median(bucket.lowMultipliers) : undefined,
+        modelHighMultiplier: bucket.highMultipliers.length ? median(bucket.highMultipliers) : undefined,
+        empiricalEffectiveSales: bucket.empiricalEffectiveSales.length
+          ? Math.max(...bucket.empiricalEffectiveSales)
+          : undefined,
         synthesizedBase: bucket.synthesizedBase,
       }
     })
@@ -741,15 +788,58 @@ export function buildPricingMatrix(models: ChecklistModel[], options: { asOf?: n
       const checklistTeam = normalizeTeamCode(player.team) || null
       const currentTeam = normalizeTeamCode(stsRanking?.team) || checklistTeam || null
       const currentTeamName = currentTeam ? teamDisplayName(currentTeam) : null
+      const baseSupportsCurve =
+        baseEstimate.source === 'weighted-sales' ||
+        baseEstimate.source === 'blended-sales' ||
+        baseEstimate.source === 'variation-implied' ||
+        (baseEstimate.confidence >= 0.52 && baseEstimate.effectiveSales >= 1.5)
       const ladder = variations.map<VariationQuote>((variation) => {
-        const price = Number((baseEstimate.price * variation.avgMultiplier).toFixed(2))
+        const curvePrice = baseEstimate.price * variation.avgMultiplier
+        const playerLane = isBaseVariation(variation.variation)
+          ? null
+          : player.variations.find((candidate) => variationKey(candidate.variation) === variationKey(variation.variation)) ?? null
+        const directSales = Math.max(0, playerLane?.salesCount ?? 0)
+        const directEffectiveSales = Math.max(0, playerLane?.effectiveSales ?? directSales)
+        const directSupportsLane = directSales >= 3 && directEffectiveSales >= 2
+        const releaseConfidence = variation.modelConfidence ?? 0.42
+        const laneEstimate = playerLane && isFinitePositive(playerLane.avgPrice) && directSupportsLane
+          ? blendLaneEvidence({
+              curvePrice,
+              directPrice: playerLane.avgPrice,
+              saleCount: directSales,
+              effectiveSales: directEffectiveSales,
+              curveConfidence: Math.sqrt(baseEstimate.confidence * Math.max(0.2, releaseConfidence)),
+              directConfidence: playerLane.modelConfidence ?? clamp(0.42 + Math.log1p(directSales) * 0.12, 0.42, 0.82),
+            })
+          : null
+        const lanePrice = laneEstimate?.value ?? curvePrice
+        const price = Number(lanePrice.toFixed(2))
+        const lowMultiplier = variation.modelLowMultiplier ?? variation.avgMultiplier * 0.72
+        const highMultiplier = variation.modelHighMultiplier ?? variation.avgMultiplier * 1.38
+        const releaseEvidenceTier = variation.modelEvidence ?? (isBaseVariation(variation.variation) ? 'observed' : 'indicative')
+        const evidenceTier = directSupportsLane
+          ? 'observed'
+          : baseSupportsCurve
+            ? releaseEvidenceTier
+            : 'indicative'
+        const intervalScale = curvePrice > 0 ? lanePrice / curvePrice : 1
+        const effectiveMultiplier = baseEstimate.price > 0 ? price / baseEstimate.price : variation.avgMultiplier
         return {
           key: variationKey(variation.variation),
           label: variation.variation,
-          multiplier: variation.avgMultiplier,
+          multiplier: Number(effectiveMultiplier.toFixed(4)),
           price,
           sortOrder: variation.sortOrder ?? null,
           synthesizedBase: Boolean('synthesizedBase' in variation && variation.synthesizedBase),
+          confidence: Math.min(
+            laneEstimate?.confidence ?? variation.modelConfidence ?? (evidenceTier === 'observed' ? 0.82 : evidenceTier === 'modeled' ? 0.62 : 0.36),
+            baseSupportsCurve || directSupportsLane ? 1 : 0.42,
+          ),
+          evidenceTier,
+          actionable: directSupportsLane || (baseSupportsCurve && (variation.modelActionable ?? releaseEvidenceTier !== 'indicative')),
+          lowPrice: Number((baseEstimate.low * lowMultiplier * intervalScale).toFixed(2)),
+          highPrice: Number((baseEstimate.high * highMultiplier * intervalScale).toFixed(2)),
+          empiricalEffectiveSales: (variation.empiricalEffectiveSales ?? 0) + directEffectiveSales,
         }
       })
       const topVariationPrice = ladder.reduce((max, quote) => Math.max(max, quote.price), baseEstimate.price)

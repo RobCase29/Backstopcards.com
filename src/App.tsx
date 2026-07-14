@@ -150,7 +150,8 @@ import {
   titleLooksLikeSuperfractor,
 } from './lib/cardTitleGuards'
 import { listingGradingLabel, liveCompCheckForOpportunity, liveCompVerdict, normalizeLiveCompText } from './lib/liveComps'
-import { stableSalesCacheLaneValue } from './lib/variationFairValue'
+import { stableSalesCacheBaseValue, stableSalesCacheLaneValue } from './lib/variationFairValue'
+import { FAIR_VALUE_MODEL_VERSION } from './lib/variationPriors'
 import {
   createListingRejection,
   isListingRejected,
@@ -901,17 +902,17 @@ function soldBaseBucketForRow(row: PricingRow | undefined, model: SalesCachePlay
   if (
     preferredBaseBucket &&
     salesCacheBucketIsRawBaseAuto(preferredBaseBucket) &&
-    positiveNumber(preferredBaseBucket.modelPrice) &&
+    (positiveNumber(preferredBaseBucket.modelPrice) || (model.sales ?? []).some((sale) => sale.bucketKey === preferredBaseBucket.bucketKey)) &&
     salesBucketMatchesRowRelease(preferredBaseBucket, row)
   ) {
     return preferredBaseBucket
   }
 
   const candidates = (model.buckets ?? []).filter(
-    (bucket) =>
-      salesCacheBucketIsRawBaseAuto(bucket) &&
-      positiveNumber(bucket.modelPrice) &&
-      salesBucketMatchesRowRelease(bucket, row),
+      (bucket) =>
+        salesCacheBucketIsRawBaseAuto(bucket) &&
+        (positiveNumber(bucket.modelPrice) || (model.sales ?? []).some((sale) => sale.bucketKey === bucket.bucketKey)) &&
+        salesBucketMatchesRowRelease(bucket, row),
   )
 
   return (
@@ -926,10 +927,13 @@ function soldBaseBucketForRow(row: PricingRow | undefined, model: SalesCachePlay
 
 function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlayerModel | null) {
   const baseAutoBucket = soldBaseBucketForRow(row, model)
-  if (!row || !model?.available || !baseAutoBucket || !positiveNumber(baseAutoBucket.modelPrice)) return row
+  if (!row || !model?.available || !baseAutoBucket) return row
   if (salesCacheRecordKey(row.playerName) !== salesCacheRecordKey(model.playerName)) return row
 
-  const soldBase = Number(baseAutoBucket.modelPrice.toFixed(2))
+  const stableBase = stableSalesCacheBaseValue({ bucket: baseAutoBucket, model })
+  if (!stableBase) return row
+  const soldBase = Number(stableBase.value.toFixed(2))
+  const baseScale = row.baseTwmaPrice > 0 ? soldBase / row.baseTwmaPrice : 1
   const rawAutoBuckets = new Map<string, SalesCacheBucket>()
   for (const bucket of model.buckets ?? []) {
     if (normalizedSalesCacheCardClass(bucket) !== 'auto' || bucket.gradeBucket !== 'Raw' || !positiveNumber(bucket.modelPrice)) continue
@@ -947,10 +951,18 @@ function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlay
 
   const ladder = row.ladder.map((quote) => {
     if (quoteIsBaseAnchor(quote)) {
+      const evidenceTier =
+        stableBase.count >= 3 ? ('observed' as const) : stableBase.count >= 2 ? ('modeled' as const) : ('indicative' as const)
       return {
         ...quote,
         price: soldBase,
         multiplier: 1,
+        confidence: stableBase.confidence,
+        evidenceTier,
+        actionable: stableBase.count >= 2,
+        lowPrice: Number(stableBase.low.toFixed(2)),
+        highPrice: Number(stableBase.high.toFixed(2)),
+        empiricalEffectiveSales: stableBase.effectiveSales,
       }
     }
 
@@ -965,10 +977,14 @@ function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlay
         })
       : null
     const price = stableLane?.value ?? curvePrice
+    const laneScale = curvePrice > 0 ? price / curvePrice : 1
     return {
       ...quote,
       price: Number(price.toFixed(2)),
       multiplier: Number((price / soldBase).toFixed(4)),
+      confidence: stableLane?.confidence ?? quote.confidence,
+      lowPrice: Number(((quote.lowPrice ?? row.baseTwmaPrice * quote.multiplier * 0.72) * baseScale * laneScale).toFixed(2)),
+      highPrice: Number(((quote.highPrice ?? row.baseTwmaPrice * quote.multiplier * 1.38) * baseScale * laneScale).toFixed(2)),
     }
   })
 
@@ -976,16 +992,17 @@ function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlay
     ...row,
     baseTwmaPrice: soldBase,
     basePriceSource: 'weighted-sales' as const,
-    baseConfidence: Math.min(0.98, 0.52 + Math.log1p(baseAutoBucket.saleCount ?? 0) * 0.12),
-    baseSales: baseAutoBucket.saleCount ?? row.baseSales,
-    rawBaseSales: baseAutoBucket.saleCount ?? row.rawBaseSales,
+    baseConfidence: stableBase.confidence,
+    baseSales: stableBase.count || baseAutoBucket.saleCount || row.baseSales,
+    rawBaseSales: stableBase.count || baseAutoBucket.saleCount || row.rawBaseSales,
     baseSales30: baseAutoBucket.sales30 ?? row.baseSales30,
     baseSales90: baseAutoBucket.sales90 ?? row.baseSales90,
     baseAuctionSales: baseAutoBucket.auctionCount ?? row.baseAuctionSales,
     baseBinSales: baseAutoBucket.binCount ?? row.baseBinSales,
-    baseEffectiveSales: baseAutoBucket.saleCount ?? row.baseEffectiveSales,
-    latestBaseSaleAt: baseAutoBucket.latestSoldAt ?? row.latestBaseSaleAt,
-    baseMethod: 'Sold comp base / Backstop FV v2',
+    baseEffectiveSales: stableBase.effectiveSales,
+    baseVolatility: stableBase.volatility,
+    latestBaseSaleAt: stableBase.latestSoldAt || baseAutoBucket.latestSoldAt || row.latestBaseSaleAt,
+    baseMethod: `Sold comp base / ${FAIR_VALUE_MODEL_VERSION.replace('backstop-fv-', 'Backstop FV ')}`,
     topVariationPrice: ladder.reduce((best, quote) => Math.max(best, quote.price), soldBase),
     ladder,
   }
@@ -4928,7 +4945,13 @@ function QuickPriceModule({
   }
 
   const hasCurrentInput = cardInput.rowId === activeRow.id
-  const defaultVariationKey = activeRow.ladder[0]?.key ?? ''
+  const actionableVariationQuotes = activeRow.ladder.filter((candidate) => candidate.actionable !== false)
+  const indicativeVariationQuotes = activeRow.ladder.filter((candidate) => candidate.actionable === false)
+  const defaultVariationKey =
+    actionableVariationQuotes.find((candidate) => candidate.label === 'Base Auto' || candidate.label === 'Base')?.key ??
+    actionableVariationQuotes[0]?.key ??
+    activeRow.ladder[0]?.key ??
+    ''
   const activeVariationKey =
     hasCurrentInput && activeRow.ladder.some((candidate) => candidate.key === cardInput.variationKey)
       ? cardInput.variationKey
@@ -4999,11 +5022,24 @@ function QuickPriceModule({
         <label>
           <span>Variation</span>
           <select value={quote?.key ?? ''} onChange={(event) => updateCardInput({ variationKey: event.target.value })}>
-            {activeRow.ladder.map((candidate) => (
-              <option value={candidate.key} key={`${activeRow.id}:quick:${candidate.key}`}>
-                {compactVariation(candidate.label)}
-              </option>
-            ))}
+            {actionableVariationQuotes.length ? (
+              <optgroup label="Market-backed and modeled">
+                {actionableVariationQuotes.map((candidate) => (
+                  <option value={candidate.key} key={`${activeRow.id}:quick:${candidate.key}`}>
+                    {compactVariation(candidate.label)}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+            {indicativeVariationQuotes.length ? (
+              <optgroup label="Indicative - limited evidence">
+                {indicativeVariationQuotes.map((candidate) => (
+                  <option value={candidate.key} key={`${activeRow.id}:quick:${candidate.key}`}>
+                    {compactVariation(candidate.label)}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
           </select>
         </label>
         <label>
@@ -5049,6 +5085,22 @@ function QuickPriceModule({
           <strong>{money(watchCeiling)}</strong>
           <small>{LIVE_MODEL_WINDOW_LABEL} window</small>
         </div>
+      </div>
+
+      <div className={`quick-model-disclosure ${quote?.evidenceTier ?? 'indicative'}`}>
+        <strong>
+          {quote?.evidenceTier === 'observed'
+            ? 'Market-backed lane'
+            : quote?.evidenceTier === 'modeled'
+              ? 'Modeled lane'
+              : 'Indicative estimate'}
+        </strong>
+        <span>
+          {quote
+            ? `${money((quote.lowPrice ?? rawValue * 0.75) * gradeModel.multiplier)}–${money((quote.highPrice ?? rawValue * 1.38) * gradeModel.multiplier)} expected range`
+            : 'Range unavailable'}
+        </span>
+        {quote && !quote.actionable ? <small>Useful for orientation; excluded from high-conviction deal ranking.</small> : null}
       </div>
 
       {askPrice ? (

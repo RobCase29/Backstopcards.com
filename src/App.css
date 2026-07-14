@@ -2944,6 +2944,38 @@ thead .matrix-player-col span,
   text-transform: uppercase;
 }
 
+.quick-model-disclosure {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.18rem 0.65rem;
+  align-items: baseline;
+  padding: 0.72rem 0.78rem;
+  border: 1px solid rgba(13, 112, 113, 0.18);
+  border-left: 3px solid #0b888d;
+  background: rgba(11, 136, 141, 0.055);
+  color: var(--ink-strong, #0b3437);
+}
+
+.quick-model-disclosure span,
+.quick-model-disclosure small {
+  color: var(--ink-muted, #687579);
+}
+
+.quick-model-disclosure small {
+  grid-column: 1 / -1;
+}
+
+.quick-model-disclosure.indicative {
+  border-left-color: #d49c35;
+  background: rgba(212, 156, 53, 0.07);
+}
+
+@media (max-width: 640px) {
+  .quick-model-disclosure {
+    grid-template-columns: 1fr;
+  }
+}
+
 .quick-price-controls select,
 .quick-price-controls input {
   min-width: 0;

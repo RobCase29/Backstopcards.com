@@ -1,11 +1,17 @@
 import type { FairValueSale } from '../../shared/fairValueEngine.js'
-import { robustFairValueEstimate } from '../../shared/fairValueEngine.js'
+import {
+  estimateBaseFairValue,
+  FAIR_VALUE_MODEL_VERSION,
+  VARIATION_FAIR_VALUE_POLICY,
+  robustFairValueEstimate,
+} from '../../shared/fairValueEngine.js'
 import type { SalesCacheBucket, SalesCachePlayerModel, SalesCacheSale } from './salesCache'
 
 type LaneBlendInput = {
   curvePrice: number
   directPrice: number
   saleCount: number
+  effectiveSales?: number
   curveConfidence?: number
   directConfidence?: number
   matchScore?: number
@@ -18,6 +24,19 @@ export type StableLaneValue = {
   directSales: number
   confidence: number
   method: 'curve-only' | 'hierarchical-direct-blend' | 'direct-only'
+}
+
+export type StableBaseValue = {
+  value: number
+  low: number
+  high: number
+  confidence: number
+  effectiveSales: number
+  count: number
+  volatility: number
+  latestSoldAt: string
+  method: string
+  modelVersion: string
 }
 
 function clamp(value: number, min = 0, max = 1) {
@@ -54,6 +73,50 @@ function cleanBucketSales(model: SalesCachePlayerModel, bucket: SalesCacheBucket
 }
 
 /**
+ * Returns a base-auto anchor only when it can be reproduced by the current
+ * model. Raw sales are preferred; a persisted point is accepted only when its
+ * model version matches. This prevents legacy cache summaries from silently
+ * replacing the canonical board and calculator value.
+ */
+export function stableSalesCacheBaseValue(input: {
+  bucket: SalesCacheBucket
+  model: SalesCachePlayerModel
+  asOf?: number
+}): StableBaseValue | null {
+  const sales = cleanBucketSales(input.model, input.bucket)
+  const estimate = estimateBaseFairValue(sales, { asOf: input.asOf })
+  if (estimate) {
+    return {
+      value: estimate.value,
+      low: estimate.low,
+      high: estimate.high,
+      confidence: estimate.confidence,
+      effectiveSales: estimate.effectiveN,
+      count: estimate.count,
+      volatility: estimate.volatility,
+      latestSoldAt: estimate.latestSoldAt,
+      method: estimate.method,
+      modelVersion: FAIR_VALUE_MODEL_VERSION,
+    }
+  }
+
+  const storedValue = positive(input.bucket.modelPrice)
+  if (!storedValue || input.bucket.modelVersion !== FAIR_VALUE_MODEL_VERSION) return null
+  return {
+    value: storedValue,
+    low: positive(input.bucket.modelLow) || storedValue * 0.75,
+    high: positive(input.bucket.modelHigh) || storedValue * 1.35,
+    confidence: clamp(input.bucket.modelConfidence ?? 0.45, 0.2, 0.97),
+    effectiveSales: Math.max(0, input.bucket.modelEffectiveSales ?? input.bucket.saleCount ?? 0),
+    count: Math.max(0, input.bucket.saleCount ?? 0),
+    volatility: 0,
+    latestSoldAt: input.bucket.latestSoldAt,
+    method: input.bucket.modelMethod || 'validated-base-anchor-v3',
+    modelVersion: input.bucket.modelVersion,
+  }
+}
+
+/**
  * Combines a base-times-multiple curve with direct lane evidence in log space.
  * The curve always retains meaningful weight; a single sale cannot become the
  * model, while a deep and coherent lane can move fair value materially.
@@ -83,10 +146,12 @@ export function blendLaneEvidence(input: LaneBlendInput): StableLaneValue {
   const maxLogDeviation = (input.lowSerialNonAuto ? 0.48 : 0.38) + evidenceDepth * 0.68
   const curveLog = Math.log(curvePrice)
   const directLog = clamp(Math.log(directPrice), curveLog - maxLogDeviation, curveLog + maxLogDeviation)
-  const curveWeight = 4.5 + curveConfidence * 4.5
+  const effectiveSales = Math.max(0, input.effectiveSales ?? saleCount)
+  const curveWeight = VARIATION_FAIR_VALUE_POLICY.curveWeight
   const directWeight =
-    Math.min(12, Math.sqrt(Math.max(1, saleCount)) * 2.45) *
-    (0.35 + directConfidence * 0.65) *
+    Math.min(VARIATION_FAIR_VALUE_POLICY.directEvidenceCap, effectiveSales) *
+    VARIATION_FAIR_VALUE_POLICY.directEvidenceScale *
+    (0.45 + directConfidence * 0.55) *
     matchQuality
   const value = Math.exp((curveLog * curveWeight + directLog * directWeight) / (curveWeight + directWeight))
   const confidence = clamp(
@@ -116,10 +181,19 @@ export function stableSalesCacheLaneValue(input: {
   const sales = cleanBucketSales(input.model, input.bucket)
   const directEstimate = robustFairValueEstimate(sales, {
     asOf: input.asOf,
-    halfLifeDays: 35,
+    halfLifeDays: VARIATION_FAIR_VALUE_POLICY.directHalfLifeDays,
+    maxSales: VARIATION_FAIR_VALUE_POLICY.directMaxSales,
+    enableTrend: false,
   })
-  const fallbackPrice = positive(input.bucket.modelPrice) || positive(input.bucket.medianPrice) || positive(input.bucket.avgPrice)
-  const directPrice = directEstimate?.value ?? fallbackPrice
+  const fallbackPrice = input.bucket.modelVersion === FAIR_VALUE_MODEL_VERSION
+    ? positive(input.bucket.modelPrice) || positive(input.bucket.medianPrice) || positive(input.bucket.avgPrice)
+    : 0
+  const directPrice = directEstimate
+    ? Math.exp(
+        Math.log(directEstimate.value) * (1 - VARIATION_FAIR_VALUE_POLICY.directMedianBlend) +
+          Math.log(directEstimate.weightedMedian) * VARIATION_FAIR_VALUE_POLICY.directMedianBlend,
+      )
+    : fallbackPrice
   const saleCount = Math.max(input.bucket.saleCount || 0, directEstimate?.count ?? sales.length)
   const directConfidence = directEstimate?.confidence ?? clamp(0.34 + Math.log1p(saleCount) * 0.1, 0.34, 0.7)
 
@@ -127,6 +201,7 @@ export function stableSalesCacheLaneValue(input: {
     curvePrice: input.curvePrice,
     directPrice,
     saleCount,
+    effectiveSales: directEstimate?.effectiveN,
     curveConfidence: input.curveConfidence,
     directConfidence,
     matchScore: input.matchScore,

@@ -32,6 +32,7 @@
     "canonical:rebuild": "node scripts/rebuild-canonical-market.mjs",
     "model:audit": "node --experimental-strip-types scripts/audit-fair-value-model.mjs",
     "model:backtest": "node scripts/backtest-fair-value.mjs",
+    "model:research": "node scripts/research-fair-value-v3.mjs",
     "sales:refresh": "npm run sales:sync && npm run sales:sync:structured && npm run canonical:rebuild && npm run sales:doctor",
     "sales:doctor": "node scripts/sales-cache-doctor.mjs",
     "card-hedge:daily-export": "node scripts/card-hedge-daily-export.mjs",

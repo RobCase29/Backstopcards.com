@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { estimateBaseFairValue, FAIR_VALUE_MODEL_VERSION } from '../shared/fairValueEngine.js'
 import { HOSTED_COMP_LANE_SEEDS, HOSTED_COMP_QUEUE_SEEDS } from './data/hostedCompBootstrap.js'
 
 export type HostedCompSql = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>
@@ -89,6 +90,12 @@ type HostedLaneRecord = {
   cardId: string
   cardDescription: string
   modelPrice: number | null
+  modelLow: number | null
+  modelHigh: number | null
+  modelConfidence: number | null
+  modelEffectiveSales: number | null
+  modelMethod: string
+  modelVersion: string
   compPrice: number | null
   minPrice: number
   q1Price: number
@@ -134,7 +141,7 @@ type DailyExportCandidate = {
   sales: CardHedgeRawSale[]
 }
 
-const HOSTED_COMP_SCHEMA_VERSION = 2
+const HOSTED_COMP_SCHEMA_VERSION = 3
 const BASE_AUTO_PRODUCT_FAMILY = 'Bowman Chrome'
 const BASE_AUTO_VARIATION = 'Base Auto'
 const BASE_AUTO_GRADE = 'Raw'
@@ -385,13 +392,32 @@ export function summarizeHostedCompSales(comps: CardHedgeComps, now = new Date()
   const cutoff30 = now.getTime() - 30 * DAY_MS
   const cutoff90 = now.getTime() - 90 * DAY_MS
   const upstreamComp = numberOrNull(comps.comp_price)
+  const baseEstimate = estimateBaseFairValue(
+    sales.map((sale) => ({
+      price: sale.price,
+      soldAt: sale.soldAt,
+      channel: sale.channel === 'Auction' ? 'auction' : sale.channel === 'Buy It Now' || sale.channel === 'Best Offer' ? 'bin' : 'unknown',
+      itemId: compact(sale.raw.price_history_id),
+      title: compact(sale.raw.title),
+      source: compact(sale.raw.price_source) || 'card-hedge-comps',
+    })),
+    { asOf: now.getTime() },
+  )
   const fallbackComp = timeWeightedMean(sales)
-  const modelPrice = roundMoney(positive(upstreamComp) ? upstreamComp : fallbackComp)
+  const modelPrice = roundMoney(baseEstimate?.value ?? (positive(upstreamComp) ? upstreamComp : fallbackComp))
+  const modelLow = roundMoney(baseEstimate?.low ?? numberOrNull(comps.low) ?? modelPrice)
+  const modelHigh = roundMoney(baseEstimate?.high ?? numberOrNull(comps.high) ?? modelPrice)
 
   return {
     sales,
     modelPrice,
-    compPrice: modelPrice,
+    modelLow,
+    modelHigh,
+    modelConfidence: baseEstimate?.confidence ?? null,
+    modelEffectiveSales: baseEstimate?.effectiveN ?? null,
+    modelMethod: baseEstimate?.method ?? 'card-hedge-upstream',
+    modelVersion: baseEstimate ? FAIR_VALUE_MODEL_VERSION : 'card-hedge-upstream',
+    compPrice: roundMoney(upstreamComp),
     saleCount: Math.max(numberValue(comps.count_used), sales.length),
     sales30: sales.filter((sale) => Date.parse(sale.soldAt) >= cutoff30).length,
     sales90: sales.filter((sale) => Date.parse(sale.soldAt) >= cutoff90).length,
@@ -407,19 +433,6 @@ export function summarizeHostedCompSales(comps: CardHedgeComps, now = new Date()
     recent5Avg: roundMoney(mean(sales.slice(0, 5).map((sale) => sale.price))),
     latestSoldAt: sales[0]?.soldAt ?? '',
   }
-}
-
-export function blendHostedCompPrice(compPrice: number | null, saleCount: number, fmv: CardHedgeFmvResult) {
-  const fmvPrice = numberOrNull(fmv.price)
-  const confidence = numberValue(fmv.confidence)
-  const method = compact(fmv.method).toLowerCase()
-  const direct = method === 'direct' || method === 'direct_indexed'
-  if (!positive(fmvPrice)) return roundMoney(compPrice)
-  if (!positive(compPrice)) return direct && confidence >= 0.45 ? roundMoney(fmvPrice) : null
-  if (!direct || confidence < 0.4) return roundMoney(compPrice)
-
-  const compWeight = saleCount >= 8 ? 0.75 : saleCount >= 3 ? 0.62 : 0.42
-  return roundMoney(compPrice * compWeight + fmvPrice * (1 - compWeight))
 }
 
 async function ensureHostedCompSchemaInternal(sql: HostedCompSql) {
@@ -446,6 +459,12 @@ async function ensureHostedCompSchemaInternal(sql: HostedCompSql) {
       card_match_score DOUBLE PRECISION NOT NULL DEFAULT 0,
       card_match_reason TEXT NOT NULL DEFAULT '',
       model_price DOUBLE PRECISION,
+      model_low DOUBLE PRECISION,
+      model_high DOUBLE PRECISION,
+      model_confidence DOUBLE PRECISION,
+      model_effective_sales DOUBLE PRECISION,
+      model_method TEXT NOT NULL DEFAULT '',
+      model_version TEXT NOT NULL DEFAULT '',
       comp_price DOUBLE PRECISION,
       fmv_price DOUBLE PRECISION,
       fmv_low DOUBLE PRECISION,
@@ -478,6 +497,12 @@ async function ensureHostedCompSchemaInternal(sql: HostedCompSql) {
   `
   await sql`CREATE INDEX IF NOT EXISTS idx_backstop_comp_lanes_player ON backstop_comp_lanes (player_lookup, release_year DESC)`
   await sql`CREATE INDEX IF NOT EXISTS idx_backstop_comp_lanes_refresh ON backstop_comp_lanes (last_fmv_at, last_comp_at)`
+  await sql`ALTER TABLE backstop_comp_lanes ADD COLUMN IF NOT EXISTS model_low DOUBLE PRECISION`
+  await sql`ALTER TABLE backstop_comp_lanes ADD COLUMN IF NOT EXISTS model_high DOUBLE PRECISION`
+  await sql`ALTER TABLE backstop_comp_lanes ADD COLUMN IF NOT EXISTS model_confidence DOUBLE PRECISION`
+  await sql`ALTER TABLE backstop_comp_lanes ADD COLUMN IF NOT EXISTS model_effective_sales DOUBLE PRECISION`
+  await sql`ALTER TABLE backstop_comp_lanes ADD COLUMN IF NOT EXISTS model_method TEXT NOT NULL DEFAULT ''`
+  await sql`ALTER TABLE backstop_comp_lanes ADD COLUMN IF NOT EXISTS model_version TEXT NOT NULL DEFAULT ''`
   await sql`
     CREATE TABLE IF NOT EXISTS backstop_comp_sales (
       item_id TEXT PRIMARY KEY,
@@ -746,6 +771,12 @@ function hostedLaneToBucket(row: Record<string, unknown>) {
     q3Price: numberValue(row.q3Price),
     maxPrice: numberValue(row.maxPrice),
     modelPrice: numberValue(row.modelPrice),
+    modelLow: numberOrNull(row.modelLow),
+    modelHigh: numberOrNull(row.modelHigh),
+    modelConfidence: numberOrNull(row.modelConfidence),
+    modelEffectiveSales: numberOrNull(row.modelEffectiveSales),
+    modelMethod: stringValue(row.modelMethod),
+    modelVersion: stringValue(row.modelVersion),
     baseAutoMultiple: 1,
     latestSoldAt: stringValue(row.latestSoldAt),
     generatedAt: stringValue(row.generatedAt),
@@ -844,6 +875,8 @@ export async function hostedCompPlayersPayload(sql: HostedCompSql, playerNames: 
       sales_30 AS "sales30", sales_90 AS "sales90", auction_count AS "auctionCount", bin_count AS "binCount",
       min_price AS "minPrice", q1_price AS "q1Price", median_price AS "medianPrice", avg_price AS "avgPrice",
       q3_price AS "q3Price", max_price AS "maxPrice", model_price AS "modelPrice",
+      model_low AS "modelLow", model_high AS "modelHigh", model_confidence AS "modelConfidence",
+      model_effective_sales AS "modelEffectiveSales", model_method AS "modelMethod", model_version AS "modelVersion",
       latest_sold_at AS "latestSoldAt", generated_at AS "generatedAt"
     FROM backstop_comp_lanes
     WHERE player_lookup IN (SELECT value FROM jsonb_array_elements_text(${JSON.stringify(lookups)}::jsonb))
@@ -851,8 +884,31 @@ export async function hostedCompPlayersPayload(sql: HostedCompSql, playerNames: 
     ORDER BY player_lookup, release_year DESC, sale_count DESC
   `
   const grouped = rowsByPlayer(rows)
+  const sales = rows.length
+    ? await sql`
+        SELECT * FROM (
+          SELECT
+            item_id AS "itemId", lane_key AS "laneKey", player_name AS "playerName", release_year AS "releaseYear",
+            title, sale_price AS "salePrice", sold_at AS "soldAt", sale_type AS "saleType", channel,
+            sale_url AS "saleUrl", erroneous, erroneous_note AS "erroneousNote",
+            ROW_NUMBER() OVER (PARTITION BY player_lookup, release_year ORDER BY sold_at DESC, sale_price DESC) AS row_number
+          FROM backstop_comp_sales
+          WHERE player_lookup IN (SELECT value FROM jsonb_array_elements_text(${JSON.stringify(lookups)}::jsonb))
+            AND erroneous = FALSE
+        ) AS ranked
+        WHERE row_number <= 10
+        ORDER BY "playerName", "soldAt" ASC
+      `
+    : []
+  const salesGrouped = rowsByPlayer(sales)
   const players = uniqueNames
-    .map((playerName) => playerModelFromLaneRows(playerName, grouped.get(normalizedName(playerName)) ?? []))
+    .map((playerName) =>
+      playerModelFromLaneRows(
+        playerName,
+        grouped.get(normalizedName(playerName)) ?? [],
+        salesGrouped.get(normalizedName(playerName)) ?? [],
+      ),
+    )
     .filter((model) => model.available)
   const found = new Set(players.map((model) => normalizedName(model.playerName)))
   return {
@@ -878,6 +934,8 @@ export async function hostedCompPlayerPayload(sql: HostedCompSql, playerName: st
       sales_30 AS "sales30", sales_90 AS "sales90", auction_count AS "auctionCount", bin_count AS "binCount",
       min_price AS "minPrice", q1_price AS "q1Price", median_price AS "medianPrice", avg_price AS "avgPrice",
       q3_price AS "q3Price", max_price AS "maxPrice", model_price AS "modelPrice",
+      model_low AS "modelLow", model_high AS "modelHigh", model_confidence AS "modelConfidence",
+      model_effective_sales AS "modelEffectiveSales", model_method AS "modelMethod", model_version AS "modelVersion",
       latest_sold_at AS "latestSoldAt", generated_at AS "generatedAt"
     FROM backstop_comp_lanes
     WHERE player_lookup = ${lookup}
@@ -910,6 +968,7 @@ export async function hostedCompStatusPayload(sql: HostedCompSql) {
       MAX(latest_sold_at) AS "latestSoldAt",
       MAX(updated_at) AS "updatedAt",
       COUNT(*) FILTER (WHERE card_id IS NOT NULL)::INTEGER AS "matchedCards",
+      COUNT(*) FILTER (WHERE model_version = ${FAIR_VALUE_MODEL_VERSION})::INTEGER AS "currentModelLanes",
       COUNT(*) FILTER (WHERE last_fmv_at >= NOW() - INTERVAL '24 hours')::INTEGER AS "freshFmvLanes",
       COUNT(*) FILTER (WHERE last_comp_at >= NOW() - INTERVAL '26 hours')::INTEGER AS "freshCompLanes"
     FROM backstop_comp_lanes
@@ -988,6 +1047,7 @@ export async function hostedCompStatusPayload(sql: HostedCompSql) {
     hosted: {
       queueSeeds: bootstrap.queueSeeds,
       laneSeeds: bootstrap.laneSeeds,
+      currentModelLanes: numberValue(laneStats?.currentModelLanes),
       freshFmvLanes: numberValue(laneStats?.freshFmvLanes),
       freshCompLanes: numberValue(laneStats?.freshCompLanes),
       queue: queueRows.map((row) => ({ status: stringValue(row.status), players: numberValue(row.players) })),
@@ -1132,6 +1192,12 @@ async function upsertHostedLanes(sql: HostedCompSql, lanes: HostedLaneRecord[]) 
       card_match_score: lane.matchScore,
       card_match_reason: lane.matchReason,
       model_price: lane.modelPrice,
+      model_low: lane.modelLow,
+      model_high: lane.modelHigh,
+      model_confidence: lane.modelConfidence,
+      model_effective_sales: lane.modelEffectiveSales,
+      model_method: lane.modelMethod,
+      model_version: lane.modelVersion,
       comp_price: lane.compPrice,
       min_price: lane.minPrice,
       q1_price: lane.q1Price,
@@ -1153,14 +1219,16 @@ async function upsertHostedLanes(sql: HostedCompSql, lanes: HostedLaneRecord[]) 
   await sql`
     INSERT INTO backstop_comp_lanes (
       lane_key, player_name, player_lookup, release_year, card_id, card_description,
-      card_match_score, card_match_reason, model_price, comp_price,
+      card_match_score, card_match_reason, model_price, model_low, model_high, model_confidence,
+      model_effective_sales, model_method, model_version, comp_price,
       min_price, q1_price, median_price, avg_price, q3_price, max_price,
       recent_3_avg, recent_5_avg, sale_count, sales_30, sales_90, auction_count, bin_count,
       latest_sold_at, last_comp_at, source, generated_at, updated_at
     )
     SELECT
       lane.lane_key, lane.player_name, lane.player_lookup, lane.release_year, lane.card_id, lane.card_description,
-      lane.card_match_score, lane.card_match_reason, lane.model_price, lane.comp_price,
+      lane.card_match_score, lane.card_match_reason, lane.model_price, lane.model_low, lane.model_high, lane.model_confidence,
+      lane.model_effective_sales, lane.model_method, lane.model_version, lane.comp_price,
       lane.min_price, lane.q1_price, lane.median_price, lane.avg_price, lane.q3_price, lane.max_price,
       lane.recent_3_avg, lane.recent_5_avg, lane.sale_count, lane.sales_30, lane.sales_90, lane.auction_count, lane.bin_count,
       lane.latest_sold_at, NOW(), 'card-hedge-hosted', lane.generated_at, NOW()
@@ -1174,6 +1242,12 @@ async function upsertHostedLanes(sql: HostedCompSql, lanes: HostedLaneRecord[]) 
       card_match_score DOUBLE PRECISION,
       card_match_reason TEXT,
       model_price DOUBLE PRECISION,
+      model_low DOUBLE PRECISION,
+      model_high DOUBLE PRECISION,
+      model_confidence DOUBLE PRECISION,
+      model_effective_sales DOUBLE PRECISION,
+      model_method TEXT,
+      model_version TEXT,
       comp_price DOUBLE PRECISION,
       min_price DOUBLE PRECISION,
       q1_price DOUBLE PRECISION,
@@ -1198,6 +1272,12 @@ async function upsertHostedLanes(sql: HostedCompSql, lanes: HostedLaneRecord[]) 
       card_match_score = EXCLUDED.card_match_score,
       card_match_reason = EXCLUDED.card_match_reason,
       model_price = COALESCE(EXCLUDED.model_price, backstop_comp_lanes.model_price),
+      model_low = COALESCE(EXCLUDED.model_low, backstop_comp_lanes.model_low),
+      model_high = COALESCE(EXCLUDED.model_high, backstop_comp_lanes.model_high),
+      model_confidence = COALESCE(EXCLUDED.model_confidence, backstop_comp_lanes.model_confidence),
+      model_effective_sales = COALESCE(EXCLUDED.model_effective_sales, backstop_comp_lanes.model_effective_sales),
+      model_method = CASE WHEN EXCLUDED.model_version <> '' THEN EXCLUDED.model_method ELSE backstop_comp_lanes.model_method END,
+      model_version = CASE WHEN EXCLUDED.model_version <> '' THEN EXCLUDED.model_version ELSE backstop_comp_lanes.model_version END,
       comp_price = COALESCE(EXCLUDED.comp_price, backstop_comp_lanes.comp_price),
       min_price = EXCLUDED.min_price,
       q1_price = EXCLUDED.q1_price,
@@ -1468,6 +1548,12 @@ async function ingestHostedDailyExport(sql: HostedCompSql, text: string, date: s
       cardId,
       cardDescription: compact(candidate.card.description),
       modelPrice: summary.modelPrice,
+      modelLow: summary.modelLow,
+      modelHigh: summary.modelHigh,
+      modelConfidence: summary.modelConfidence,
+      modelEffectiveSales: summary.modelEffectiveSales,
+      modelMethod: summary.modelMethod,
+      modelVersion: summary.modelVersion,
       compPrice: summary.compPrice,
       minPrice: summary.minPrice,
       q1Price: summary.q1Price,
@@ -1524,7 +1610,7 @@ async function ingestHostedDailyExport(sql: HostedCompSql, text: string, date: s
 
 async function staleFmvCards(sql: HostedCompSql, limit: number) {
   return sql`
-    SELECT lane_key AS "laneKey", card_id AS "cardId", comp_price AS "compPrice", sale_count AS "saleCount"
+    SELECT lane_key AS "laneKey", card_id AS "cardId"
     FROM backstop_comp_lanes
     WHERE card_id IS NOT NULL
       AND card_id <> ''
@@ -1541,12 +1627,9 @@ async function applyFmvResults(sql: HostedCompSql, targets: Record<string, unkno
       const cardId = compact(result.card_id)
       const target = targetByCard.get(cardId)
       if (!target) return null
-      const compPrice = numberOrNull(target.compPrice)
-      const saleCount = numberValue(target.saleCount)
       return {
         laneKey: stringValue(target.laneKey),
         cardId,
-        modelPrice: blendHostedCompPrice(compPrice, saleCount, result),
         fmvPrice: numberOrNull(result.price),
         fmvLow: numberOrNull(result.price_low),
         fmvHigh: numberOrNull(result.price_high),
@@ -1562,7 +1645,6 @@ async function applyFmvResults(sql: HostedCompSql, targets: Record<string, unkno
     rows.map((row) => ({
       lane_key: row.laneKey,
       card_id: row.cardId,
-      model_price: row.modelPrice,
       fmv_price: row.fmvPrice,
       fmv_low: row.fmvLow,
       fmv_high: row.fmvHigh,
@@ -1575,7 +1657,6 @@ async function applyFmvResults(sql: HostedCompSql, targets: Record<string, unkno
   await sql`
     UPDATE backstop_comp_lanes AS lane
     SET
-      model_price = COALESCE(result.model_price, lane.model_price),
       fmv_price = result.fmv_price,
       fmv_low = result.fmv_low,
       fmv_high = result.fmv_high,
@@ -1584,12 +1665,10 @@ async function applyFmvResults(sql: HostedCompSql, targets: Record<string, unkno
       fmv_method = result.method,
       fmv_freshness_days = result.freshness_days,
       last_fmv_at = NOW(),
-      generated_at = NOW(),
       updated_at = NOW()
     FROM jsonb_to_recordset(${payload}::jsonb) AS result(
       lane_key TEXT,
       card_id TEXT,
-      model_price DOUBLE PRECISION,
       fmv_price DOUBLE PRECISION,
       fmv_low DOUBLE PRECISION,
       fmv_high DOUBLE PRECISION,
@@ -1724,6 +1803,12 @@ export async function runHostedCompRefresh(options: HostedCompRefreshOptions) {
           cardId,
           cardDescription: compact(match.card.description),
           modelPrice: summary.modelPrice,
+          modelLow: summary.modelLow,
+          modelHigh: summary.modelHigh,
+          modelConfidence: summary.modelConfidence,
+          modelEffectiveSales: summary.modelEffectiveSales,
+          modelMethod: summary.modelMethod,
+          modelVersion: summary.modelVersion,
           compPrice: summary.compPrice,
           minPrice: summary.minPrice,
           q1Price: summary.q1Price,

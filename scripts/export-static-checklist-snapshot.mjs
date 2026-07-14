@@ -3,14 +3,23 @@ import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   FAIR_VALUE_MODEL_VERSION,
+  VARIATION_FAIR_VALUE_POLICY,
   buildProximityRatioPoints,
+  estimateBaseFairValue,
   estimateHierarchicalMultiplier,
+  robustFairValueEstimate,
 } from '../shared/fairValueEngine.js'
+import {
+  canonicalizeHistoricalBowmanAutoVariation,
+  historicalBowmanAutoPrior,
+} from '../shared/bowmanAutoTaxonomy.js'
 import {
   BOWMAN_2026_CHROME_AUTO_VARIATIONS,
   bowman2026AutoDefinition,
   canonicalizeBowman2026AutoVariation,
+  extractSerialDenominator,
 } from '../shared/bowman2026Taxonomy.js'
+import { buildReleaseLaneRegistry } from '../shared/releaseLaneRegistry.js'
 
 const ROOT = process.cwd()
 const DB_PATH = resolve(ROOT, process.argv[2] ?? 'local-data/backstop-sales.sqlite')
@@ -102,20 +111,63 @@ function displayVariation(row) {
 }
 
 function canonicalReleaseVariation(row, releaseYear, releaseCategory) {
-  const displayed = displayVariation(row)
-  if (releaseYear !== 2026 || releaseCategory !== 'bowman') return displayed
-  const sourceText = [
-    rowString(row, 'title'),
-    displayed,
-    rowNumber(row, 'serialDenominator') ? `/${rowNumber(row, 'serialDenominator')}` : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
-  const resolved = canonicalizeBowman2026AutoVariation(sourceText, {
+  const options = {
     playerName: rowString(row, 'playerName'),
     assumeAuto: true,
-  })
-  return resolved.modelEligible ? resolved.definition.label : null
+  }
+  const classify = releaseYear === 2026 && releaseCategory === 'bowman'
+    ? canonicalizeBowman2026AutoVariation
+    : canonicalizeHistoricalBowmanAutoVariation
+
+  // Raw listing text is the primary identity evidence. Appending a cached
+  // variation label before classification allowed stale upstream metadata to
+  // turn a plain base auto into Mini Diamond /100 (and similar phantom lanes).
+  const title = rowString(row, 'title')
+  if (title) {
+    const resolved = classify(title, options)
+    if (!resolved.modelEligible) return null
+    return {
+      label: resolved.definition.label,
+      confidence: resolved.confidence,
+      registryClass: releaseYear === 2026 && releaseCategory === 'bowman'
+        ? 'official'
+        : resolved.definition.registryClass ?? 'release-confirmed',
+      explicitDenominator: Boolean(extractSerialDenominator(title)),
+    }
+  }
+
+  // Structured metadata is a fallback for sources without a title, never a
+  // competing vote against an explicit listing title.
+  const displayed = displayVariation(row)
+  const sourceText = [
+    displayed,
+    rowNumber(row, 'serialDenominator') ? `/${rowNumber(row, 'serialDenominator')}` : '',
+  ].filter(Boolean).join(' ')
+  const resolved = classify(sourceText, options)
+  if (!resolved.modelEligible) return null
+  return {
+    label: resolved.definition.label,
+    confidence: Math.min(resolved.confidence, 0.82),
+    registryClass: releaseYear === 2026 && releaseCategory === 'bowman'
+      ? 'official'
+      : resolved.definition.registryClass ?? 'release-confirmed',
+    explicitDenominator: Boolean(rowNumber(row, 'serialDenominator') || extractSerialDenominator(sourceText)),
+  }
+}
+
+function serialDenominatorFromLabel(label) {
+  const match = String(label ?? '').match(/\/(\d{1,4})\b/)
+  const denominator = Number(match?.[1])
+  return Number.isFinite(denominator) && denominator > 0 ? denominator : 0
+}
+
+function stabilizedDirectValue(estimate) {
+  if (!estimate?.value) return 0
+  if (!estimate.weightedMedian) return estimate.value
+  const medianWeight = VARIATION_FAIR_VALUE_POLICY.directMedianBlend
+  return Math.exp(
+    Math.log(estimate.value) * (1 - medianWeight) + Math.log(estimate.weightedMedian) * medianWeight,
+  )
 }
 
 function variationSortOrder(label, serialDenominator) {
@@ -130,11 +182,6 @@ function median(values) {
   if (!sorted.length) return 0
   const middle = Math.floor(sorted.length / 2)
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
-}
-
-function average(values) {
-  const usable = values.filter((value) => Number.isFinite(value) && value > 0)
-  return usable.length ? usable.reduce((total, value) => total + value, 0) / usable.length : 0
 }
 
 const releases = db.prepare(`
@@ -197,53 +244,6 @@ const baseCandidateStatement = db.prepare(`
     s.latest_sold_at DESC
 `)
 
-const variationStatement = db.prepare(`
-  SELECT
-    cc.player_name AS playerName,
-    cc.product_family AS productFamily,
-    cc.card_class AS cardClass,
-    cc.variation_label AS variationLabel,
-    cc.serial_denominator AS serialDenominator,
-    s.sale_count AS saleCount,
-    s.twma_30 AS twma30,
-    s.twma_90 AS twma90,
-    s.recent_5_avg AS recent5Avg,
-    s.median_price AS medianPrice,
-    s.avg_price AS avgPrice
-  FROM canonical_cards cc
-  JOIN canonical_comp_summary s ON s.canonical_card_key = cc.canonical_card_key
-  WHERE cc.release_year = ?
-    AND cc.grade_bucket = 'Raw'
-    AND cc.card_class IN ('auto', 'paper-auto')
-    AND s.sale_count > 0
-  ORDER BY cc.player_name, s.sale_count DESC, cc.variation_label
-`)
-
-const baseSalesStatement = db.prepare(`
-  SELECT
-    cc.player_name AS playerName,
-    cc.release_year AS releaseYear,
-    cc.product_family AS productFamily,
-    m.source AS source,
-    m.source_key AS sourceKey,
-    json_extract(m.raw_json, '$.normalized.itemId') AS itemId,
-    json_extract(m.raw_json, '$.normalized.title') AS title,
-    json_extract(m.raw_json, '$.normalized.salePrice') AS salePrice,
-    json_extract(m.raw_json, '$.normalized.soldAt') AS soldAt,
-    json_extract(m.raw_json, '$.normalized.channel') AS channel,
-    json_extract(m.raw_json, '$.normalized.modelEligible') AS modelEligible
-  FROM canonical_source_mappings m
-  JOIN canonical_cards cc USING(canonical_card_key)
-  WHERE cc.release_year = ?
-    AND cc.grade_bucket = 'Raw'
-    AND cc.card_class = 'auto'
-    AND cc.variation_label IN ('Base Auto', 'Base', '')
-    AND lower(cc.product_family) LIKE '%chrome%'
-    AND json_extract(m.raw_json, '$.normalized.salePrice') > 0
-    AND json_extract(m.raw_json, '$.normalized.soldAt') IS NOT NULL
-  ORDER BY json_extract(m.raw_json, '$.normalized.soldAt') DESC
-`)
-
 const allAutoSalesStatement = db.prepare(`
   SELECT
     cc.player_name AS playerName,
@@ -265,7 +265,6 @@ const allAutoSalesStatement = db.prepare(`
   WHERE cc.release_year = ?
     AND cc.grade_bucket = 'Raw'
     AND cc.card_class = 'auto'
-    AND lower(cc.product_family) LIKE '%chrome%'
     AND json_extract(m.raw_json, '$.normalized.salePrice') > 0
     AND json_extract(m.raw_json, '$.normalized.soldAt') IS NOT NULL
   ORDER BY json_extract(m.raw_json, '$.normalized.soldAt') DESC
@@ -281,40 +280,8 @@ function baseCandidatesByPlayer(releaseYear, releaseCategory) {
   return map
 }
 
-function baseSalesByPlayer(releaseYear, releaseCategory) {
-  const map = new Map()
-  const seenByPlayer = new Map()
-  for (const row of baseSalesStatement.all(releaseYear)) {
-    if (!rowNumber(row, 'modelEligible')) continue
-    if (!productMatchesReleaseCategory(rowString(row, 'productFamily'), releaseCategory)) continue
-    const price = rowNumber(row, 'salePrice')
-    const soldAt = rowString(row, 'soldAt')
-    if (!price || !soldAt) continue
-    const key = playerYearKey(rowString(row, 'playerName'), releaseYear)
-    const seen = seenByPlayer.get(key) ?? new Set()
-    const itemId = rowString(row, 'itemId') || rowString(row, 'sourceKey')
-    const identity = itemId.replace(/^[a-z_-]+:/i, '') || `${soldAt}|${money(price)}|${searchKey(rowString(row, 'title'))}`
-    if (seen.has(identity)) continue
-    seen.add(identity)
-    seenByPlayer.set(key, seen)
-    const current = map.get(key) ?? []
-    if (current.length >= MAX_BASE_SALES_PER_PLAYER) continue
-    current.push({
-      id: itemId,
-      title: rowString(row, 'title'),
-      salePrice: money(price),
-      soldAt,
-      saleType: rowString(row, 'channel'),
-      source: rowString(row, 'source'),
-      format: rowString(row, 'channel'),
-    })
-    map.set(key, current)
-  }
-  return map
-}
-
 function releaseProximitySales(releaseYear, releaseCategory, allowedPlayerKeys) {
-  const byPlayer = new Map()
+  const candidates = []
   const seen = new Set()
   for (const row of allAutoSalesStatement.all(releaseYear)) {
     if (!rowNumber(row, 'modelEligible')) continue
@@ -328,56 +295,111 @@ function releaseProximitySales(releaseYear, releaseCategory, allowedPlayerKeys) 
     const identity = itemId.replace(/^[a-z_-]+:/i, '') || `${soldAt}|${money(price)}|${searchKey(rowString(row, 'title'))}`
     if (seen.has(identity)) continue
     seen.add(identity)
-    const label = canonicalReleaseVariation(row, releaseYear, releaseCategory)
-    if (!label) continue
-    const player = byPlayer.get(playerKey) ?? new Map()
-    const lane = player.get(label) ?? []
-    lane.push({
-      price,
-      soldAt,
-      channel: rowString(row, 'channel'),
-      itemId,
-      title: rowString(row, 'title'),
-      source: rowString(row, 'source'),
-      groupKey: playerKey,
-      playerName: rowString(row, 'playerName'),
+    const resolved = canonicalReleaseVariation(row, releaseYear, releaseCategory)
+    if (!resolved) continue
+    candidates.push({
+      ...resolved,
+      playerKey,
+      sale: {
+        price,
+        soldAt,
+        channel: rowString(row, 'channel'),
+        itemId,
+        title: rowString(row, 'title'),
+        source: rowString(row, 'source'),
+        groupKey: playerKey,
+        playerName: rowString(row, 'playerName'),
+      },
     })
-    player.set(label, lane)
-    byPlayer.set(playerKey, player)
+  }
+
+  const registry = buildReleaseLaneRegistry(candidates, {
+    officialLabels: releaseYear === 2026 && releaseCategory === 'bowman'
+      ? BOWMAN_2026_CHROME_AUTO_VARIATIONS.map((definition) => definition.label)
+      : [],
+  })
+  const byPlayer = new Map()
+  for (const candidate of candidates) {
+    if (!registry.acceptedLabels.has(candidate.label)) continue
+    const player = byPlayer.get(candidate.playerKey) ?? new Map()
+    const lane = player.get(candidate.label) ?? []
+    lane.push(candidate.sale)
+    player.set(candidate.label, lane)
+    byPlayer.set(candidate.playerKey, player)
+  }
+  return { byPlayer, registry }
+}
+
+function buildBaseEvidence(proximitySalesByPlayer) {
+  const estimates = new Map()
+  const exportedSales = new Map()
+  for (const [playerKey, lanes] of proximitySalesByPlayer.entries()) {
+    const sales = lanes.get('Base Auto') ?? []
+    if (!sales.length) continue
+    const estimate = estimateBaseFairValue(sales)
+    if (estimate) estimates.set(playerKey, estimate)
+    exportedSales.set(
+      playerKey,
+      sales.slice(0, MAX_BASE_SALES_PER_PLAYER).map((sale) => ({
+        id: sale.itemId,
+        title: sale.title,
+        salePrice: money(sale.price),
+        soldAt: sale.soldAt,
+        saleType: sale.channel,
+        source: sale.source,
+        format: sale.channel,
+      })),
+    )
+  }
+  return { estimates, exportedSales }
+}
+
+function directVariationRows(proximitySalesByPlayer, baseEstimates) {
+  const byPlayer = new Map()
+  for (const [playerKey, lanes] of proximitySalesByPlayer.entries()) {
+    const baseEstimate = baseEstimates.get(playerKey)
+    const playerRows = new Map()
+    for (const [label, sales] of lanes.entries()) {
+      if (isBaseVariation(label) || !sales.length) continue
+      const estimate = robustFairValueEstimate(sales, {
+        halfLifeDays: VARIATION_FAIR_VALUE_POLICY.directHalfLifeDays,
+        maxSales: VARIATION_FAIR_VALUE_POLICY.directMaxSales,
+        enableTrend: false,
+      })
+      const price = stabilizedDirectValue(estimate)
+      if (!price) continue
+      const multiplier = baseEstimate?.value > 0 ? price / baseEstimate.value : 0
+      const serialDenominator = serialDenominatorFromLabel(label)
+      playerRows.set(label, {
+        variation: label,
+        avgPrice: money(price),
+        multiplier: multiplier > 0 ? Number(multiplier.toFixed(3)) : 0,
+        salesCount: estimate?.count ?? sales.length,
+        effectiveSales: Number((estimate?.effectiveN ?? 0).toFixed(2)),
+        modelConfidence: Number((estimate?.confidence ?? 0).toFixed(3)),
+        sortOrder: variationSortOrder(label, serialDenominator),
+      })
+    }
+    if (playerRows.size) byPlayer.set(playerKey, playerRows)
   }
   return byPlayer
 }
 
-function variationRowsByPlayer(releaseYear, releaseCategory, baseMap, allowedPlayerKeys) {
-  const byPlayer = new Map()
-
-  for (const row of variationStatement.all(releaseYear)) {
-    if (!productMatchesReleaseCategory(rowString(row, 'productFamily'), releaseCategory)) continue
-    const price = modelPrice(row)
-    if (!price) continue
-    const playerName = rowString(row, 'playerName')
-    const playerKey = playerYearKey(playerName, releaseYear)
-    if (!allowedPlayerKeys.has(playerKey)) continue
-    const label = canonicalReleaseVariation(row, releaseYear, releaseCategory)
-    if (!label) continue
-    const serialDenominator = rowNumber(row, 'serialDenominator')
-    const base = modelPrice(baseMap.get(playerKey))
-    const releaseMultiplier = base > 0 ? price / base : 0
-
-    const current = byPlayer.get(playerKey) ?? new Map()
-    if (!isBaseVariation(label)) {
-      const candidate = {
-        variation: label,
-        avgPrice: money(price),
-        multiplier: releaseMultiplier > 0 ? Number(releaseMultiplier.toFixed(3)) : 0,
-        salesCount: rowNumber(row, 'saleCount'),
-        sortOrder: variationSortOrder(label, serialDenominator),
-      }
-      const existing = current.get(label)
-      if (!existing || candidate.salesCount > existing.salesCount) current.set(label, candidate)
-      byPlayer.set(playerKey, current)
-    }
-  }
+function variationRowsByPlayer(
+  releaseContext,
+  crossReleaseRatioIndex,
+) {
+  const {
+    releaseId,
+    releaseYear,
+    releaseCategory,
+    baseEstimates,
+    allowedPlayerKeys,
+    proximitySalesByPlayer,
+    laneRegistry,
+  } = releaseContext
+  const byPlayer = directVariationRows(proximitySalesByPlayer, baseEstimates)
+  const registryByLabel = new Map(laneRegistry.lanes.map((lane) => [lane.label, lane]))
 
   const multiplierBuckets = new Map()
   for (const rows of byPlayer.values()) {
@@ -398,8 +420,6 @@ function variationRowsByPlayer(releaseYear, releaseCategory, baseMap, allowedPla
     }
   }
 
-  const proximitySalesByPlayer = releaseProximitySales(releaseYear, releaseCategory, allowedPlayerKeys)
-
   if (releaseYear === 2026 && releaseCategory === 'bowman') {
     for (const definition of BOWMAN_2026_CHROME_AUTO_VARIATIONS) {
       if (definition.id === 'base-auto') continue
@@ -419,12 +439,20 @@ function variationRowsByPlayer(releaseYear, releaseCategory, baseMap, allowedPla
     {
       variation: 'Base Auto',
       avgMultiplier: 1,
-      playerCount: [...allowedPlayerKeys].filter((key) => baseMap.has(key)).length,
-      totalSales: [...allowedPlayerKeys].reduce((total, key) => total + rowNumber(baseMap.get(key), 'saleCount'), 0),
+      playerCount: [...allowedPlayerKeys].filter((key) => baseEstimates.has(key)).length,
+      totalSales: [...allowedPlayerKeys].reduce((total, key) => total + (baseEstimates.get(key)?.count ?? 0), 0),
       sortOrder: -1,
       modelMethod: 'structural-base-anchor',
       modelConfidence: 1,
       structuralPrior: 1,
+      modelEvidence: 'observed',
+      modelActionable: true,
+      modelLowMultiplier: 1,
+      modelHighMultiplier: 1,
+      empiricalEffectiveSales: [...allowedPlayerKeys].reduce((total, key) => total + (baseEstimates.get(key)?.effectiveN ?? 0), 0),
+      modelRegistryClass: 'base',
+      registryPlayerCount: [...allowedPlayerKeys].filter((key) => baseEstimates.has(key)).length,
+      registryExplicitSales: 0,
     },
     ...[...multiplierBuckets.values()]
       .map((bucket) => {
@@ -440,13 +468,18 @@ function variationRowsByPlayer(releaseYear, releaseCategory, baseMap, allowedPla
           releaseYear === 2026 && releaseCategory === 'bowman'
             ? bowman2026AutoDefinition(bucket.label)
             : null
-        const priorMultiplier = structuralDefinition?.priorMultiplier ?? legacyPrior
-        const priorReliability = structuralDefinition?.priorReliability ?? (ratioPoints.length >= 8 ? 0.42 : 0.62)
+        const pooledPrior = structuralDefinition
+          ? null
+          : resolveCrossReleasePrior(bucket.label, releaseId, crossReleaseRatioIndex)
+        const genericPrior = structuralDefinition ? null : historicalBowmanAutoPrior(bucket.label)
+        const priorMultiplier = structuralDefinition?.priorMultiplier ?? pooledPrior?.multiplier ?? genericPrior?.multiplier ?? legacyPrior
+        const priorReliability = structuralDefinition?.priorReliability ?? pooledPrior?.reliability ?? genericPrior?.reliability ?? 0.28
         const estimate = estimateHierarchicalMultiplier({
           priorMultiplier,
           priorReliability,
           releaseRatioPoints: ratioPoints,
         })
+        const registryEntry = registryByLabel.get(bucket.label)
         return {
           variation: bucket.label,
           avgMultiplier: Number(estimate.multiplier.toFixed(3)),
@@ -456,10 +489,22 @@ function variationRowsByPlayer(releaseYear, releaseCategory, baseMap, allowedPla
           ),
           totalSales: Math.max(bucket.totalSales, ratioPoints.length),
           sortOrder: structuralDefinition?.scarcityOrder ?? bucket.sortOrder,
-          modelMethod: 'hierarchical-proximity-v2',
+          modelMethod: 'hierarchical-proximity-v3',
           modelConfidence: Number(estimate.confidence.toFixed(3)),
-          structuralPrior: structuralDefinition?.priorMultiplier,
+          structuralPrior: Number(priorMultiplier.toFixed(3)),
+          structuralPriorSource: structuralDefinition
+            ? 'official-release-structure'
+            : pooledPrior?.source ?? genericPrior?.source ?? 'release-median-fallback',
+          pooledReleaseCount: pooledPrior?.releaseCount ?? 0,
           proximitySales: ratioPoints.length,
+          modelEvidence: estimate.evidenceTier,
+          modelActionable: estimate.actionable,
+          modelLowMultiplier: Number(estimate.low.toFixed(3)),
+          modelHighMultiplier: Number(estimate.high.toFixed(3)),
+          empiricalEffectiveSales: Number(estimate.effectiveN.toFixed(2)),
+          modelRegistryClass: registryEntry?.registryClass ?? (structuralDefinition ? 'official' : 'standard'),
+          registryPlayerCount: registryEntry?.playerCount ?? 0,
+          registryExplicitSales: registryEntry?.explicitDenominatorSales ?? 0,
         }
       })
       .filter((bucket) => bucket.avgMultiplier > 1)
@@ -490,7 +535,70 @@ function variationRowsByPlayer(releaseYear, releaseCategory, baseMap, allowedPla
   return { byPlayer, multipliers }
 }
 
-const models = releases.map((releaseRow) => {
+function releaseRatioIndex(proximitySalesByPlayer, releaseId) {
+  const index = new Map()
+  for (const [playerKey, player] of proximitySalesByPlayer.entries()) {
+    const baseSales = player.get('Base Auto') ?? []
+    if (!baseSales.length) continue
+    for (const [label, variationSales] of player.entries()) {
+      if (isBaseVariation(label) || !variationSales.length) continue
+      const points = buildProximityRatioPoints(variationSales, baseSales).map((point) => ({
+        ...point,
+        groupKey: `${releaseId}:${playerKey}`,
+      }))
+      if (!points.length) continue
+      const current = index.get(label) ?? []
+      current.push(...points)
+      index.set(label, current)
+    }
+  }
+  return index
+}
+
+function buildCrossReleaseRatioIndex(contexts) {
+  const index = new Map()
+  for (const context of contexts) {
+    for (const [label, points] of context.ratioIndex.entries()) {
+      const releasesById = index.get(label) ?? new Map()
+      releasesById.set(context.releaseId, points)
+      index.set(label, releasesById)
+    }
+  }
+  return index
+}
+
+function resolveCrossReleasePrior(label, currentReleaseId, crossReleaseRatioIndex) {
+  const generic = historicalBowmanAutoPrior(label)
+  if (!generic) return null
+  const releasesById = crossReleaseRatioIndex.get(label)
+  if (!releasesById) return { ...generic, releaseCount: 0 }
+  const comparisonReleases = [...releasesById.entries()].filter(([releaseId]) => releaseId !== currentReleaseId)
+  const points = comparisonReleases.flatMap(([, rows]) => rows)
+  const groupCount = new Set(points.map((point) => point.groupKey)).size
+  if (comparisonReleases.length < 2 || groupCount < 6) {
+    return { ...generic, releaseCount: comparisonReleases.length }
+  }
+
+  // Cross-release evidence describes structural scarcity, not a dated market
+  // quote. Equalize timestamps so an older release contributes its lane shape
+  // without pretending its absolute prices are current.
+  const asOf = Date.now()
+  const structuralPoints = points.map((point) => ({ ...point, soldAt: asOf }))
+  const pooled = estimateHierarchicalMultiplier({
+    priorMultiplier: generic.multiplier,
+    priorReliability: generic.reliability,
+    releaseRatioPoints: structuralPoints,
+    asOf,
+  })
+  return {
+    multiplier: pooled.multiplier,
+    reliability: Math.min(0.72, 0.44 + comparisonReleases.length * 0.035 + Math.min(groupCount, 24) * 0.006),
+    source: 'cross-release-market-pool',
+    releaseCount: comparisonReleases.length,
+  }
+}
+
+const releaseContexts = releases.map((releaseRow) => {
   const releaseKey = rowString(releaseRow, 'releaseKey')
   const releaseYear = rowNumber(releaseRow, 'releaseYear')
   const releaseName = rowString(releaseRow, 'releaseName')
@@ -500,13 +608,64 @@ const models = releases.map((releaseRow) => {
     checklistPlayerRows.map((row) => playerYearKey(rowString(row, 'playerName'), releaseYear)),
   )
   const baseMap = baseCandidatesByPlayer(releaseYear, releaseCategory)
-  const salesMap = baseSalesByPlayer(releaseYear, releaseCategory)
-  const { byPlayer: variationMap, multipliers } = variationRowsByPlayer(releaseYear, releaseCategory, baseMap, allowedPlayerKeys)
+  const { byPlayer: proximitySalesByPlayer, registry: laneRegistry } = releaseProximitySales(
+    releaseYear,
+    releaseCategory,
+    allowedPlayerKeys,
+  )
+  const { estimates: baseEstimates, exportedSales: salesMap } = buildBaseEvidence(proximitySalesByPlayer)
+  const releaseId = `${releaseYear}:${releaseKey}`
+  return {
+    releaseRow,
+    releaseId,
+    releaseKey,
+    releaseYear,
+    releaseName,
+    releaseCategory,
+    checklistPlayerRows,
+    allowedPlayerKeys,
+    baseMap,
+    baseEstimates,
+    salesMap,
+    proximitySalesByPlayer,
+    laneRegistry,
+    ratioIndex: releaseRatioIndex(proximitySalesByPlayer, releaseId),
+  }
+})
+
+const crossReleaseRatioIndex = buildCrossReleaseRatioIndex(releaseContexts)
+
+const models = releaseContexts.map((context) => {
+  const {
+    releaseRow,
+    releaseKey,
+    releaseYear,
+    releaseName,
+    releaseCategory,
+    checklistPlayerRows,
+    baseMap,
+    baseEstimates,
+    salesMap,
+    laneRegistry,
+  } = context
+  const { byPlayer: variationMap, multipliers } = variationRowsByPlayer(context, crossReleaseRatioIndex)
   const players = checklistPlayerRows.map((row) => {
     const key = playerYearKey(rowString(row, 'playerName'), releaseYear)
     const baseRow = baseMap.get(key)
-    const baseAvgPrice = money(modelPrice(baseRow))
-    const baseSalesCount = rowNumber(baseRow, 'saleCount')
+    const rawBaseEstimate = baseEstimates.get(key)
+    const fallbackBasePrice = modelPrice(baseRow)
+    const baseAvgPrice = money(rawBaseEstimate?.value || fallbackBasePrice)
+    const baseSalesCount = rawBaseEstimate?.count ?? rowNumber(baseRow, 'saleCount')
+    const baseModelMethod = rawBaseEstimate
+      ? FAIR_VALUE_MODEL_VERSION
+      : fallbackBasePrice > 0
+        ? 'legacy-cached-summary'
+        : 'unpriced'
+    const baseModelConfidence = rawBaseEstimate
+      ? Number(rawBaseEstimate.confidence.toFixed(3))
+      : fallbackBasePrice > 0
+        ? Number(Math.min(0.48, 0.24 + Math.log1p(baseSalesCount) * 0.07).toFixed(3))
+        : 0
     return {
       playerName: rowString(row, 'playerName'),
       team: rowString(row, 'team') || null,
@@ -514,6 +673,12 @@ const models = releases.map((releaseRow) => {
       prospectId: rowString(row, 'playerKey') || null,
       baseAvgPrice,
       baseSalesCount,
+      baseModelMethod,
+      baseModelConfidence,
+      baseEffectiveSales: Number((rawBaseEstimate?.effectiveN ?? 0).toFixed(2)),
+      baseModelLow: money(rawBaseEstimate?.low || (fallbackBasePrice > 0 ? fallbackBasePrice * 0.68 : 0)),
+      baseModelHigh: money(rawBaseEstimate?.high || (fallbackBasePrice > 0 ? fallbackBasePrice * 1.47 : 0)),
+      baseLatestSaleAt: (rawBaseEstimate?.latestSaleAt ?? rowString(baseRow, 'latestSoldAt')) || null,
       baseSales: salesMap.get(key) ?? [],
       variations: (variationMap.get(key) ?? []).slice(0, 80),
     }
@@ -530,6 +695,28 @@ const models = releases.map((releaseRow) => {
     players,
     fetchedAt: new Date().toISOString(),
     modelVersion: FAIR_VALUE_MODEL_VERSION,
+    modelDiagnostics: {
+      candidateSales: laneRegistry.candidateCount,
+      acceptedLaneCount: laneRegistry.acceptedCount,
+      quarantinedLaneCount: laneRegistry.quarantinedCount,
+      acceptedLanes: laneRegistry.lanes
+        .filter((lane) => lane.accepted)
+        .map((lane) => ({
+          label: lane.label,
+          registryClass: lane.registryClass,
+          saleCount: lane.saleCount,
+          playerCount: lane.playerCount,
+          explicitDenominatorSales: lane.explicitDenominatorSales,
+        })),
+      quarantinedLanes: laneRegistry.lanes
+        .filter((lane) => !lane.accepted)
+        .map((lane) => ({
+          label: lane.label,
+          reason: lane.reason,
+          saleCount: lane.saleCount,
+          playerCount: lane.playerCount,
+        })),
+    },
     source: 'canonical-sold-model',
   }
 })
@@ -538,3 +725,14 @@ mkdirSync(dirname(OUTPUT_PATH), { recursive: true })
 const file = `import type { ChecklistModel } from '../types'\n\nexport const STATIC_CHECKLIST_GENERATED_AT = ${JSON.stringify(new Date().toISOString())}\n\nexport const STATIC_CHECKLIST_MODELS: ChecklistModel[] = ${JSON.stringify(models, null, 2)}\n`
 writeFileSync(OUTPUT_PATH, file)
 console.log(`Wrote ${models.length} static checklist models to ${OUTPUT_PATH}`)
+const registryTotals = releaseContexts.reduce(
+  (total, context) => ({
+    candidates: total.candidates + context.laneRegistry.candidateCount,
+    accepted: total.accepted + context.laneRegistry.acceptedCount,
+    quarantined: total.quarantined + context.laneRegistry.quarantinedCount,
+  }),
+  { candidates: 0, accepted: 0, quarantined: 0 },
+)
+console.log(
+  `Release registries: ${registryTotals.accepted} accepted lanes, ${registryTotals.quarantined} quarantined lanes from ${registryTotals.candidates} candidate sales`,
+)

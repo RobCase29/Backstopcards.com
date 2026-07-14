@@ -115,7 +115,17 @@ export interface ChecklistVariation {
   modelMethod?: string
   modelConfidence?: number
   structuralPrior?: number
+  structuralPriorSource?: string
+  pooledReleaseCount?: number
   proximitySales?: number
+  modelEvidence?: 'observed' | 'modeled' | 'indicative'
+  modelActionable?: boolean
+  modelLowMultiplier?: number
+  modelHighMultiplier?: number
+  empiricalEffectiveSales?: number
+  modelRegistryClass?: 'base' | 'official' | 'standard' | 'release-confirmed'
+  registryPlayerCount?: number
+  registryExplicitSales?: number
 }
 
 export interface ChecklistPlayerVariation {
@@ -123,6 +133,8 @@ export interface ChecklistPlayerVariation {
   avgPrice: number
   multiplier: number
   salesCount?: number
+  effectiveSales?: number
+  modelConfidence?: number
 }
 
 export interface ChecklistSale {
@@ -159,6 +171,12 @@ export interface ChecklistPlayer {
   status?: string | null
   baseAvgPrice: number
   baseSalesCount: number
+  baseModelMethod?: string | null
+  baseModelConfidence?: number | null
+  baseEffectiveSales?: number | null
+  baseModelLow?: number | null
+  baseModelHigh?: number | null
+  baseLatestSaleAt?: string | null
   baseSales?: ChecklistSale[]
   base_sales?: ChecklistSale[]
   sales?: ChecklistSale[]
@@ -178,6 +196,24 @@ export interface ChecklistModel {
   players: ChecklistPlayer[]
   fetchedAt: string
   modelVersion?: string
+  modelDiagnostics?: {
+    candidateSales: number
+    acceptedLaneCount: number
+    quarantinedLaneCount: number
+    acceptedLanes?: Array<{
+      label: string
+      registryClass: 'base' | 'official' | 'standard' | 'release-confirmed'
+      saleCount: number
+      playerCount: number
+      explicitDenominatorSales: number
+    }>
+    quarantinedLanes?: Array<{
+      label: string
+      reason: string
+      saleCount: number
+      playerCount: number
+    }>
+  }
   source:
     | 'public-multipliers'
     | 'authenticated-player-model'

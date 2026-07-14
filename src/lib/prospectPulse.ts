@@ -10,6 +10,7 @@ import type {
   PulseSnapshot,
 } from '../types'
 import { variationKey } from './matrix'
+import { isValidatedHierarchicalModel } from './variationPriors'
 
 interface ListingFetchOptions {
   kind: Extract<ListingKind, 'live' | 'bin'>
@@ -449,11 +450,11 @@ function mergeChecklistMultipliers(primary: ChecklistVariation[], secondary: Che
       continue
     }
 
-    const variationIsV2 = variation.modelMethod === 'hierarchical-proximity-v2'
-    const existingIsV2 = existing.modelMethod === 'hierarchical-proximity-v2'
+    const variationIsValidated = isValidatedHierarchicalModel(variation.modelMethod)
+    const existingIsValidated = isValidatedHierarchicalModel(existing.modelMethod)
     const preferred =
-      variationIsV2 !== existingIsV2
-        ? variationIsV2
+      variationIsValidated !== existingIsValidated
+        ? variationIsValidated
           ? variation
           : existing
         : evidenceScore(variation.totalSales ?? variation.playerCount, variation.avgPrice) >

@@ -1,6 +1,34 @@
 const DAY_MS = 86_400_000
 
-export const FAIR_VALUE_MODEL_VERSION = 'backstop-fv-v2'
+export const FAIR_VALUE_MODEL_VERSION = 'backstop-fv-v3'
+
+export const BASE_FAIR_VALUE_POLICY = Object.freeze({
+  halfLifeDays: 10,
+  maxSales: 10,
+  enableTrend: true,
+  // A card's next market-clearing center remains noisy even when the estimate
+  // itself has deep evidence. This process-noise floor is walk-forward
+  // calibrated; without it, intervals collapse as sample size grows and
+  // materially understate real market risk.
+  intervalProcessNoise: 0.15,
+})
+
+export const VARIATION_FAIR_VALUE_POLICY = Object.freeze({
+  ratioHalfLifeDays: 28,
+  ratioMedianBlend: 0.2,
+  directHalfLifeDays: 28,
+  directMedianBlend: 0.2,
+  directMaxSales: 10,
+  priorFloor: 2,
+  priorReliabilityScale: 4,
+  releaseEvidenceCap: 14,
+  releaseEvidenceScale: 1,
+  playerEvidenceCap: 5,
+  playerEvidenceScale: 0.9,
+  curveWeight: 6,
+  directEvidenceCap: 7,
+  directEvidenceScale: 0.8,
+})
 
 function clamp(value, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value))
@@ -70,9 +98,15 @@ function weightedQuantile(items, percentile) {
 
 /** Robust, channel-aware, time-decayed estimate in log-price space. */
 export function robustFairValueEstimate(sales, options = {}) {
-  const clean = dedupeSales(sales)
+  const normalized = dedupeSales(sales)
+  if (!normalized.length) return null
+  const asOf = Number(options.asOf) || Math.max(...normalized.map(saleTime))
+  const eligible = normalized.filter((sale) => saleTime(sale) <= asOf)
+  const maxSales = Number(options.maxSales)
+  const clean = Number.isFinite(maxSales) && maxSales > 0
+    ? eligible.slice(0, Math.floor(maxSales))
+    : eligible
   if (!clean.length) return null
-  const asOf = Number(options.asOf) || Math.max(...clean.map(saleTime))
   const halfLifeDays = Number(options.halfLifeDays) || 45
   const logs = clean.map((sale) => Math.log(salePrice(sale)))
   const center = median(logs)
@@ -99,7 +133,8 @@ export function robustFairValueEstimate(sales, options = {}) {
   const trend = trendAdjustment(weighted, asOf, effectiveN, options.enableTrend !== false)
   const adjustedLogValue = logValue + trend.adjustment
   const adjustedValue = Math.exp(adjustedLogValue)
-  const uncertainty = Math.sqrt((Math.max(volatility, 0.08) ** 2) / Math.max(1, effectiveN) + 0.055 ** 2)
+  const processNoise = Number(options.intervalProcessNoise) || 0.055
+  const uncertainty = Math.sqrt((Math.max(volatility, 0.08) ** 2) / Math.max(1, effectiveN) + processNoise ** 2)
   const intervalWidth = 1.64 * uncertainty
   const auctionCount = clean.filter((sale) => sale.channel === 'auction').length
   const binCount = clean.filter((sale) => sale.channel === 'bin').length
@@ -123,6 +158,36 @@ export function robustFairValueEstimate(sales, options = {}) {
     trendPer30d: trend.slopePerDay * 30,
     trendStrength: trend.strength,
     method: 'robust-recency-log',
+  }
+}
+
+/**
+ * Production base-auto anchor. The policy is selected by weekly walk-forward
+ * validation, not by an in-sample fit: ten recent sales, ten-day half-life,
+ * robust log weighting, and a guarded trend adjustment.
+ */
+export function estimateBaseFairValue(sales, options = {}) {
+  const estimate = robustFairValueEstimate(sales, {
+    asOf: options.asOf,
+    halfLifeDays: options.halfLifeDays ?? BASE_FAIR_VALUE_POLICY.halfLifeDays,
+    maxSales: options.maxSales ?? BASE_FAIR_VALUE_POLICY.maxSales,
+    enableTrend: options.enableTrend ?? BASE_FAIR_VALUE_POLICY.enableTrend,
+    intervalProcessNoise: options.intervalProcessNoise ?? BASE_FAIR_VALUE_POLICY.intervalProcessNoise,
+  })
+  return estimate ? { ...estimate, method: 'validated-base-anchor-v3' } : null
+}
+
+function stabilizeEstimateCenter(estimate, medianBlend) {
+  if (!estimate || !medianBlend || !estimate.weightedMedian) return estimate
+  const value = Math.exp(
+    Math.log(estimate.value) * (1 - medianBlend) + Math.log(estimate.weightedMedian) * medianBlend,
+  )
+  const scale = value / estimate.value
+  return {
+    ...estimate,
+    value,
+    low: estimate.low * scale,
+    high: estimate.high * scale,
   }
 }
 
@@ -197,28 +262,50 @@ export function estimateHierarchicalMultiplier(options) {
   const priorReliability = clamp(Number(options.priorReliability) || 0.5, 0.05, 1)
   const asOf = Number(options.asOf) || Date.now()
   const groupedReleasePoints = collapseGroupedRatioEvidence(options.releaseRatioPoints ?? [], asOf)
-  const releaseEstimate = robustFairValueEstimate(groupedReleasePoints, { asOf, halfLifeDays: 28 })
+  const releaseEstimate = stabilizeEstimateCenter(
+    robustFairValueEstimate(groupedReleasePoints, {
+      asOf,
+      halfLifeDays: VARIATION_FAIR_VALUE_POLICY.ratioHalfLifeDays,
+      enableTrend: false,
+    }),
+    VARIATION_FAIR_VALUE_POLICY.ratioMedianBlend,
+  )
   const playerRatioPoints = buildProximityRatioPoints(options.playerVariationSales ?? [], options.playerBaseSales ?? [])
-  const playerRatioEstimate = robustFairValueEstimate(playerRatioPoints, { asOf, halfLifeDays: 30 })
-  // The release curve is the market backbone. Empirical ratios should refine it,
-  // not replace it after a handful of sales. A fixed floor keeps low-pop lanes
-  // stable while the reliability term lets well-established priors carry more
-  // of the estimate.
-  const evidence = [{ value: priorMultiplier, weight: 5 + 8 * priorReliability, source: 'structural-prior' }]
+  const playerRatioEstimate = stabilizeEstimateCenter(
+    robustFairValueEstimate(playerRatioPoints, {
+      asOf,
+      halfLifeDays: VARIATION_FAIR_VALUE_POLICY.ratioHalfLifeDays,
+      enableTrend: false,
+    }),
+    VARIATION_FAIR_VALUE_POLICY.ratioMedianBlend,
+  )
+  // These weights are selected on weekly walk-forward folds. The structural
+  // curve remains the anchor, while coherent release and player evidence can
+  // move it enough to follow the market without letting one sale become truth.
+  const evidence = [{
+    value: priorMultiplier,
+    weight:
+      VARIATION_FAIR_VALUE_POLICY.priorFloor +
+      priorReliability * VARIATION_FAIR_VALUE_POLICY.priorReliabilityScale,
+    source: 'structural-prior',
+  }]
   if (releaseEstimate) {
     evidence.push({
       value: releaseEstimate.value,
       weight:
-        Math.min(12, releaseEstimate.effectiveN) *
-        (0.18 + (1 - priorReliability) * 0.45) *
-        (0.35 + releaseEstimate.confidence * 0.65),
+        Math.min(VARIATION_FAIR_VALUE_POLICY.releaseEvidenceCap, releaseEstimate.effectiveN) *
+        VARIATION_FAIR_VALUE_POLICY.releaseEvidenceScale *
+        (0.45 + releaseEstimate.confidence * 0.55),
       source: 'release-proximity',
     })
   }
   if (playerRatioEstimate) {
     evidence.push({
       value: playerRatioEstimate.value,
-      weight: Math.min(4, playerRatioEstimate.effectiveN) * (0.45 + playerRatioEstimate.confidence * 0.45),
+      weight:
+        Math.min(VARIATION_FAIR_VALUE_POLICY.playerEvidenceCap, playerRatioEstimate.effectiveN) *
+        VARIATION_FAIR_VALUE_POLICY.playerEvidenceScale *
+        (0.45 + playerRatioEstimate.confidence * 0.55),
       source: 'player-proximity',
     })
   }
@@ -226,9 +313,27 @@ export function estimateHierarchicalMultiplier(options) {
   const logValue = evidence.reduce((sum, item) => sum + Math.log(item.value) * item.weight, 0) / totalWeight
   const multiplier = Math.exp(logValue)
   const empiricalWeight = evidence.filter((item) => item.source !== 'structural-prior').reduce((sum, item) => sum + item.weight, 0)
-  const confidence = clamp(0.22 + (1 - Math.exp(-empiricalWeight / 7)) * 0.68 + priorReliability * 0.1, 0.25, 0.96)
-  const spread = releaseEstimate?.volatility ?? playerRatioEstimate?.volatility ?? 0.35
-  const intervalWidth = 1.28 * Math.sqrt(spread ** 2 / Math.max(1, empiricalWeight) + 0.08 ** 2)
+  const releasePlayers = releaseEstimate?.count ?? 0
+  const playerEffectiveN = playerRatioEstimate?.effectiveN ?? 0
+  const evidenceTier =
+    releasePlayers >= 8 && empiricalWeight >= 4
+      ? 'observed'
+      : releasePlayers >= 3 || playerEffectiveN >= 1.8
+        ? 'modeled'
+        : 'indicative'
+  const actionable = evidenceTier !== 'indicative'
+  const confidenceCeiling = evidenceTier === 'observed' ? 0.94 : evidenceTier === 'modeled' ? 0.74 : 0.42
+  const confidence = clamp(
+    0.2 + (1 - Math.exp(-empiricalWeight / 7)) * 0.68 + priorReliability * 0.1,
+    0.22,
+    confidenceCeiling,
+  )
+  const spread = releaseEstimate?.volatility ?? playerRatioEstimate?.volatility ?? (evidenceTier === 'indicative' ? 0.62 : 0.42)
+  // Even deep release evidence contains cross-player and parallel-specific
+  // dispersion that does not vanish with sample size. These floors are
+  // calibrated against future weekly market centers, not in-sample fit.
+  const modelRisk = evidenceTier === 'observed' ? 0.14 : evidenceTier === 'modeled' ? 0.16 : 0.42
+  const intervalWidth = 1.28 * Math.sqrt(spread ** 2 / Math.max(1, empiricalWeight) + modelRisk ** 2)
   return {
     multiplier,
     low: Math.exp(logValue - intervalWidth),
@@ -238,21 +343,34 @@ export function estimateHierarchicalMultiplier(options) {
     releaseMultiplier: releaseEstimate?.value ?? null,
     playerMultiplier: playerRatioEstimate?.value ?? null,
     effectiveN: (releaseEstimate?.effectiveN ?? 0) + (playerRatioEstimate?.effectiveN ?? 0),
+    empiricalWeight,
+    releasePlayers,
+    evidenceTier,
+    actionable,
     sources: evidence.map((item) => item.source),
-    method: 'hierarchical-proximity-multiplier',
+    method: 'hierarchical-proximity-multiplier-v3',
   }
 }
 
 export function estimateLaneFairValue(options) {
-  const baseEstimate = options.baseEstimate ?? robustFairValueEstimate(options.baseSales ?? [], { asOf: options.asOf })
+  const baseEstimate = options.baseEstimate ?? estimateBaseFairValue(options.baseSales ?? [], { asOf: options.asOf })
   if (!baseEstimate?.value) return null
   const multiplierEstimate = options.multiplierEstimate ?? estimateHierarchicalMultiplier(options)
   const curveValue = baseEstimate.value * multiplierEstimate.multiplier
-  const directEstimate = robustFairValueEstimate(options.playerVariationSales ?? [], { asOf: options.asOf, halfLifeDays: 28 })
-  const curveWeight = 2 + baseEstimate.confidence * 3 + multiplierEstimate.confidence * 2
-  const evidenceOverlapDiscount = multiplierEstimate.playerMultiplier ? 0.72 : 1
+  const directEstimate = stabilizeEstimateCenter(
+    robustFairValueEstimate(options.playerVariationSales ?? [], {
+      asOf: options.asOf,
+      halfLifeDays: VARIATION_FAIR_VALUE_POLICY.directHalfLifeDays,
+      maxSales: VARIATION_FAIR_VALUE_POLICY.directMaxSales,
+      enableTrend: false,
+    }),
+    VARIATION_FAIR_VALUE_POLICY.directMedianBlend,
+  )
+  const curveWeight = VARIATION_FAIR_VALUE_POLICY.curveWeight
   const directWeight = directEstimate
-    ? Math.min(8, directEstimate.effectiveN) * (0.45 + directEstimate.confidence * 0.75) * evidenceOverlapDiscount
+    ? Math.min(VARIATION_FAIR_VALUE_POLICY.directEvidenceCap, directEstimate.effectiveN) *
+      VARIATION_FAIR_VALUE_POLICY.directEvidenceScale *
+      (0.45 + directEstimate.confidence * 0.55)
     : 0
   const totalWeight = curveWeight + directWeight
   const logValue = directEstimate
@@ -267,12 +385,16 @@ export function estimateLaneFairValue(options) {
     (Math.log(baseEstimate.high * multiplierEstimate.high) * curveWeight + Math.log(directEstimate?.high ?? curveValue) * directWeight) /
       totalWeight,
   )
-  const confidence = clamp(
+  const rawConfidence = clamp(
     (baseEstimate.confidence * curveWeight + multiplierEstimate.confidence * curveWeight + (directEstimate?.confidence ?? 0) * directWeight) /
       (curveWeight * 2 + directWeight),
     0.2,
     0.97,
   )
+  const directSupportsLane = (directEstimate?.effectiveN ?? 0) >= 2.5
+  const evidenceTier = directSupportsLane ? 'observed' : multiplierEstimate.evidenceTier
+  const actionable = directSupportsLane || multiplierEstimate.actionable
+  const confidence = Math.min(rawConfidence, evidenceTier === 'observed' ? 0.94 : evidenceTier === 'modeled' ? 0.74 : 0.42)
   return {
     value,
     low,
@@ -282,7 +404,10 @@ export function estimateLaneFairValue(options) {
     multiplier: multiplierEstimate.multiplier,
     directValue: directEstimate?.value ?? null,
     directEffectiveN: directEstimate?.effectiveN ?? 0,
-    method: directEstimate ? 'hierarchical-direct-blend' : 'hierarchical-curve',
+    empiricalEffectiveN: multiplierEstimate.effectiveN + (directEstimate?.effectiveN ?? 0),
+    evidenceTier,
+    actionable,
+    method: directEstimate ? 'hierarchical-direct-blend-v3' : 'hierarchical-curve-v3',
   }
 }
 
@@ -301,7 +426,14 @@ function collapseGroupedRatioEvidence(points, asOf) {
   }
   if (!grouped.size) return points
   const collapsed = [...grouped.entries()].flatMap(([groupKey, rows]) => {
-    const estimate = robustFairValueEstimate(rows, { asOf, halfLifeDays: 35 })
+    const estimate = stabilizeEstimateCenter(
+      robustFairValueEstimate(rows, {
+        asOf,
+        halfLifeDays: VARIATION_FAIR_VALUE_POLICY.ratioHalfLifeDays,
+        enableTrend: false,
+      }),
+      VARIATION_FAIR_VALUE_POLICY.ratioMedianBlend,
+    )
     if (!estimate) return []
     return [{
       price: estimate.value,

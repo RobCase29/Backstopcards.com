@@ -1,3 +1,5 @@
+import { classifyBowmanAutoTitleScope } from './bowmanAutoTitleScope.js'
+
 const TEAM_COLOR_CONTEXTS = [
   /\bboston\s+red\s+sox\b/gi,
   /\bred\s+sox\b/gi,
@@ -109,8 +111,14 @@ export function extractSerialDenominator(title) {
   const text = String(title ?? '')
   const explicit = text.match(/(?:#\s*\/|\bout\s+of\s+|\bnumbered\s+to\s+|\bserial(?:ly)?\s+numbered\s+to\s+)(\d{1,4})\b/i)
   if (explicit) return Number(explicit[1])
-  const fraction = text.match(/(?:\b\d{1,4}\s*)?\/\s*(\d{1,4})\b/)
-  if (fraction) return Number(fraction[1])
+  // Do not turn grades (9.5/10), dates (3/1/2036), or ratios into serial
+  // numbers. A serial fraction either begins at a clean token boundary or is
+  // written as a bare /N, and cannot be followed by another slash.
+  const fractions = [...text.matchAll(/(?<![.\d])(?:\d{1,4}\s*)?\/\s*(\d{1,4})\b(?!\s*\/)/g)]
+  for (const fraction of fractions) {
+    const denominator = Number(fraction[1])
+    if (denominator > 0 && denominator <= 999) return denominator
+  }
   return null
 }
 
@@ -170,6 +178,10 @@ export function canonicalizeBowman2026AutoVariation(title, options = {}) {
   const original = String(title ?? '').trim()
   const text = removeIdentityNoise(original, options.playerName)
   const serialDenominator = extractSerialDenominator(original)
+  const scope = classifyBowmanAutoTitleScope(original)
+  if (!scope.eligible) {
+    return result(null, 'out-of-scope', 0.99, serialDenominator, [scope.reason])
+  }
   const outOfScope = /\b(?:sapphire|mega|mojo|paper|retail)\b/.test(text) || /\bimage\s+variation\b/.test(text)
   if (outOfScope) {
     return result(null, 'out-of-scope', 0.99, serialDenominator, ['adjacent Bowman product or non-flagship auto lane'])

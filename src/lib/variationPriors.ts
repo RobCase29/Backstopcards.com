@@ -1,8 +1,13 @@
 import type { ChecklistModel, ChecklistVariation } from '../types'
 import { bowman2026AutoDefinition, canonicalizeBowman2026AutoVariation } from '../../shared/bowman2026Taxonomy.js'
+import { historicalBowmanAutoPrior } from '../../shared/bowmanAutoTaxonomy.js'
 import { FAIR_VALUE_MODEL_VERSION } from '../../shared/fairValueEngine.js'
 
 export { FAIR_VALUE_MODEL_VERSION }
+
+export function isValidatedHierarchicalModel(method: string | null | undefined) {
+  return method === 'hierarchical-proximity-v3' || method === 'hierarchical-proximity-v2'
+}
 
 type StabilizeReleaseMultiplierInput = {
   variation: string
@@ -17,7 +22,7 @@ type StabilizeReleaseMultiplierInput = {
 export type StructuralVariationPrior = {
   multiplier: number
   reliability: number
-  source: 'bowman-2026-structure'
+  source: 'bowman-2026-structure' | 'cross-release-structure'
 }
 
 function clamp(value: number, min = 0, max = 1) {
@@ -44,7 +49,9 @@ export function structuralVariationPrior(
   if (isBaseLabel(variation)) {
     return { multiplier: 1, reliability: 1, source: 'bowman-2026-structure' }
   }
-  if (releaseYear !== 2026 || category !== 'bowman') return null
+  if (releaseYear !== 2026 || category !== 'bowman') {
+    return historicalBowmanAutoPrior(variation)
+  }
   const definition =
     bowman2026AutoDefinition(variation) ??
     canonicalizeBowman2026AutoVariation(variation, { assumeAuto: true }).definition
@@ -58,7 +65,7 @@ export function structuralVariationPrior(
 
 /**
  * Stabilizes legacy release-level ratios against the official release curve.
- * Proximity-calibrated v2 rows have already passed through the full hierarchy
+ * Proximity-calibrated rows have already passed through the full hierarchy
  * during snapshot generation and are returned unchanged.
  */
 export function stabilizeReleaseMultiplier(input: StabilizeReleaseMultiplierInput) {
@@ -67,7 +74,7 @@ export function stabilizeReleaseMultiplier(input: StabilizeReleaseMultiplierInpu
   const prior = structuralVariationPrior(input.variation, input.releaseYear, input.category)
   if (!prior) return empirical
   if (!empirical) return prior.multiplier
-  if (input.modelMethod === 'hierarchical-proximity-v2') return empirical
+  if (isValidatedHierarchicalModel(input.modelMethod)) return empirical
 
   const playerCount = positive(input.playerCount)
   const totalSales = positive(input.totalSales)
@@ -88,7 +95,7 @@ export function stabilizeReleaseMultiplier(input: StabilizeReleaseMultiplierInpu
 }
 
 export function releaseVariationModelMethod(variation: ChecklistVariation) {
-  return variation.modelMethod === 'hierarchical-proximity-v2'
+  return isValidatedHierarchicalModel(variation.modelMethod)
     ? FAIR_VALUE_MODEL_VERSION
     : variation.modelMethod || 'stabilized-release-prior'
 }

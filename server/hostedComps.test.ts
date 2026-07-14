@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  blendHostedCompPrice,
   chooseBowmanBaseAutoCard,
   dailyExportDateCandidates,
   evaluateBowmanBaseAutoCandidate,
@@ -129,7 +128,12 @@ describe('hosted comp modeling', () => {
       new Date('2026-07-09T12:00:00.000Z'),
     )
 
-    expect(summary.modelPrice).toBe(112)
+    expect(summary.modelPrice).toBeCloseTo(109.75)
+    expect(summary.compPrice).toBe(112)
+    expect(summary.modelVersion).toBe('backstop-fv-v3')
+    expect(summary.modelMethod).toBe('validated-base-anchor-v3')
+    expect(summary.modelLow).toBeLessThan(summary.modelPrice ?? 0)
+    expect(summary.modelHigh).toBeGreaterThan(summary.modelPrice ?? 0)
     expect(summary.sales).toHaveLength(3)
     expect(summary.sales30).toBe(2)
     expect(summary.sales90).toBe(3)
@@ -138,26 +142,4 @@ describe('hosted comp modeling', () => {
     expect(summary.binCount).toBe(1)
   })
 
-  it('lets deep comp lanes lead and uses direct FMV as corroboration', () => {
-    expect(
-      blendHostedCompPrice(100, 12, {
-        card_id: 'card-1',
-        grade: 'Raw',
-        price: 120,
-        confidence: 0.8,
-        confidence_grade: 'A',
-        method: 'direct',
-      }),
-    ).toBe(105)
-    expect(
-      blendHostedCompPrice(100, 12, {
-        card_id: 'card-1',
-        grade: 'Raw',
-        price: 250,
-        confidence: 0.3,
-        confidence_grade: 'D',
-        method: 'segment_fallback',
-      }),
-    ).toBe(100)
-  })
 })

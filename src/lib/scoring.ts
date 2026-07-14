@@ -776,6 +776,15 @@ function isBaseAutoListing(listing: NormalizedListing) {
   )
 }
 
+function baseEvidenceIsActionable(baseEstimate: ReturnType<typeof estimateBasePrice> | null) {
+  if (!baseEstimate || baseEstimate.price <= 0) return false
+  if (baseEstimate.source === 'variation-implied') {
+    return baseEstimate.confidence >= 0.5 && baseEstimate.effectiveSales >= 2
+  }
+  if (baseEstimate.source !== 'weighted-sales' && baseEstimate.source !== 'blended-sales') return false
+  return baseEstimate.confidence >= 0.45 && baseEstimate.effectiveSales >= 1.25
+}
+
 function estimateValuation(
   listing: NormalizedListing,
   model?: ChecklistModel | null,
@@ -808,6 +817,7 @@ function estimateValuation(
   }
   const player = matchedPlayer ?? findChecklistPlayer(listing, model)
   const baseEstimate = player ? estimateBasePrice(player) : null
+  const actionableBaseEvidence = baseEvidenceIsActionable(baseEstimate)
   const modeledBasePrice = baseEstimate?.price ?? player?.baseAvgPrice ?? 0
   const playerVariation = player ? findVariation(listing, player.variations) : null
   const releaseVariations = model ? releaseVariationCurve(model).variations : []
@@ -832,6 +842,10 @@ function estimateValuation(
   const variationPrice = playerVariation?.item.avgPrice ?? null
   const playerVariationSales = playerVariation?.item.salesCount ?? 0
   const reliablePlayerVariation = variationPrice && playerVariationSales >= 3
+  const releaseLaneConfidence = releaseVariation?.item.modelConfidence ?? 0.42
+  const releaseLaneActionable = releaseVariation
+    ? releaseVariation.item.modelActionable !== false && releaseVariation.item.modelEvidence !== 'indicative'
+    : false
   const compPrice = listing.marketPrice > 0 && listing.compCount > 0 ? listing.marketPrice : null
   let modelPrice: number | null = null
   let modelConfidence = 0
@@ -842,14 +856,20 @@ function estimateValuation(
     const baseConfidence = baseEstimate?.confidence ?? 0.5
     const baseSales = baseEstimate?.effectiveSales ?? player.baseSalesCount
     modelPrice = modeledBasePrice * HAND_SIGNED_BASE_MULTIPLE
-    modelConfidence = clamp(0.34 + baseConfidence * 0.24 + Math.min(baseSales, 12) / 95, 0.38, 0.66)
+    modelConfidence = Math.min(
+      clamp(0.34 + baseConfidence * 0.24 + Math.min(baseSales, 12) / 95, 0.28, 0.66),
+      actionableBaseEvidence ? 0.66 : 0.38,
+    )
     matchedVariation = 'Hand Signed Auto'
     valuationSource = 'hand-signed-base'
   } else if (player && modeledBasePrice > 0 && isBaseAutoListing(listing)) {
     const baseConfidence = baseEstimate?.confidence ?? 0.58
     const baseSales = baseEstimate?.effectiveSales ?? player.baseSalesCount
     modelPrice = modeledBasePrice
-    modelConfidence = clamp(0.48 + baseConfidence * 0.38 + Math.min(baseSales, 16) / 70, 0.52, 0.96)
+    modelConfidence = Math.min(
+      clamp(0.48 + baseConfidence * 0.38 + Math.min(baseSales, 16) / 70, 0.28, 0.96),
+      actionableBaseEvidence ? 0.96 : 0.42,
+    )
     matchedVariation = 'Base Auto'
     valuationSource = 'base-auto'
   } else if (variationPrice && baseTwmaPrice && reliablePlayerVariation) {
@@ -860,7 +880,7 @@ function estimateValuation(
       curvePrice: baseTwmaPrice,
       directPrice: variationPrice,
       saleCount: variationSales,
-      curveConfidence: baseConfidence,
+      curveConfidence: Math.sqrt(baseConfidence * Math.max(0.2, releaseLaneConfidence)),
       directConfidence: clamp(0.42 + Math.log1p(variationSales) * 0.12, 0.42, 0.82),
     })
     const compWeight = compPrice ? clamp(listing.compCount / 40, 0.04, 0.14) : 0
@@ -868,12 +888,15 @@ function estimateValuation(
       { value: laneEstimate.value, weight: 1 - compWeight },
       { value: compPrice ?? 0, weight: compWeight },
     ])
-    modelConfidence = clamp(
-      laneEstimate.confidence +
-        Math.min(baseSales, 12) / 160 +
-        Math.min(releaseVariation?.item.totalSales ?? 0, 250) / 2_000,
-      0,
-      0.95,
+    modelConfidence = Math.min(
+      clamp(
+        laneEstimate.confidence +
+          Math.min(baseSales, 12) / 160 +
+          Math.min(releaseVariation?.item.totalSales ?? 0, 250) / 2_000,
+        0,
+        0.95,
+      ),
+      actionableBaseEvidence ? 0.95 : 0.42,
     )
     matchedVariation = playerVariation?.item.variation ?? releaseVariation?.item.variation ?? null
     valuationSource = 'base-twma-blend'
@@ -885,7 +908,15 @@ function estimateValuation(
       { value: baseTwmaPrice, weight: 1 - compWeight },
       { value: compPrice ?? 0, weight: compWeight },
     ])
-    modelConfidence = clamp(0.42 + baseConfidence * 0.34 + Math.min(baseSales, 8) / 44 + Math.min(releaseVariation.item.totalSales ?? 0, 200) / 900)
+    const evidenceConfidence = clamp(
+      0.22 + baseConfidence * 0.28 + releaseLaneConfidence * 0.42 + Math.min(baseSales, 8) / 64,
+      0.2,
+      0.92,
+    )
+    modelConfidence = Math.min(
+      evidenceConfidence,
+      releaseLaneActionable && actionableBaseEvidence ? 0.92 : 0.42,
+    )
     matchedVariation = releaseVariation.item.variation
     valuationSource = 'player-base-curve'
   } else if (variationPrice && playerVariation && reliablePlayerVariation) {
@@ -1105,6 +1136,13 @@ function buildReasons(args: {
     warnings.push('auction end time has passed')
   }
   if (confidence < 0.52 || compQuality < 0.42) warnings.push('thin or noisy comp base')
+  if (
+    modelConfidence <= 0.42 &&
+    valuationSource !== 'sales-cache-exact' &&
+    valuationSource !== 'player-variation'
+  ) {
+    warnings.push('indicative model anchor')
+  }
   if (valuationSource === 'release-curve') warnings.push('release curve estimate')
   if (valuationSource === 'sales-cache-blend' && modelConfidence < 0.68) warnings.push('thin sold lane blend')
   if (listing.bidCount >= 20) warnings.push('crowded auction')
@@ -1318,13 +1356,13 @@ export function scoreListing(
   const meetsEntry = listing.allInPrice <= maxEntry
   const isExecutable = availability >= 0.55 && listing.kind === 'bin'
   const hasActionableEvidence =
-    valuation.valuationSource === 'sales-cache-exact' ||
-    valuation.valuationSource === 'sales-cache-blend' ||
-    valuation.valuationSource === 'base-auto' ||
-    valuation.valuationSource === 'hand-signed-base' ||
-    valuation.valuationSource === 'base-twma-blend' ||
-    valuation.valuationSource === 'player-variation' ||
-    valuation.valuationSource === 'player-base-curve' ||
+    (valuation.valuationSource === 'sales-cache-exact' && modelConfidence >= 0.58) ||
+    (valuation.valuationSource === 'sales-cache-blend' && modelConfidence >= 0.58) ||
+    (valuation.valuationSource === 'base-auto' && modelConfidence >= 0.55) ||
+    (valuation.valuationSource === 'hand-signed-base' && modelConfidence >= 0.55) ||
+    (valuation.valuationSource === 'base-twma-blend' && modelConfidence >= 0.55) ||
+    (valuation.valuationSource === 'player-variation' && modelConfidence >= 0.58) ||
+    (valuation.valuationSource === 'player-base-curve' && modelConfidence >= 0.55) ||
     (listing.compCount >= 4 && compQuality >= 0.58)
 
   if (isExecutable && meetsEntry && hasActionableEvidence && confidence >= 0.62 && score >= 0.64) action = 'Buy now'
@@ -1345,6 +1383,7 @@ export function scoreListing(
   else if (score >= 0.7) grade = 'A'
   else if (score >= 0.56) grade = 'B'
   else if (score >= 0.42) grade = 'C'
+  if (!hasActionableEvidence && (grade === 'A+' || grade === 'A' || grade === 'B')) grade = 'C'
   const trustScore = Math.round(
     clamp(
       confidence * 0.46 +

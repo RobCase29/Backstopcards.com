@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildProximityRatioPoints,
   dedupeSales,
+  estimateBaseFairValue,
   estimateHierarchicalMultiplier,
   estimateLaneFairValue,
   robustFairValueEstimate,
@@ -35,6 +36,28 @@ describe('fair value engine', () => {
     expect(estimate?.high).toBeGreaterThan(estimate?.value ?? 0)
   })
 
+  it('never leaks future transactions into an as-of estimate', () => {
+    const estimate = robustFairValueEstimate([
+      sale(100, 4),
+      sale(105, 2),
+      sale(1_000, -2),
+    ], { asOf })
+
+    expect(estimate?.count).toBe(2)
+    expect(estimate?.value).toBeLessThan(110)
+  })
+
+  it('uses the validated recent-sales policy for the base-auto anchor', () => {
+    const recent = Array.from({ length: 10 }, (_, index) => sale(190 + index, index + 1))
+    const oldRegime = Array.from({ length: 12 }, (_, index) => sale(45 + index, index + 60))
+    const estimate = estimateBaseFairValue([...oldRegime, ...recent], { asOf })
+
+    expect(estimate?.count).toBe(10)
+    expect(estimate?.value).toBeGreaterThan(190)
+    expect(estimate?.method).toBe('validated-base-anchor-v3')
+    expect((estimate?.high ?? 0) / (estimate?.low ?? 1)).toBeGreaterThan(1.45)
+  })
+
   it('anchors variation multiples to base sales close in time', () => {
     const points = buildProximityRatioPoints(
       [sale(400, 2), sale(360, 20)],
@@ -58,6 +81,24 @@ describe('fair value engine', () => {
     expect(estimate.multiplier).toBeGreaterThan(1.45)
     expect(estimate.multiplier).toBeLessThan(2.3)
     expect(estimate.sources).toContain('release-proximity')
+    expect(estimate.evidenceTier).toBe('observed')
+    expect(estimate.actionable).toBe(true)
+    expect(estimate.confidence).toBeGreaterThan(0.6)
+    expect(estimate.confidence).toBeLessThanOrEqual(0.94)
+  })
+
+  it('labels a structural-prior-only lane as indicative rather than actionable', () => {
+    const estimate = estimateHierarchicalMultiplier({
+      priorMultiplier: 16,
+      priorReliability: 0.25,
+      asOf,
+    })
+
+    expect(estimate.evidenceTier).toBe('indicative')
+    expect(estimate.actionable).toBe(false)
+    expect(estimate.confidence).toBeLessThanOrEqual(0.42)
+    expect(estimate.low).toBeLessThan(estimate.multiplier)
+    expect(estimate.high).toBeGreaterThan(estimate.multiplier)
   })
 
   it('blends direct lane comps with the base-multiple curve', () => {
@@ -72,6 +113,6 @@ describe('fair value engine', () => {
     expect(estimate).not.toBeNull()
     expect(estimate?.value).toBeGreaterThan(195)
     expect(estimate?.value).toBeLessThan(230)
-    expect(estimate?.method).toBe('hierarchical-direct-blend')
+    expect(estimate?.method).toBe('hierarchical-direct-blend-v3')
   })
 })

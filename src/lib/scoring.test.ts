@@ -188,6 +188,52 @@ describe('normalizeListing', () => {
     expect(opportunities[0].valuationSource).toBe('base-auto')
     expect(opportunities[0].matchedVariation).toBe('Base Auto')
     expect(opportunities[0].fairValue).toBe(100)
+    expect(opportunities[0].modelConfidence).toBeLessThanOrEqual(0.42)
+    expect(opportunities[0].warnings).toContain('indicative model anchor')
+    expect(opportunities[0].action).toBe('Watchlist')
+    expect(opportunities[0].grade).toBe('C')
+  })
+
+  it('allows a reproducible current-model base anchor to become decision grade', () => {
+    const trustedModel: ChecklistModel = {
+      ...model,
+      modelVersion: 'backstop-fv-v3',
+      players: [
+        {
+          playerName: 'Eli Willits',
+          baseAvgPrice: 100,
+          baseSalesCount: 6,
+          baseModelMethod: 'backstop-fv-v3',
+          baseSales: [
+            { salePrice: 98, saleDate: new Date(Date.now() - 1 * 86_400_000).toISOString(), saleType: 'Auction' },
+            { salePrice: 102, saleDate: new Date(Date.now() - 3 * 86_400_000).toISOString(), saleType: 'Auction' },
+            { salePrice: 100, saleDate: new Date(Date.now() - 5 * 86_400_000).toISOString(), saleType: 'Buy It Now' },
+            { salePrice: 105, saleDate: new Date(Date.now() - 7 * 86_400_000).toISOString(), saleType: 'Auction' },
+          ],
+          variations: [],
+        },
+      ],
+    }
+
+    const [opportunity] = rankOpportunities(
+      [
+        listing({
+          item_id: 'trusted-base-auto',
+          title: '2026 Bowman Chrome Eli Willits 1st Bowman Chrome Prospect Autographs Auto CPA-EW',
+          current_price: 55,
+          shipping_cost: 0,
+          variation: '',
+          serial_denominator: null,
+          comps: [],
+        }),
+      ],
+      DEFAULT_SETTINGS,
+      trustedModel,
+    )
+
+    expect(opportunity.modelConfidence).toBeGreaterThan(0.55)
+    expect(opportunity.warnings).not.toContain('indicative model anchor')
+    expect(opportunity.grade).not.toBe('C')
   })
 
   it('keeps Red Sox base autos on the base-auto model instead of the Red /5 lane', () => {

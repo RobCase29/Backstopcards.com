@@ -19,6 +19,12 @@ export type SalesCacheBucket = {
   q3Price: number
   maxPrice: number
   modelPrice: number
+  modelLow?: number | null
+  modelHigh?: number | null
+  modelConfidence?: number | null
+  modelEffectiveSales?: number | null
+  modelMethod?: string
+  modelVersion?: string
   baseAutoMultiple: number | null
   latestSoldAt: string
   generatedAt: string
@@ -146,6 +152,7 @@ export type SalesCacheStatus = {
   hosted?: {
     queueSeeds: number
     laneSeeds: number
+    currentModelLanes?: number
     freshFmvLanes: number
     freshCompLanes: number
     queue: Array<{ status: string; players: number }>
