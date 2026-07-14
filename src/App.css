@@ -15232,7 +15232,42 @@ button.sales-bucket-tile {
   color: var(--positive);
 }
 
+.valuation-app .comp-refresh-feedback.queued {
+  color: #8b6514;
+}
+
 .valuation-app .comp-refresh-feedback.error {
+  color: var(--negative);
+}
+
+.valuation-app .leaderboard-comp-feedback {
+  width: fit-content;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1.35;
+  text-transform: none;
+}
+
+.valuation-app .leaderboard-comp-feedback svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.valuation-app .leaderboard-comp-feedback.success {
+  color: var(--positive);
+}
+
+.valuation-app .leaderboard-comp-feedback.queued {
+  color: #8b6514;
+}
+
+.valuation-app .leaderboard-comp-feedback.error {
   color: var(--negative);
 }
 

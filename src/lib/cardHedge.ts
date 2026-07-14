@@ -151,6 +151,7 @@ export type CardHedgeFmvBatchResponse = {
 export type CardHedgeHostedRefreshResponse = {
   ok: boolean
   mode: string
+  message?: string
   runId: string
   durationMs: number
   claimedPlayers: number

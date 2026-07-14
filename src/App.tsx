@@ -3187,7 +3187,7 @@ function Leaderboard({
   onSelect,
   onScanPlayer,
   onRefreshPlayer,
-  refreshingPlayerId,
+  refreshState,
   emptyTitle = 'No priced players loaded.',
   emptyText = 'Connect market data to load player base prices.',
 }: {
@@ -3197,7 +3197,11 @@ function Leaderboard({
   onSelect: (rowId: string) => void
   onScanPlayer: (row: PricingRow) => void
   onRefreshPlayer?: (row: PricingRow) => void
-  refreshingPlayerId?: string | null
+  refreshState?: {
+    rowId: string
+    status: 'loading' | 'queued' | 'success' | 'missing' | 'error'
+    message: string
+  } | null
   emptyTitle?: string
   emptyText?: string
 }) {
@@ -3224,7 +3228,10 @@ function Leaderboard({
         {rows.map((row, index) => {
           const displayRank = rankById?.get(row.id) ?? index + 1
           const hasModel = rowHasModel(row)
-          const refreshingModel = refreshingPlayerId === row.id
+          const activeRefreshState = refreshState?.rowId === row.id ? refreshState : null
+          const refreshingModel = activeRefreshState?.status === 'loading'
+          const refreshActionLabel =
+            activeRefreshState?.status === 'missing' || activeRefreshState?.status === 'error' ? 'Retry comps' : 'Build comps'
           const valueScore = scoreDynastyValueOpportunity(row)
           const impliedBase = impliedDynastyBasePrice(row)
           const valueGapPct = impliedBase > 0 && row.baseTwmaPrice > 0 ? impliedBase / row.baseTwmaPrice - 1 : null
@@ -3270,7 +3277,7 @@ function Leaderboard({
                   <strong>{row.playerName}</strong>
                   <span>
                     {refreshingModel ? <RefreshCw size={12} className="spin" /> : hasModel ? <Radio size={12} /> : <Database size={12} />}
-                    {refreshingModel ? 'Building model' : hasModel ? 'Scan deals' : 'Build comps'}
+                    {refreshingModel ? 'Building model' : hasModel ? 'Scan deals' : refreshActionLabel}
                   </span>
                 </button>
                 <small>
@@ -3287,6 +3294,16 @@ function Leaderboard({
                 ) : (
                   <span className="sts-inline muted">Unranked</span>
                 )}
+                {activeRefreshState ? (
+                  <span
+                    className={`leaderboard-comp-feedback ${activeRefreshState.status}`}
+                    role={activeRefreshState.status === 'error' ? 'alert' : 'status'}
+                    aria-live="polite"
+                  >
+                    {activeRefreshState.status === 'loading' ? <RefreshCw size={12} className="spin" /> : <Database size={12} />}
+                    {activeRefreshState.message}
+                  </span>
+                ) : null}
               </span>
               <span className="money-chip">
                 <span className="mobile-cell-label">Base auto</span>
@@ -5013,7 +5030,7 @@ function QuickPriceModule({
   pickerRows?: PricingRow[]
   onPickRow?: (rowId: string) => void
   onRefreshPlayer?: (row: PricingRow) => void
-  refreshState?: { rowId: string; status: 'loading' | 'success' | 'missing' | 'error'; message: string } | null
+  refreshState?: { rowId: string; status: 'loading' | 'queued' | 'success' | 'missing' | 'error'; message: string } | null
   className?: string
 }) {
   const [cardInput, setCardInput] = useState<{
@@ -8892,7 +8909,7 @@ function App() {
   const [compsRefreshing, setCompsRefreshing] = useState(false)
   const [compRefreshState, setCompRefreshState] = useState<{
     rowId: string
-    status: 'loading' | 'success' | 'missing' | 'error'
+    status: 'loading' | 'queued' | 'success' | 'missing' | 'error'
     message: string
   } | null>(null)
   const [compDatasetVersion, setCompDatasetVersion] = useState(0)
@@ -9178,6 +9195,16 @@ function App() {
       try {
         const result = await refreshHostedCardHedgeComps({ playerName: row.playerName, releaseYear: row.releaseYear })
         if (!result.ok) throw new Error(result.error || 'Comp refresh did not complete')
+
+        if (result.mode === 'hosted-comp-queued' && result.completedPlayers === 0) {
+          setCompRefreshState({
+            rowId: row.id,
+            status: 'queued',
+            message: result.message || 'Comp refresh queued and will run when API capacity is available.',
+          })
+          await refreshObservability()
+          return
+        }
 
         const refreshed = await fetchSalesCachePlayer(row.playerName)
         const matchingBase = soldBaseBucketForRow(row, refreshed)
@@ -11627,7 +11654,7 @@ function App() {
                 onSelect={setSelectedRowId}
                 onScanPlayer={scanBinsForLookupRow}
                 onRefreshPlayer={(row) => void handleRefreshPlayerComp(row)}
-                refreshingPlayerId={compRefreshState?.status === 'loading' ? compRefreshState.rowId : null}
+                refreshState={compRefreshState}
                 emptyTitle={checklistLoading ? 'Loading player models...' : trimmedQuery ? 'No modeled card match.' : undefined}
                 emptyText={
                   checklistLoading
