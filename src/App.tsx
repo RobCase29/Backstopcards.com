@@ -213,7 +213,7 @@ type SortMode =
   | 'bin-target'
   | 'player-asc'
   | 'release-desc'
-type BinPlayerScope = 'all' | 'top-40' | 'target-50' | 'value-25' | 'prospect-100'
+type BinPlayerScope = 'all' | 'top-40' | 'target-50' | 'value-100' | 'prospect-100'
 type BinSearchMode = EbayBinSearchMode
 type BinResultSort =
   | 'conviction-desc'
@@ -704,7 +704,7 @@ const CHECKLIST_LOAD_CONCURRENCY = 6
 const BIN_SCAN_CONCURRENCY = 2
 const LEADERBOARD_RENDER_LIMIT = 25
 const FILTERED_LEADERBOARD_RENDER_LIMIT = 120
-const BOARD_DEAL_SCAN_LIMIT = 25
+const BOARD_DEAL_SCAN_LIMIT = 100
 const TEAM_DEAL_SCAN_LIMIT = 50
 const BIN_RENDER_LIMIT = 40
 const AUCTION_RENDER_LIMIT = 30
@@ -1686,10 +1686,10 @@ function targetRowsFromRows(rows: PricingRow[], limit = 50) {
     .slice(0, limit)
 }
 
-function valueRowsFromRows(rows: PricingRow[], limit = 25) {
+function valueRowsFromRows(rows: PricingRow[], limit = 100) {
   const selectedRows = rows
     .map((row) => ({ row, score: scoreDynastyValueOpportunity(row) }))
-    .filter(({ score }) => score > 0)
+    .filter(({ row, score }) => rowHasPublishedRank(row) && rowHasModel(row) && score > 0)
     .sort(
       (left, right) =>
         right.score - left.score ||
@@ -1727,7 +1727,7 @@ function scopedRowsForScan(
 ) {
   const rowsByModel = rowsBySelectedModels(rows, models)
   if (searchMode === 'player') return new Map<string, PricingRow[]>()
-  if (playerScope === 'value-25') return valueRowsFromRows(flattenPricingRowGroups(rowsByModel), 25)
+  if (playerScope === 'value-100') return valueRowsFromRows(flattenPricingRowGroups(rowsByModel), 100)
   if (playerScope === 'prospect-100') return prospectRowsFromRows(flattenPricingRowGroups(rowsByModel), 100)
   if (playerScope === 'target-50') return targetRowsByModelFromGroups(rowsByModel, 50)
   return new Map<string, PricingRow[]>()
@@ -6708,13 +6708,13 @@ function BinRadar({
   const scopedPlayerCount =
     playerScope === 'target-50'
       ? targetPlayerCount
-      : playerScope === 'value-25'
+      : playerScope === 'value-100'
         ? valuePlayerCount
         : playerScope === 'prospect-100'
           ? prospectPlayerCount
           : playerCount
   const hasTargetQueue =
-    (playerScope !== 'target-50' && playerScope !== 'value-25' && playerScope !== 'prospect-100') ||
+    (playerScope !== 'target-50' && playerScope !== 'value-100' && playerScope !== 'prospect-100') ||
     searchMode === 'player' ||
     scopedPlayerCount > 0
   const rateLimited = ebayRateLimitMessage(error)
@@ -6739,7 +6739,7 @@ function BinRadar({
   const canScanTopProspects = targetedConfigured && setCount > 0 && hasPlayerUniverse && prospectPlayerCount > 0 && !busy && !modelLoading
   const canScanFanaticsWide = fanaticsWideConfigured && setCount > 0 && hasPlayerUniverse && !busy && !modelLoading
   const queueWaitingLabel =
-    playerScope === 'value-25' ? 'Value board waiting' : playerScope === 'prospect-100' ? 'Top 100 waiting' : 'Target 50 waiting'
+    playerScope === 'value-100' ? 'Value 100 waiting' : playerScope === 'prospect-100' ? 'Top 100 waiting' : 'Target 50 waiting'
   let readinessLabel = 'Ready'
   if (!configured) readinessLabel = 'eBay offline'
   else if (setCount === 0) readinessLabel = 'Model pending'
@@ -6761,7 +6761,7 @@ function BinRadar({
   const auctionButtonLabel = auctionLoading ? 'Scanning auctions' : modelLoading ? 'Model loading' : ebayConfigured ? 'Auctions only' : 'eBay offline'
   const focusPlaceholder = searchMode === 'player' ? 'Eli Willits' : 'Select variation'
   const scopeLabel =
-    playerScope === 'value-25'
+    playerScope === 'value-100'
       ? selectedModelKey === BIN_ALL_MODELS_KEY
         ? `Value board total (${valuePlayerCount.toLocaleString()} players)`
         : `Value board (${valuePlayerCount.toLocaleString()} players)`
@@ -6851,7 +6851,7 @@ function BinRadar({
         <div>
           <span>Recommended</span>
           <strong>Scan the strongest value signals first</strong>
-          <small>Checks active BINs and auctions for the 25 best rank-to-price gaps.</small>
+          <small>Checks active BINs and auctions for the 100 best ranked value signals.</small>
         </div>
       </div>
       <div className="bin-preset-strip" aria-label="High value scan presets">
@@ -6877,7 +6877,7 @@ function BinRadar({
         <button className="preset-scan-card primary-preset" type="button" onClick={onScanValueTargets} disabled={!canScanValueTargets}>
           <Brain size={17} />
           <span>
-            <strong>Scan top values</strong>
+            <strong>Scan Value 100</strong>
             <small>{valuePlayerCount.toLocaleString()} ranked targets</small>
           </span>
         </button>
@@ -6950,7 +6950,7 @@ function BinRadar({
               <select value={playerScope} onChange={(event) => onPlayerScopeChange(event.target.value as BinPlayerScope)}>
                 <option value="all">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'All checklist players' : 'Full checklist'}</option>
                 <option value="prospect-100">Top 100 prospects</option>
-                <option value="value-25">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Value board total' : 'Value board'}</option>
+                <option value="value-100">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Value 100 across all sets' : 'Value 100'}</option>
                 <option value="top-40">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Top 40 per checklist' : 'Top 40 by base'}</option>
                 <option value="target-50">{selectedModelKey === BIN_ALL_MODELS_KEY ? 'Target 50 per checklist' : 'Target 50 model'}</option>
               </select>
@@ -8844,7 +8844,7 @@ function App() {
   const [binLoading, setBinLoading] = useState(false)
   const [binError, setBinError] = useState<string | null>(null)
   const [binMinPrice, setBinMinPrice] = useState(25)
-  const [binPlayerScope, setBinPlayerScope] = useState<BinPlayerScope>('value-25')
+  const [binPlayerScope, setBinPlayerScope] = useState<BinPlayerScope>('value-100')
   const [binSearchMode, setBinSearchMode] = useState<BinSearchMode>('checklist')
   const [binSearchTerm, setBinSearchTerm] = useState('')
   const [binResultSort, setBinResultSort] = useState<BinResultSort>('conviction-desc')
@@ -9677,7 +9677,7 @@ function App() {
   const selectedBinRowsByModel = useMemo(() => rowsBySelectedModels(matrix.rows, selectedBinModels), [matrix.rows, selectedBinModels])
   const selectedBinRows = useMemo(() => flattenPricingRowGroups(selectedBinRowsByModel), [selectedBinRowsByModel])
   const binTargetRowsByModel = useMemo(() => targetRowsByModelFromGroups(selectedBinRowsByModel, 50), [selectedBinRowsByModel])
-  const binValueRowsByModel = useMemo(() => valueRowsFromRows(selectedBinRows, 25), [selectedBinRows])
+  const binValueRowsByModel = useMemo(() => valueRowsFromRows(selectedBinRows, 100), [selectedBinRows])
   const binProspectRowsByModel = useMemo(() => prospectRowsFromRows(selectedBinRows, 100), [selectedBinRows])
   const binTargetPlayerCount = useMemo(
     () => selectedBinModels.reduce((total, model) => total + (binTargetRowsByModel.get(checklistModelKey(model))?.length ?? 0), 0),
@@ -9970,7 +9970,11 @@ function App() {
     return [...adjustedRows.slice(0, Math.max(leaderboardRenderLimit - 1, 0)), effectiveSelectedRow]
   }, [effectiveSelectedRow, leaderboardRenderLimit, renderedRows, selectedRow])
   const teamScanRows = useMemo(
-    () => (selectedTeamOption ? visibleRowsForDisplay.filter(rowHasModel).slice(0, TEAM_DEAL_SCAN_LIMIT) : []),
+    () => (
+      selectedTeamOption
+        ? visibleRowsForDisplay.filter((row) => rowHasPublishedRank(row) && rowHasModel(row)).slice(0, TEAM_DEAL_SCAN_LIMIT)
+        : []
+    ),
     [selectedTeamOption, visibleRowsForDisplay],
   )
   const activeSalesCacheError =
@@ -10103,7 +10107,7 @@ function App() {
     resetBinScan()
   }
 
-  function prepareBoardDealScan(rows: PricingRow[], playerScope: BinPlayerScope = 'value-25') {
+  function prepareBoardDealScan(rows: PricingRow[], playerScope: BinPlayerScope = 'value-100') {
     const playerNames = playerNamesForPricingRows(rows)
     const scanModels = modelsForPricingRows(rows, binModelOptions)
     const nextModelKey = scanModels.length === 1 ? checklistModelKey(scanModels[0]) : BIN_ALL_MODELS_KEY
@@ -10121,16 +10125,18 @@ function App() {
   }
 
   function scanVisibleBoardDeals() {
-    const boardRows = renderedRowsForDisplay.slice(0, BOARD_DEAL_SCAN_LIMIT)
+    const boardRows = visibleRowsForDisplay
+      .filter((row) => rowHasPublishedRank(row) && rowHasModel(row))
+      .slice(0, BOARD_DEAL_SCAN_LIMIT)
     if (boardRows.length === 0) {
-      setBinError('No visible board rows are ready to scan.')
+      setBinError('No ranked, priced Value Board rows are ready to scan.')
       return
     }
 
     const { scanModels, playerNames } = prepareBoardDealScan(boardRows)
     const scanOptions = {
       models: scanModels,
-      playerScope: 'value-25' as const,
+      playerScope: 'value-100' as const,
       playerNames,
       searchMode: 'checklist' as const,
       searchTerm: '',
@@ -10156,7 +10162,7 @@ function App() {
     const { scanModels, playerNames } = prepareBoardDealScan(teamScanRows)
     const scanOptions = {
       models: scanModels,
-      playerScope: 'value-25' as const,
+      playerScope: 'value-100' as const,
       playerNames,
       searchMode: 'checklist' as const,
       searchTerm: '',
@@ -10471,19 +10477,19 @@ function App() {
     })
   }
 
-  function scanValue25Targets() {
+  function scanValue100Targets() {
     navigateWorkMode('deals')
     revealDealResults()
     setBinSearchMode('checklist')
     setBinSearchTerm('')
-    setBinPlayerScope('value-25')
+    setBinPlayerScope('value-100')
     setBinListings([])
     setBinScan(null)
     setBinError(null)
     resetAuctionScan()
 
     void scanEbayBinListings({
-      playerScope: 'value-25',
+      playerScope: 'value-100',
       searchMode: 'checklist',
       searchTerm: '',
     })
@@ -10530,14 +10536,14 @@ function App() {
     revealDealResults()
     setBinSearchMode('low-serial-non-auto')
     setBinSearchTerm('')
-    setBinPlayerScope('value-25')
+    setBinPlayerScope('value-100')
     setBinListings([])
     setBinScan(null)
     setBinError(null)
     resetAuctionScan()
 
     const scanOptions = {
-      playerScope: 'value-25' as const,
+      playerScope: 'value-100' as const,
       searchMode: 'low-serial-non-auto' as const,
       searchTerm: '',
     }
@@ -10939,7 +10945,7 @@ function App() {
 
     const namedPlayerScope =
       activePlayerNames.length === 0 &&
-      (activePlayerScope === 'target-50' || activePlayerScope === 'value-25' || activePlayerScope === 'prospect-100') &&
+      (activePlayerScope === 'target-50' || activePlayerScope === 'value-100' || activePlayerScope === 'prospect-100') &&
       activeSearchMode !== 'player'
     const scopedRowsByScanModel = scopedRowsForScan(matrix.rows, playerLoadedModels, activePlayerScope, activeSearchMode)
 
@@ -10948,7 +10954,7 @@ function App() {
       playerLoadedModels.every((model) => (scopedRowsByScanModel.get(checklistModelKey(model))?.length ?? 0) === 0)
     ) {
       setBinError(
-        activePlayerScope === 'value-25'
+        activePlayerScope === 'value-100'
           ? 'Value board needs priced checklist rows matched to ranking signals before scanning.'
           : activePlayerScope === 'prospect-100'
             ? 'Top 100 Oracle prospects need checklist rows matched to Baseball Oracle ranks before scanning.'
@@ -11130,7 +11136,7 @@ function App() {
 
     const namedPlayerScope =
       activePlayerNames.length === 0 &&
-      (activePlayerScope === 'target-50' || activePlayerScope === 'value-25' || activePlayerScope === 'prospect-100') &&
+      (activePlayerScope === 'target-50' || activePlayerScope === 'value-100' || activePlayerScope === 'prospect-100') &&
       activeSearchMode !== 'player'
     const scopedRowsByScanModel = scopedRowsForScan(matrix.rows, playerLoadedModels, activePlayerScope, activeSearchMode)
 
@@ -11139,7 +11145,7 @@ function App() {
       playerLoadedModels.every((model) => (scopedRowsByScanModel.get(checklistModelKey(model))?.length ?? 0) === 0)
     ) {
       setAuctionError(
-        activePlayerScope === 'value-25'
+        activePlayerScope === 'value-100'
           ? 'Value board needs priced checklist rows matched to ranking signals before scanning auctions.'
           : activePlayerScope === 'prospect-100'
             ? 'Top 100 Oracle prospects need checklist rows matched to Baseball Oracle ranks before scanning auctions.'
@@ -11339,10 +11345,13 @@ function App() {
     }
   }
 
-  const visibleBoardScanCount = Math.min(BOARD_DEAL_SCAN_LIMIT, playerNamesForPricingRows(renderedRowsForDisplay).length)
+  const visibleBoardScanCount = Math.min(
+    BOARD_DEAL_SCAN_LIMIT,
+    playerNamesForPricingRows(visibleRowsForDisplay.filter((row) => rowHasPublishedRank(row) && rowHasModel(row))).length,
+  )
   const primaryBoardScanDisabled =
     (selectedTeamOption ? teamScanRows.length === 0 : visibleBoardScanCount === 0) || binLoading || auctionLoading
-  const primaryBoardScanLabel = selectedTeamOption ? `Scan ${selectedTeamOption.label}` : 'Scan Top 25'
+  const primaryBoardScanLabel = selectedTeamOption ? `Scan ${selectedTeamOption.label}` : 'Scan Value 100'
   const runPrimaryBoardScan = selectedTeamOption ? scanSelectedTeamDeals : scanVisibleBoardDeals
   return (
     <main className="app-shell valuation-app">
@@ -11484,7 +11493,7 @@ function App() {
           <div className="valuation-workspace">
             <div className="lookup-intent-bar">
               <div className="lookup-intent-copy">
-                <span>Top 25 Value Board</span>
+                <span>Ranked Value Board</span>
                 <strong>
                   {effectiveSelectedRow && (selectedRowId || trimmedQuery) ? effectiveSelectedRow.playerName : 'Best rank-to-price gaps'}
                 </strong>
@@ -11809,7 +11818,7 @@ function App() {
               void scanEbayAuctionListings()
             }}
             onScanAuctions={() => void scanEbayAuctionListings()}
-            onScanValueTargets={scanValue25Targets}
+            onScanValueTargets={scanValue100Targets}
             onScanTopProspects={scanTop100Prospects}
             onScanBaseAutos={scanBaseAutos}
             onScanLowSerial={scanLowSerialNonAutos}
