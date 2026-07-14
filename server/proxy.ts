@@ -6889,7 +6889,9 @@ export async function handleRankingsRoute(route: string, request: Request) {
   }
   if (route === 'data') {
     if (request.method !== 'GET') return new Response(null, { status: 404 })
-    const { sources, cache } = await currentRankingSources({ allowLiveRefresh: true })
+    // Keep the first board render deterministic and fast. Live network refreshes belong to
+    // /refresh (and its cron); /data should use the last hosted cache or bundled snapshot.
+    const { sources, cache } = await currentRankingSources({ allowLiveRefresh: false })
     return jsonResponse(200, {
       ...rankingStatusFromSources(sources),
       cache,

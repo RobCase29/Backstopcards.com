@@ -17,6 +17,33 @@ afterEach(() => {
 })
 
 describe('rankings proxy', () => {
+  it('serves ranking data from the bundled snapshot without blocking on live providers', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('ranking data should not call live providers')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await handleRankingsRoute(
+      'data',
+      new Request('http://localhost/api/rankings/data', { method: 'GET' }),
+    )
+    const payload = (await response.json()) as {
+      available: boolean
+      rows: number
+      matchedRows: number
+      cache: string
+      sources: Array<{ population: string; csv: string }>
+    }
+
+    expect(response.status).toBe(200)
+    expect(payload.available).toBe(true)
+    expect(payload.cache).toBe('bundled')
+    expect(payload.rows).toBeGreaterThan(0)
+    expect(payload.matchedRows).toBeGreaterThan(0)
+    expect(payload.sources.some((source) => source.population === 'oracle-prospect' && source.csv.includes('Oracle Player Id'))).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('refreshes hosted ranking CSVs without shifting consensus columns', async () => {
     let blankRankPlayerId: string | null = null
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
