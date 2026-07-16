@@ -83,6 +83,8 @@ import {
   fetchSalesCachePlayer,
   flagSalesCacheSale,
   mergeSalesCacheBucket,
+  salesCacheBucketIsFlagshipRawAuto,
+  salesCacheBucketIsFlagshipRawBaseAuto,
   type SalesCacheBucket,
   type SalesCacheMergeTargetMetadata,
   type SalesCachePlayerModel,
@@ -912,15 +914,6 @@ function soldCacheBucketKey(bucket: SalesCacheBucket) {
   return variationKey(bucket.variationLabel || 'Base Auto')
 }
 
-function normalizedSalesCacheCardClass(bucket: SalesCacheBucket) {
-  const normalized = normalizeLiveCompText(bucket.cardClass)
-  return normalized === 'autos' ? 'auto' : normalized
-}
-
-function salesCacheBucketIsRawBaseAuto(bucket: SalesCacheBucket) {
-  return normalizedSalesCacheCardClass(bucket) === 'auto' && bucket.gradeBucket === 'Raw' && soldCacheBucketKey(bucket) === 'base'
-}
-
 function salesBucketMatchesRowRelease(bucket: SalesCacheBucket, row: PricingRow | undefined) {
   return !row || bucket.releaseYear === row.releaseYear
 }
@@ -948,7 +941,7 @@ function soldBaseBucketForRow(row: PricingRow | undefined, model: SalesCachePlay
   const preferredBaseBucket = model.baseAutoBucket
   if (
     preferredBaseBucket &&
-    salesCacheBucketIsRawBaseAuto(preferredBaseBucket) &&
+    salesCacheBucketIsFlagshipRawBaseAuto(preferredBaseBucket) &&
     (positiveNumber(preferredBaseBucket.modelPrice) || (model.sales ?? []).some((sale) => sale.bucketKey === preferredBaseBucket.bucketKey)) &&
     salesBucketMatchesRowRelease(preferredBaseBucket, row)
   ) {
@@ -957,7 +950,7 @@ function soldBaseBucketForRow(row: PricingRow | undefined, model: SalesCachePlay
 
   const candidates = (model.buckets ?? []).filter(
       (bucket) =>
-        salesCacheBucketIsRawBaseAuto(bucket) &&
+        salesCacheBucketIsFlagshipRawBaseAuto(bucket) &&
         (positiveNumber(bucket.modelPrice) || (model.sales ?? []).some((sale) => sale.bucketKey === bucket.bucketKey)) &&
         salesBucketMatchesRowRelease(bucket, row),
   )
@@ -983,7 +976,7 @@ function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlay
   const baseScale = row.baseTwmaPrice > 0 ? soldBase / row.baseTwmaPrice : 1
   const rawAutoBuckets = new Map<string, SalesCacheBucket>()
   for (const bucket of model.buckets ?? []) {
-    if (normalizedSalesCacheCardClass(bucket) !== 'auto' || bucket.gradeBucket !== 'Raw' || !positiveNumber(bucket.modelPrice)) continue
+    if (!salesCacheBucketIsFlagshipRawAuto(bucket) || !positiveNumber(bucket.modelPrice)) continue
     if (!salesBucketMatchesRowRelease(bucket, row)) continue
     const key = soldCacheBucketKey(bucket)
     const existing = rawAutoBuckets.get(key)
@@ -5351,7 +5344,7 @@ function LocalSoldModelPanel({
   const baseAutoBucket = soldBaseBucketForRow(row, model) ?? (!row ? (model?.baseAutoBucket ?? null) : null)
   const baseAutoPrice = baseAutoBucket?.modelPrice ?? (!row ? model?.baseAutoPrice : null)
   const topRawAutos = releaseBuckets
-    .filter((bucket) => bucket.cardClass === 'auto' && bucket.gradeBucket === 'Raw')
+    .filter(salesCacheBucketIsFlagshipRawAuto)
     .slice(0, 4)
   const topGraded = releaseBuckets.filter((bucket) => bucket.gradeBucket !== 'Raw').slice(0, 3)
   const topCaseHits = releaseBuckets.filter((bucket) => bucket.cardClass === 'case-hit').slice(0, 3)

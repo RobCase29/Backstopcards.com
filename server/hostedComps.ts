@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { estimateBaseFairValue, FAIR_VALUE_MODEL_VERSION } from '../shared/fairValueEngine.js'
+import { classifyBowmanAutoTitleScope } from '../shared/bowmanAutoTitleScope.js'
 import { HOSTED_COMP_LANE_SEEDS, HOSTED_COMP_QUEUE_SEEDS } from './data/hostedCompBootstrap.js'
 
 export type HostedCompSql = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>
@@ -319,6 +320,9 @@ export function evaluateBowmanBaseAutoCandidate(card: CardHedgeCard, playerName:
   if (!/\bbowman\b/i.test(text)) return { eligible: false, score: -1, reason: 'not Bowman' }
   if (releaseYear && year !== releaseYear) return { eligible: false, score: -1, reason: 'release year mismatch' }
   if (!/\bauto(?:graph|graphs|graphed)?\b/i.test(description)) return { eligible: false, score: -1, reason: 'not an autograph card' }
+  if (!/\bchrome\b/i.test(description) && !/^(?:CPA|CDA)-/i.test(cardNumber)) {
+    return { eligible: false, score: -1, reason: 'not a flagship Chrome autograph' }
+  }
   if (variant && !/^base$/i.test(variant)) return { eligible: false, score: -1, reason: `parallel variant: ${variant}` }
   if (
     /\b(?:paper|mega|mojo|sapphire|rookie\s+auto|rookie\s+autograph|packfractor|gold\s+ink|draft\s+nights?|portrait|class\s+of|all[- ]america|spotlight|sterling|best|inception|choice|hta|dual|pairings?|image\s+variation|printing\s+plate)\b/i.test(
@@ -354,6 +358,39 @@ export function evaluateBowmanBaseAutoCandidate(card: CardHedgeCard, playerName:
   }
 }
 
+/**
+ * Hosted lanes created by older importers may claim the canonical Chrome
+ * taxonomy even when their Card Hedge source card was paper, Mega, or another
+ * autograph family. Validate the source description again at read time so a
+ * stale row can never become a live base-price anchor.
+ */
+export function hostedLaneIsTrustedBaseAuto(row: Record<string, unknown>) {
+  const cardClass = normalizedName(row.cardClass)
+  const productFamily = normalizedName(row.productFamily)
+  const variation = normalizedName(row.variationLabel)
+  const grade = normalizedName(row.gradeBucket)
+  const playerName = stringValue(row.playerName)
+  const releaseYear = numberValue(row.releaseYear)
+  const description = stringValue(row.cardDescription)
+
+  if (cardClass !== 'auto' || productFamily !== 'bowman chrome' || variation !== 'base auto' || grade !== 'raw') {
+    return false
+  }
+  if (!playerName || !releaseYear || !description) return false
+
+  return evaluateBowmanBaseAutoCandidate(
+    {
+      card_id: stringValue(row.cardId),
+      player: playerName,
+      description,
+      set: `${releaseYear} Bowman`,
+      variant: 'Base',
+    },
+    playerName,
+    releaseYear,
+  ).eligible
+}
+
 export function chooseBowmanBaseAutoCard(
   cards: CardHedgeCard[],
   playerName: string,
@@ -373,7 +410,8 @@ export function chooseBowmanBaseAutoCard(
 
 export function summarizeHostedCompSales(comps: CardHedgeComps, now = new Date()) {
   const seen = new Set<string>()
-  const sales = (Array.isArray(comps.raw_prices) ? comps.raw_prices : [])
+  const hasRawPrices = Array.isArray(comps.raw_prices)
+  const sales = (hasRawPrices ? comps.raw_prices ?? [] : [])
     .map((sale) => ({
       raw: sale,
       price: numberValue(sale.price),
@@ -381,6 +419,7 @@ export function summarizeHostedCompSales(comps: CardHedgeComps, now = new Date()
       channel: channelFromSaleType(sale.sale_type),
     }))
     .filter((sale) => sale.price > 0 && sale.soldAt)
+    .filter((sale) => classifyBowmanAutoTitleScope(compact(sale.raw.title)).eligible)
     .filter((sale) => {
       const key = compact(sale.raw.price_history_id) || `${sale.raw.sale_url}|${sale.soldAt}|${sale.price}`
       if (seen.has(key)) return false
@@ -404,7 +443,10 @@ export function summarizeHostedCompSales(comps: CardHedgeComps, now = new Date()
     { asOf: now.getTime() },
   )
   const fallbackComp = timeWeightedMean(sales)
-  const modelPrice = roundMoney(baseEstimate?.value ?? (positive(upstreamComp) ? upstreamComp : fallbackComp))
+  // When granular rows are present, the upstream aggregate may still include
+  // rows rejected above. Never let that opaque aggregate bypass title scope.
+  const trustedUpstreamComp = !hasRawPrices && positive(upstreamComp) ? upstreamComp : null
+  const modelPrice = roundMoney(baseEstimate?.value ?? trustedUpstreamComp ?? fallbackComp)
   const modelLow = roundMoney(baseEstimate?.low ?? numberOrNull(comps.low) ?? modelPrice)
   const modelHigh = roundMoney(baseEstimate?.high ?? numberOrNull(comps.high) ?? modelPrice)
 
@@ -418,7 +460,7 @@ export function summarizeHostedCompSales(comps: CardHedgeComps, now = new Date()
     modelMethod: baseEstimate?.method ?? 'card-hedge-upstream',
     modelVersion: baseEstimate ? FAIR_VALUE_MODEL_VERSION : 'card-hedge-upstream',
     compPrice: roundMoney(upstreamComp),
-    saleCount: Math.max(numberValue(comps.count_used), sales.length),
+    saleCount: hasRawPrices ? sales.length : numberValue(comps.count_used),
     sales30: sales.filter((sale) => Date.parse(sale.soldAt) >= cutoff30).length,
     sales90: sales.filter((sale) => Date.parse(sale.soldAt) >= cutoff90).length,
     auctionCount: sales.filter((sale) => sale.channel === 'Auction').length,
@@ -838,24 +880,27 @@ function rowsByPlayer(rows: Record<string, unknown>[]) {
 }
 
 function playerModelFromLaneRows(playerName: string, rows: Record<string, unknown>[], sales: Record<string, unknown>[] = []) {
-  const buckets = rows.map(hostedLaneToBucket).slice(0, MAX_BUCKETS_PER_PLAYER)
+  const trustedRows = rows.filter(hostedLaneIsTrustedBaseAuto)
+  const trustedLaneKeys = new Set(trustedRows.map((row) => stringValue(row.laneKey)).filter(Boolean))
+  const trustedSales = sales.filter((sale) => trustedLaneKeys.has(stringValue(sale.laneKey)))
+  const buckets = trustedRows.map(hostedLaneToBucket).slice(0, MAX_BUCKETS_PER_PLAYER)
   const baseAutoBucket = [...buckets]
     .filter((bucket) => bucket.modelPrice > 0)
     .sort((left, right) => numberValue(right.releaseYear) - numberValue(left.releaseYear) || right.saleCount - left.saleCount)[0] ?? null
-  const generatedAt = rows.map((row) => stringValue(row.generatedAt)).filter(Boolean).sort().at(-1) ?? ''
+  const generatedAt = trustedRows.map((row) => stringValue(row.generatedAt)).filter(Boolean).sort().at(-1) ?? ''
   return {
     available: buckets.length > 0,
-    playerName: stringValue(rows[0]?.playerName) || playerName,
+    playerName: stringValue(trustedRows[0]?.playerName) || playerName,
     generatedAt,
-    totalRows: sales.length || buckets.reduce((sum, bucket) => sum + bucket.saleCount, 0),
-    modelEligibleRows: sales.filter((sale) => sale.erroneous !== true).length || buckets.reduce((sum, bucket) => sum + bucket.saleCount, 0),
-    excludedRows: sales.filter((sale) => sale.erroneous === true).length,
+    totalRows: trustedSales.length || buckets.reduce((sum, bucket) => sum + bucket.saleCount, 0),
+    modelEligibleRows: trustedSales.filter((sale) => sale.erroneous !== true).length || buckets.reduce((sum, bucket) => sum + bucket.saleCount, 0),
+    excludedRows: trustedSales.filter((sale) => sale.erroneous === true).length,
     bucketCount: buckets.length,
     modeledSales: buckets.reduce((sum, bucket) => sum + bucket.saleCount, 0),
     baseAutoPrice: baseAutoBucket?.modelPrice ?? null,
     baseAutoBucket,
     buckets,
-    sales: sales.map(hostedSaleToPublic),
+    sales: trustedSales.map(hostedSaleToPublic),
     exclusions: [],
     message: buckets.length ? undefined : 'No hosted sold model for this player yet.',
   }
@@ -877,7 +922,9 @@ export async function hostedCompPlayersPayload(sql: HostedCompSql, playerNames: 
       q3_price AS "q3Price", max_price AS "maxPrice", model_price AS "modelPrice",
       model_low AS "modelLow", model_high AS "modelHigh", model_confidence AS "modelConfidence",
       model_effective_sales AS "modelEffectiveSales", model_method AS "modelMethod", model_version AS "modelVersion",
-      latest_sold_at AS "latestSoldAt", generated_at AS "generatedAt"
+      latest_sold_at AS "latestSoldAt", generated_at AS "generatedAt",
+      card_id AS "cardId", card_description AS "cardDescription",
+      card_match_score AS "cardMatchScore", card_match_reason AS "cardMatchReason"
     FROM backstop_comp_lanes
     WHERE player_lookup IN (SELECT value FROM jsonb_array_elements_text(${JSON.stringify(lookups)}::jsonb))
       AND model_price > 0
@@ -936,7 +983,9 @@ export async function hostedCompPlayerPayload(sql: HostedCompSql, playerName: st
       q3_price AS "q3Price", max_price AS "maxPrice", model_price AS "modelPrice",
       model_low AS "modelLow", model_high AS "modelHigh", model_confidence AS "modelConfidence",
       model_effective_sales AS "modelEffectiveSales", model_method AS "modelMethod", model_version AS "modelVersion",
-      latest_sold_at AS "latestSoldAt", generated_at AS "generatedAt"
+      latest_sold_at AS "latestSoldAt", generated_at AS "generatedAt",
+      card_id AS "cardId", card_description AS "cardDescription",
+      card_match_score AS "cardMatchScore", card_match_reason AS "cardMatchReason"
     FROM backstop_comp_lanes
     WHERE player_lookup = ${lookup}
       AND model_price > 0

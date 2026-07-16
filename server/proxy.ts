@@ -3456,10 +3456,34 @@ function mapSalesCacheBucket(row: SqliteRow) {
   }
 }
 
+function normalizedSalesBucketTaxonomy(value: unknown) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+}
+
+function salesBucketIsFlagshipRawAuto(bucket: ReturnType<typeof mapSalesCacheBucket>) {
+  const cardClass = normalizedSalesBucketTaxonomy(bucket.cardClass)
+  const productFamily = normalizedSalesBucketTaxonomy(bucket.productFamily)
+  const isFlagshipFamily = productFamily === 'bowman chrome' || productFamily === 'bowman draft'
+  return (
+    (cardClass === 'auto' || cardClass === 'autos') &&
+    isFlagshipFamily &&
+    normalizedSalesBucketTaxonomy(bucket.gradeBucket) === 'raw'
+  )
+}
+
+function salesBucketIsFlagshipRawBaseAuto(bucket: ReturnType<typeof mapSalesCacheBucket>) {
+  const variation = normalizedSalesBucketTaxonomy(bucket.variationLabel)
+  return salesBucketIsFlagshipRawAuto(bucket) && (variation === 'base' || variation === 'base auto')
+}
+
 function inferredBaseAutoPriceFromBuckets(buckets: ReturnType<typeof mapSalesCacheBucket>[]) {
   const candidates = buckets
     .map((bucket) => {
-      if (bucket.cardClass !== 'auto' || bucket.gradeBucket !== 'Raw') return null
+      if (!salesBucketIsFlagshipRawAuto(bucket)) return null
       if (!bucket.modelPrice || !bucket.baseAutoMultiple) return null
       const value = bucket.modelPrice / bucket.baseAutoMultiple
       const weight = Math.sqrt(Math.min(16, Math.max(1, bucket.saleCount || 1)))
@@ -7964,17 +7988,7 @@ export async function handleSalesCacheRoute(route: string, request: Request, env
           const playerName = rowString(summary, 'playerName')
           const buckets = (bucketsByPlayer.get(playerName) ?? []).map(mapSalesCacheBucket)
           const baseAutoBucket =
-            buckets.find(
-              (bucket) =>
-                bucket.cardClass === 'auto' &&
-                bucket.gradeBucket === 'Raw' &&
-                bucket.variationLabel === 'Base Auto' &&
-                bucket.productFamily === 'Bowman Chrome',
-            ) ??
-            buckets.find(
-              (bucket) => bucket.cardClass === 'auto' && bucket.gradeBucket === 'Raw' && bucket.variationLabel === 'Base Auto',
-            ) ??
-            null
+            buckets.find(salesBucketIsFlagshipRawBaseAuto) ?? null
 
           return {
             available: true,
@@ -8055,10 +8069,8 @@ export async function handleSalesCacheRoute(route: string, request: Request, env
         AND card_class = 'auto'
         AND grade_bucket = 'Raw'
         AND variation_label = 'Base Auto'
-      ORDER BY
-        CASE WHEN product_family = 'Bowman Chrome' THEN 0 ELSE 1 END,
-        sale_count DESC,
-        model_price DESC
+        AND product_family IN ('Bowman Chrome', 'Bowman Draft')
+      ORDER BY sale_count DESC, model_price DESC
       LIMIT 1
     `).get(playerName)
     const buckets = db.prepare(`

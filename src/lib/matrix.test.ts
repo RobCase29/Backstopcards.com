@@ -453,6 +453,43 @@ describe('pricing matrix', () => {
     expect(matrix.missingBaseRows).toBe(0)
   })
 
+  it('prices Marek Houston from Chrome variation evidence instead of a paper-auto fallback', () => {
+    const model: ChecklistModel = {
+      ...bowmanModel,
+      modelVersion: 'backstop-fv-v3',
+      multipliers: BOWMAN_2026_CHROME_AUTO_VARIATIONS.map((variation) => ({
+        variation: variation.label,
+        avgMultiplier: variation.priorMultiplier,
+        sortOrder: variation.scarcityOrder,
+        modelEvidence: 'modeled' as const,
+        modelActionable: true,
+      })),
+      players: [
+        {
+          playerName: 'Marek Houston',
+          baseAvgPrice: 0,
+          baseSalesCount: 0,
+          variations: [
+            { variation: 'Speckle /299 Auto', avgPrice: 65.99, multiplier: 0, salesCount: 1 },
+            { variation: 'Blue X-Fractor /150 Auto', avgPrice: 78.66, multiplier: 0, salesCount: 2 },
+            { variation: 'Aqua /125 Auto', avgPrice: 105.56, multiplier: 0, salesCount: 6 },
+            { variation: 'Mini Diamond /100 Auto', avgPrice: 100.27, multiplier: 0, salesCount: 2 },
+            { variation: 'Green Grass /99 Auto', avgPrice: 81.02, multiplier: 0, salesCount: 4 },
+            { variation: 'Green Shimmer /99 Auto', avgPrice: 100.56, multiplier: 0, salesCount: 5 },
+          ],
+        },
+      ],
+    }
+
+    const matrix = buildPricingMatrix([model])
+    const marek = matrix.rows.find((row) => row.playerName === 'Marek Houston')
+    expect(marek).toBeDefined()
+    expect(marek?.basePriceSource).toBe('variation-implied')
+    expect(marek?.baseTwmaPrice).toBeGreaterThan(20)
+    expect(marek?.baseTwmaPrice).toBeLessThan(40)
+    expect(marek?.baseMethod).toContain('variation anchors')
+  })
+
   it('abstains from a base quote when only one thin rare-variation sale exists', () => {
     const matrix = buildPricingMatrix([
       {

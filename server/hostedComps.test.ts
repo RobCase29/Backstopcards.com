@@ -3,6 +3,7 @@ import {
   chooseBowmanBaseAutoCard,
   dailyExportDateCandidates,
   evaluateBowmanBaseAutoCandidate,
+  hostedLaneIsTrustedBaseAuto,
   normalizeHostedTimestamp,
   releaseSearchLabel,
   summarizeHostedCompSales,
@@ -84,6 +85,42 @@ describe('hosted comp card matching', () => {
 
     expect(match?.card.card_id).toBe('chrome')
   })
+
+  it('rejects stale hosted lanes whose source card was not the flagship Chrome auto', () => {
+    const lane = {
+      laneKey: 'marek-houston|2026',
+      playerName: 'Marek Houston',
+      releaseYear: 2026,
+      productFamily: 'Bowman Chrome',
+      cardClass: 'auto',
+      variationLabel: 'Base Auto',
+      gradeBucket: 'Raw',
+      cardId: 'paper-card',
+      cardDescription: 'Marek Houston 2026 Bowman Prospect Autograph Baseball',
+    }
+
+    expect(hostedLaneIsTrustedBaseAuto(lane)).toBe(false)
+    expect(
+      hostedLaneIsTrustedBaseAuto({
+        ...lane,
+        cardId: 'chrome-card',
+        cardDescription: 'Marek Houston 2026 Bowman Chrome Prospects Autographs Baseball',
+      }),
+    ).toBe(true)
+  })
+
+  it('fails closed when a legacy hosted lane has no source-card description', () => {
+    expect(
+      hostedLaneIsTrustedBaseAuto({
+        playerName: 'Marek Houston',
+        releaseYear: 2026,
+        productFamily: 'Bowman Chrome',
+        cardClass: 'auto',
+        variationLabel: 'Base Auto',
+        gradeBucket: 'Raw',
+      }),
+    ).toBe(false)
+  })
 })
 
 describe('hosted comp modeling', () => {
@@ -140,6 +177,30 @@ describe('hosted comp modeling', () => {
     expect(summary.recent3Avg).toBe(100)
     expect(summary.auctionCount).toBe(2)
     expect(summary.binCount).toBe(1)
+  })
+
+  it('removes aftermarket signatures before modeling and does not reuse the contaminated upstream average', () => {
+    const summary = summarizeHostedCompSales(
+      {
+        comp_price: 10,
+        count_used: 3,
+        raw_prices: [
+          { price_history_id: 'ip', price: 9, sale_date: '2026-07-14T12:00:00.000Z', title: 'Marek Houston IP Auto' },
+          { price_history_id: 'signed', price: 11, sale_date: '2026-07-13T12:00:00.000Z', title: 'Marek Houston Auto Signed Rare' },
+          {
+            price_history_id: 'chrome',
+            price: 25,
+            sale_date: '2026-07-12T12:00:00.000Z',
+            title: '2026 Bowman Chrome Marek Houston Prospect Autograph',
+          },
+        ],
+      },
+      new Date('2026-07-15T12:00:00.000Z'),
+    )
+
+    expect(summary.sales).toHaveLength(1)
+    expect(summary.saleCount).toBe(1)
+    expect(summary.modelPrice).toBe(25)
   })
 
 })

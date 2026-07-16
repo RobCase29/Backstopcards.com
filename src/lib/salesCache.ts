@@ -30,6 +30,32 @@ export type SalesCacheBucket = {
   generatedAt: string
 }
 
+function normalizedBucketTaxonomy(value: string | null | undefined) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+}
+
+/**
+ * Only the flagship Bowman Chrome autograph family may anchor or reshape the
+ * flagship auto curve. Paper, Mega/Mojo, insert, and hand-signed autos are
+ * separate markets even when an upstream source calls their variant "Base".
+ */
+export function salesCacheBucketIsFlagshipRawAuto(bucket: SalesCacheBucket) {
+  const cardClass = normalizedBucketTaxonomy(bucket.cardClass)
+  const productFamily = normalizedBucketTaxonomy(bucket.productFamily)
+  const grade = normalizedBucketTaxonomy(bucket.gradeBucket)
+  const isFlagshipFamily = productFamily === 'bowman chrome' || productFamily === 'bowman draft'
+  return (cardClass === 'auto' || cardClass === 'autos') && isFlagshipFamily && grade === 'raw'
+}
+
+export function salesCacheBucketIsFlagshipRawBaseAuto(bucket: SalesCacheBucket) {
+  const variation = normalizedBucketTaxonomy(bucket.variationLabel)
+  return salesCacheBucketIsFlagshipRawAuto(bucket) && (variation === 'base' || variation === 'base auto')
+}
+
 export type SalesCacheExclusion = {
   reason: string
   count: number
