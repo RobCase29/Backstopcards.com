@@ -26,6 +26,8 @@ Use Node 22.13+ locally. This repo includes `.nvmrc` set to Node 22 to match Ver
 For the current source-of-truth spec, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 The versioned pricing hierarchy and its release safeguards are documented in
 [`docs/FAIR_VALUE_MODEL.md`](docs/FAIR_VALUE_MODEL.md).
+Trusted companion applications can consume the same canonical base-auto model
+through the authenticated, versioned [Player Models API](docs/PLAYER_MODELS_API.md).
 
 Run the full local guardrail pass with:
 
@@ -85,6 +87,7 @@ DATABASE_URL=your_neon_connection_string
 UPSTASH_REDIS_REST_URL=your_upstash_rest_url
 UPSTASH_REDIS_REST_TOKEN=your_upstash_rest_token
 CRON_SECRET=your_long_random_cron_secret
+BACKSTOP_API_KEYS=one_or_more_long_random_server_api_keys
 ```
 
 If Vercel provisions the Redis integration with KV-compatible names, `KV_REST_API_URL` and `KV_REST_API_TOKEN` are accepted as aliases. Keep all of these server-side only.

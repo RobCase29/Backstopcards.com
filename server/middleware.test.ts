@@ -44,4 +44,11 @@ describe('access middleware cron boundary', () => {
 
     expect(response?.status).toBe(303)
   })
+
+  it('lets the versioned application API enforce its own API-key boundary', async () => {
+    configureGate()
+    const response = await middleware(new Request('https://backstopcards.com/api/v1/player-models'))
+
+    expect(response).toBeUndefined()
+  })
 })

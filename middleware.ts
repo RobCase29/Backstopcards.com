@@ -12,7 +12,7 @@ declare const process: {
 }
 
 const PUBLIC_PATHS = new Set(['/access.html', '/backstop-logo.jpeg', '/favicon.svg'])
-const PUBLIC_PREFIXES = ['/api/access-login', '/api/access-logout', '/api/access']
+const PUBLIC_PREFIXES = ['/api/access-login', '/api/access-logout', '/api/access', '/api/v1']
 const CRON_PATHS = new Set(['/api/rankings/refresh', '/api/card-hedge/refresh'])
 
 export const config = {

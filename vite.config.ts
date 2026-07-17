@@ -13,6 +13,7 @@ import {
   handleScanCoverageNodeRequest,
   handleScanQueueNodeRequest,
 } from './server/proxy'
+import { handlePlayerModelsNodeRequest } from './server/playerModelsApi'
 
 function prospectPulseProxy(): Plugin {
   return {
@@ -163,6 +164,19 @@ function rankingsProxy(): Plugin {
   }
 }
 
+function playerModelsProxy(): Plugin {
+  return {
+    name: 'player-models-local-api',
+    configureServer(server) {
+      const env = loadEnv(server.config.mode, process.cwd(), '')
+
+      server.middlewares.use('/api/v1', async (request, response) => {
+        await handlePlayerModelsNodeRequest(request, response, env)
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   build: {
@@ -190,5 +204,6 @@ export default defineConfig({
     scanCoverageProxy(),
     scanQueueProxy(),
     rankingsProxy(),
+    playerModelsProxy(),
   ],
 })

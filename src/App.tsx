@@ -84,7 +84,6 @@ import {
   flagSalesCacheSale,
   mergeSalesCacheBucket,
   salesCacheBucketIsFlagshipRawAuto,
-  salesCacheBucketIsFlagshipRawBaseAuto,
   type SalesCacheBucket,
   type SalesCacheMergeTargetMetadata,
   type SalesCachePlayerModel,
@@ -153,8 +152,11 @@ import {
   titleLooksLikeSuperfractor,
 } from './lib/cardTitleGuards'
 import { listingGradingLabel, liveCompCheckForOpportunity, liveCompVerdict, normalizeLiveCompText } from './lib/liveComps'
-import { stableSalesCacheBaseValue, stableSalesCacheLaneValue } from './lib/variationFairValue'
-import { FAIR_VALUE_MODEL_VERSION } from './lib/variationPriors'
+import {
+  applySalesCacheModelToPricingRow,
+  canonicalBaseBucketForRow as soldBaseBucketForRow,
+  salesCacheBucketMatchesPricingRowRelease as salesBucketMatchesRowRelease,
+} from './lib/canonicalPricing'
 import {
   createListingRejection,
   isListingRejected,
@@ -558,6 +560,10 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
+function positiveNumber(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
 const scoreDynastyBaseValue = scoreDynastyValueOpportunity
 
 function dynastyValueMultiple(row: PricingRow) {
@@ -899,153 +905,6 @@ function salesCacheDatasetVersion(status: SalesCacheStatus | null | undefined) {
     status.bucketCount ?? 0,
     status.modeledSales ?? 0,
   ].join('|')
-}
-
-function positiveNumber(value: number | null | undefined): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-}
-
-function quoteIsBaseAnchor(quote: VariationQuote) {
-  const key = variationKey(quote.label || quote.key)
-  return key === 'base'
-}
-
-function soldCacheBucketKey(bucket: SalesCacheBucket) {
-  return variationKey(bucket.variationLabel || 'Base Auto')
-}
-
-function salesBucketMatchesRowRelease(bucket: SalesCacheBucket, row: PricingRow | undefined) {
-  return !row || bucket.releaseYear === row.releaseYear
-}
-
-function preferredAutoFamilyScore(bucket: SalesCacheBucket) {
-  const family = normalizeLiveCompText(bucket.productFamily)
-  if (family === 'bowman chrome') return 34
-  if (family.includes('chrome')) return 20
-  if (family.includes('bowman')) return 10
-  return 0
-}
-
-function scoreSoldCacheBucketForRow(bucket: SalesCacheBucket, row: PricingRow | undefined) {
-  if (row && bucket.releaseYear && bucket.releaseYear !== row.releaseYear) return Number.NEGATIVE_INFINITY
-  return (
-    (row && bucket.releaseYear === row.releaseYear ? 120 : 0) +
-    preferredAutoFamilyScore(bucket) +
-    Math.min(32, bucket.saleCount) +
-    Math.log(Math.max(1, bucket.modelPrice))
-  )
-}
-
-function soldBaseBucketForRow(row: PricingRow | undefined, model: SalesCachePlayerModel | null) {
-  if (!model?.available) return null
-  const preferredBaseBucket = model.baseAutoBucket
-  if (
-    preferredBaseBucket &&
-    salesCacheBucketIsFlagshipRawBaseAuto(preferredBaseBucket) &&
-    (positiveNumber(preferredBaseBucket.modelPrice) || (model.sales ?? []).some((sale) => sale.bucketKey === preferredBaseBucket.bucketKey)) &&
-    salesBucketMatchesRowRelease(preferredBaseBucket, row)
-  ) {
-    return preferredBaseBucket
-  }
-
-  const candidates = (model.buckets ?? []).filter(
-      (bucket) =>
-        salesCacheBucketIsFlagshipRawBaseAuto(bucket) &&
-        (positiveNumber(bucket.modelPrice) || (model.sales ?? []).some((sale) => sale.bucketKey === bucket.bucketKey)) &&
-        salesBucketMatchesRowRelease(bucket, row),
-  )
-
-  return (
-    candidates.sort(
-      (left, right) =>
-        scoreSoldCacheBucketForRow(right, row) - scoreSoldCacheBucketForRow(left, row) ||
-        right.saleCount - left.saleCount ||
-        right.modelPrice - left.modelPrice,
-    )[0] ?? null
-  )
-}
-
-function soldCacheAdjustedRow(row: PricingRow | undefined, model: SalesCachePlayerModel | null) {
-  const baseAutoBucket = soldBaseBucketForRow(row, model)
-  if (!row || !model?.available || !baseAutoBucket) return row
-  if (salesCacheRecordKey(row.playerName) !== salesCacheRecordKey(model.playerName)) return row
-
-  const stableBase = stableSalesCacheBaseValue({ bucket: baseAutoBucket, model })
-  if (!stableBase) return row
-  const soldBase = Number(stableBase.value.toFixed(2))
-  const baseScale = row.baseTwmaPrice > 0 ? soldBase / row.baseTwmaPrice : 1
-  const rawAutoBuckets = new Map<string, SalesCacheBucket>()
-  for (const bucket of model.buckets ?? []) {
-    if (!salesCacheBucketIsFlagshipRawAuto(bucket) || !positiveNumber(bucket.modelPrice)) continue
-    if (!salesBucketMatchesRowRelease(bucket, row)) continue
-    const key = soldCacheBucketKey(bucket)
-    const existing = rawAutoBuckets.get(key)
-    if (
-      !existing ||
-      scoreSoldCacheBucketForRow(bucket, row) > scoreSoldCacheBucketForRow(existing, row) ||
-      (scoreSoldCacheBucketForRow(bucket, row) === scoreSoldCacheBucketForRow(existing, row) && bucket.modelPrice > existing.modelPrice)
-    ) {
-      rawAutoBuckets.set(key, bucket)
-    }
-  }
-
-  const ladder = row.ladder.map((quote) => {
-    if (quoteIsBaseAnchor(quote)) {
-      const evidenceTier =
-        stableBase.count >= 3 ? ('observed' as const) : stableBase.count >= 2 ? ('modeled' as const) : ('indicative' as const)
-      return {
-        ...quote,
-        price: soldBase,
-        multiplier: 1,
-        confidence: stableBase.confidence,
-        evidenceTier,
-        actionable: stableBase.count >= 2,
-        lowPrice: Number(stableBase.low.toFixed(2)),
-        highPrice: Number(stableBase.high.toFixed(2)),
-        empiricalEffectiveSales: stableBase.effectiveSales,
-      }
-    }
-
-    const bucket = rawAutoBuckets.get(variationKey(quote.label || quote.key))
-    const curvePrice = soldBase * quote.multiplier
-    const stableLane = bucket
-      ? stableSalesCacheLaneValue({
-          curvePrice,
-          curveConfidence: row.baseConfidence,
-          bucket,
-          model,
-        })
-      : null
-    const price = stableLane?.value ?? curvePrice
-    const laneScale = curvePrice > 0 ? price / curvePrice : 1
-    return {
-      ...quote,
-      price: Number(price.toFixed(2)),
-      multiplier: Number((price / soldBase).toFixed(4)),
-      confidence: stableLane?.confidence ?? quote.confidence,
-      lowPrice: Number(((quote.lowPrice ?? row.baseTwmaPrice * quote.multiplier * 0.72) * baseScale * laneScale).toFixed(2)),
-      highPrice: Number(((quote.highPrice ?? row.baseTwmaPrice * quote.multiplier * 1.38) * baseScale * laneScale).toFixed(2)),
-    }
-  })
-
-  return {
-    ...row,
-    baseTwmaPrice: soldBase,
-    basePriceSource: 'weighted-sales' as const,
-    baseConfidence: stableBase.confidence,
-    baseSales: stableBase.count || baseAutoBucket.saleCount || row.baseSales,
-    rawBaseSales: stableBase.count || baseAutoBucket.saleCount || row.rawBaseSales,
-    baseSales30: baseAutoBucket.sales30 ?? row.baseSales30,
-    baseSales90: baseAutoBucket.sales90 ?? row.baseSales90,
-    baseAuctionSales: baseAutoBucket.auctionCount ?? row.baseAuctionSales,
-    baseBinSales: baseAutoBucket.binCount ?? row.baseBinSales,
-    baseEffectiveSales: stableBase.effectiveSales,
-    baseVolatility: stableBase.volatility,
-    latestBaseSaleAt: stableBase.latestSoldAt || baseAutoBucket.latestSoldAt || row.latestBaseSaleAt,
-    baseMethod: `Sold comp base / ${FAIR_VALUE_MODEL_VERSION.replace('backstop-fv-', 'Backstop FV ')}`,
-    topVariationPrice: ladder.reduce((best, quote) => Math.max(best, quote.price), soldBase),
-    ladder,
-  }
 }
 
 function playerNamesFromListings(listings: MarketplaceListing[], limit = 160) {
@@ -9367,7 +9226,7 @@ function App() {
   const hostedAdjustedRows = useMemo(
     () =>
       matrix.rows.map(
-        (row) => soldCacheAdjustedRow(row, activeSalesCacheModels[salesCacheRecordKey(row.playerName)] ?? null) ?? row,
+        (row) => applySalesCacheModelToPricingRow(row, activeSalesCacheModels[salesCacheRecordKey(row.playerName)] ?? null) ?? row,
       ),
     [activeSalesCacheModels, matrix.rows],
   )
@@ -9946,7 +9805,7 @@ function App() {
       ? salesCacheModel
       : null
   const effectiveSelectedRow = useMemo(
-    () => soldCacheAdjustedRow(selectedRow, activeSalesCacheModel),
+    () => applySalesCacheModelToPricingRow(selectedRow, activeSalesCacheModel),
     [activeSalesCacheModel, selectedRow],
   )
   const visibleRowsForDisplay = useMemo(() => {
