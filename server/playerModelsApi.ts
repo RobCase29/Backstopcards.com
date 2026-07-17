@@ -687,7 +687,8 @@ export async function handlePlayerModelsNodeRequest(
   env: PublicApiEnv,
 ) {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-  const route = url.pathname.split('/').filter(Boolean).at(-1) ?? ''
+  const segments = url.pathname.split('/').filter(Boolean)
+  const route = segments[segments.length - 1] ?? ''
   const webResponse = await handlePlayerModelsApiRoute(
     route,
     new Request(`http://127.0.0.1${url.pathname}${url.search}`, {

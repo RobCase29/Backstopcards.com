@@ -1,4 +1,4 @@
-import type { ChecklistModel, ChecklistVariation } from '../types'
+import type { ChecklistModel, ChecklistVariation } from '../types.js'
 import { bowman2026AutoDefinition, canonicalizeBowman2026AutoVariation } from '../../shared/bowman2026Taxonomy.js'
 import { historicalBowmanAutoPrior } from '../../shared/bowmanAutoTaxonomy.js'
 import { FAIR_VALUE_MODEL_VERSION } from '../../shared/fairValueEngine.js'

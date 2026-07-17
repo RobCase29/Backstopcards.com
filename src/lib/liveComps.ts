@@ -1,6 +1,6 @@
-import type { SalesCacheBucket, SalesCachePlayerModel } from './salesCache'
-import { averageSalePrice, saleTime, weightedSoldModelPrice } from './display'
-import type { NormalizedListing, Opportunity } from '../types'
+import type { SalesCacheBucket, SalesCachePlayerModel } from './salesCache.js'
+import { averageSalePrice, saleTime, weightedSoldModelPrice } from './display.js'
+import type { NormalizedListing, Opportunity } from '../types.js'
 
 export function normalizeLiveCompText(value: string | null | undefined) {
   return String(value ?? '')

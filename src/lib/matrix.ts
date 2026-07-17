@@ -1,13 +1,13 @@
-import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types'
-import { findStsRanking, scoreStsBinTarget, scoreStsMomentum, scoreStsRanking, scoreStsRiserValue } from './stsRankings'
-import type { OracleRankingRoute, StsRankingSource } from './stsRankings'
-import { normalizeTeamCode, teamDisplayName, teamSearchText } from './teams'
+import type { ChecklistModel, ChecklistPlayer, ChecklistSale, ChecklistVariation } from '../types.js'
+import { findStsRanking, scoreStsBinTarget, scoreStsMomentum, scoreStsRanking, scoreStsRiserValue } from './stsRankings.js'
+import type { OracleRankingRoute, StsRankingSource } from './stsRankings.js'
+import { normalizeTeamCode, teamDisplayName, teamSearchText } from './teams.js'
 import {
   FAIR_VALUE_MODEL_VERSION,
   isValidatedHierarchicalModel,
   stabilizeReleaseMultiplier,
   structuralVariationPrior,
-} from './variationPriors'
+} from './variationPriors.js'
 import {
   BOWMAN_2026_CHROME_AUTO_VARIATIONS,
   bowman2026AutoDefinition,
@@ -15,7 +15,7 @@ import {
 } from '../../shared/bowman2026Taxonomy.js'
 import { canonicalizeHistoricalBowmanAutoLabel } from '../../shared/bowmanAutoTaxonomy.js'
 import { estimateBaseFairValue } from '../../shared/fairValueEngine.js'
-import { blendLaneEvidence } from './variationFairValue'
+import { blendLaneEvidence } from './variationFairValue.js'
 
 export type BasePriceSource = 'weighted-sales' | 'blended-sales' | 'variation-implied' | 'twma-fallback' | 'unpriced'
 export type SaleChannel = 'auction' | 'bin' | 'unknown'

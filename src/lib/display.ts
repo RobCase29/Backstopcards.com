@@ -1,5 +1,5 @@
-import type { SalesCacheSale } from './salesCache'
-import type { NormalizedListing } from '../types'
+import type { SalesCacheSale } from './salesCache.js'
+import type { NormalizedListing } from '../types.js'
 
 const currency = new Intl.NumberFormat('en-US', {
   style: 'currency',

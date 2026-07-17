@@ -84,7 +84,8 @@ function logout() {
 
 export default {
   fetch(request: Request) {
-    const route = new URL(request.url).pathname.split('/').filter(Boolean).at(-1)
+    const segments = new URL(request.url).pathname.split('/').filter(Boolean)
+    const route = segments[segments.length - 1]
     if (route === 'login') return login(request)
     if (route === 'logout') return logout()
     return new Response('Not found', { status: 404 })

@@ -4,7 +4,7 @@ import { handlePlayerModelsApiRoute } from '../../server/playerModelsApi.js'
 
 function routeFromRequest(request: Request) {
   const segments = new URL(request.url).pathname.split('/').filter(Boolean)
-  return segments.at(-1) ?? ''
+  return segments[segments.length - 1] ?? ''
 }
 
 export default {

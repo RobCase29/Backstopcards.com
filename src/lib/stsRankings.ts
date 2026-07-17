@@ -1,4 +1,4 @@
-import { normalizeTeamCode } from './teams'
+import { normalizeTeamCode } from './teams.js'
 
 export type StsRankingSource = 'baseball-oracle' | 'formulated-consensus' | 'legacy-leaderboard' | 'oopsy-peak-mlb'
 export type StsPopulation = 'oracle' | 'hitter' | 'pitcher' | 'legacy' | 'mlb'

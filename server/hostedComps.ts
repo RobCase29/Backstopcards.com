@@ -470,7 +470,7 @@ export function summarizeHostedCompSales(comps: CardHedgeComps, now = new Date()
     medianPrice: roundMoney(percentile(prices, 0.5)) ?? 0,
     avgPrice: roundMoney(mean(prices)) ?? 0,
     q3Price: roundMoney(percentile(prices, 0.75)) ?? 0,
-    maxPrice: roundMoney(numberOrNull(comps.high) ?? (prices.at(-1) ?? 0)) ?? 0,
+    maxPrice: roundMoney(numberOrNull(comps.high) ?? (prices[prices.length - 1] ?? 0)) ?? 0,
     recent3Avg: roundMoney(mean(sales.slice(0, 3).map((sale) => sale.price))),
     recent5Avg: roundMoney(mean(sales.slice(0, 5).map((sale) => sale.price))),
     latestSoldAt: sales[0]?.soldAt ?? '',
@@ -887,7 +887,8 @@ function playerModelFromLaneRows(playerName: string, rows: Record<string, unknow
   const baseAutoBucket = [...buckets]
     .filter((bucket) => bucket.modelPrice > 0)
     .sort((left, right) => numberValue(right.releaseYear) - numberValue(left.releaseYear) || right.saleCount - left.saleCount)[0] ?? null
-  const generatedAt = trustedRows.map((row) => stringValue(row.generatedAt)).filter(Boolean).sort().at(-1) ?? ''
+  const generatedValues = trustedRows.map((row) => stringValue(row.generatedAt)).filter(Boolean).sort()
+  const generatedAt = generatedValues[generatedValues.length - 1] ?? ''
   return {
     available: buckets.length > 0,
     playerName: stringValue(trustedRows[0]?.playerName) || playerName,

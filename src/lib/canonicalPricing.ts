@@ -1,14 +1,14 @@
 import { FAIR_VALUE_MODEL_VERSION } from '../../shared/fairValueEngine.js'
-import type { PricingRow, VariationQuote } from './matrix'
-import { variationKey } from './matrix'
-import { normalizeLiveCompText } from './liveComps'
+import type { PricingRow, VariationQuote } from './matrix.js'
+import { variationKey } from './matrix.js'
+import { normalizeLiveCompText } from './liveComps.js'
 import {
   salesCacheBucketIsFlagshipRawAuto,
   salesCacheBucketIsFlagshipRawBaseAuto,
   type SalesCacheBucket,
   type SalesCachePlayerModel,
-} from './salesCache'
-import { stableSalesCacheBaseValue, stableSalesCacheLaneValue } from './variationFairValue'
+} from './salesCache.js'
+import { stableSalesCacheBaseValue, stableSalesCacheLaneValue } from './variationFairValue.js'
 
 function positiveNumber(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0

@@ -5,7 +5,7 @@ import {
   VARIATION_FAIR_VALUE_POLICY,
   robustFairValueEstimate,
 } from '../../shared/fairValueEngine.js'
-import type { SalesCacheBucket, SalesCachePlayerModel, SalesCacheSale } from './salesCache'
+import type { SalesCacheBucket, SalesCachePlayerModel, SalesCacheSale } from './salesCache.js'
 
 type LaneBlendInput = {
   curvePrice: number
